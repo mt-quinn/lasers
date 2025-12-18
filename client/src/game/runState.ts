@@ -18,6 +18,8 @@ export type BlockEntity = {
   loop: Vec2[]
   // local-space AABB in pixels (for quick reject); updated at spawn from shape
   localAabb: { minX: number; minY: number; maxX: number; maxY: number }
+  // Local-space (pixel) anchor for HP text, guaranteed inside the shape.
+  hpAnchorLocalPx: Vec2
 }
 
 export type RunStats = {
@@ -68,6 +70,10 @@ export type RunState = {
   currency: number
   blocksDestroyed: number
 
+  // Global "tetris-like" drop pacing.
+  dropIntervalSec: number
+  dropTimerSec: number
+
   upgrades: Partial<Record<UpgradeId, number>>
   stats: RunStats
 
@@ -102,6 +108,9 @@ export const createInitialRunState = (): RunState => {
     timeSec: 0,
     currency: 0,
     blocksDestroyed: 0,
+    // Start with a full interval so the player sees the cadence before the first step.
+    dropIntervalSec: 1.275,
+    dropTimerSec: 1.275,
     upgrades: {},
     stats: {
       dps: 90,

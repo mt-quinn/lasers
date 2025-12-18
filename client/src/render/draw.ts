@@ -126,58 +126,10 @@ const relativeLuma = (cssRgb: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-const pointInPoly = (p: Vec2, poly: Vec2[]) => {
-  // Ray casting; poly may be closed or not.
-  let inside = false
-  const n = poly.length
-  if (n < 3) return false
-  for (let i = 0, j = n - 1; i < n; j = i++) {
-    const a = poly[i]!
-    const b = poly[j]!
-    const intersect =
-      (a.y > p.y) !== (b.y > p.y) &&
-      p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y + 1e-9) + a.x
-    if (intersect) inside = !inside
-  }
-  return inside
-}
-
 const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
-  // Desired: near center, inside the shape walls.
-  const centers = b.cells.map((c) => ({
-    x: b.pos.x + (c.x + 0.5) * b.cellSize,
-    y: b.pos.y + (c.y + 0.5) * b.cellSize,
-  }))
-  let cx = 0
-  let cy = 0
-  for (const p of centers) {
-    cx += p.x
-    cy += p.y
-  }
-  cx /= Math.max(1, centers.length)
-  cy /= Math.max(1, centers.length)
-  const loopWorld = b.loop.map((p) => ({ x: b.pos.x + p.x * b.cellSize, y: b.pos.y + p.y * b.cellSize }))
+  // Use cached inside-the-shape anchor, then apply the "slide up as it becomes visible" rule.
+  const target = { x: b.pos.x + b.hpAnchorLocalPx.x, y: b.pos.y + b.hpAnchorLocalPx.y }
 
-  let target = { x: cx, y: cy }
-  if (!pointInPoly(target, loopWorld)) {
-    // Fallback: pick the cell center closest to the centroid.
-    let best = centers[0] ?? target
-    let bestD = Infinity
-    for (const p of centers) {
-      const dx = p.x - cx
-      const dy = p.y - cy
-      const d = dx * dx + dy * dy
-      if (d < bestD) {
-        bestD = d
-        best = p
-      }
-    }
-    target = best
-  }
-
-  // Visibility behavior:
-  // If the piece is entering from the top, render the number at the bottom of the
-  // *visible portion* first, then slide upward toward the true center as the piece becomes visible.
   const pieceTop = b.pos.y + b.localAabb.minY
   const pieceBottom = b.pos.y + b.localAabb.maxY
   const visibleTop = 0
@@ -186,23 +138,19 @@ const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
   const visiblePieceTop = Math.max(pieceTop, visibleTop)
   const visiblePieceBottom = Math.min(pieceBottom, visibleBottom)
   const pieceH = Math.max(1, pieceBottom - pieceTop)
-  const visibleH = clamp((visiblePieceBottom - visiblePieceTop) / pieceH, 0, 1)
+  const visibleFrac = clamp((visiblePieceBottom - visiblePieceTop) / pieceH, 0, 1)
 
   const pad = 10
   const yBottomVisible = visiblePieceBottom - pad
-  // Smoothly blend from bottom-visible to target as visibility approaches full.
-  const t = Math.pow(visibleH, 2.2)
+  const t = Math.pow(visibleFrac, 2.2)
   const y = lerp(yBottomVisible, target.y, t)
 
-  // Clamp inside the piece's AABB (a conservative "inside walls" clamp).
+  // Clamp inside the piece's AABB (conservative walls clamp).
   const left = b.pos.x + b.localAabb.minX + pad
   const right = b.pos.x + b.localAabb.maxX - pad
   const top = Math.max(visibleTop + pad, b.pos.y + b.localAabb.minY + pad)
   const bottom = b.pos.y + b.localAabb.maxY - pad
-  return {
-    x: clamp(target.x, left, right),
-    y: clamp(y, top, bottom),
-  }
+  return { x: clamp(target.x, left, right), y: clamp(y, top, bottom) }
 }
 
 export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
@@ -310,6 +258,33 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.beginPath()
     ctx.arc(s.emitter.pos.x, s.emitter.pos.y, 11, 0, Math.PI * 2)
     ctx.fill()
+    ctx.restore()
+
+    // Drop timer indicator (radial fill): shows time until next global step.
+    // Placed just above the rail, centered, to teach cadence.
+    const progress = clamp((s.dropIntervalSec - s.dropTimerSec) / Math.max(0.001, s.dropIntervalSec), 0, 1)
+    const ringCx = s.view.width * 0.5
+    const ringCy = railY - 18
+    const rOuter = 12
+    const rInner = 8.5
+
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.strokeStyle = 'rgba(255,245,220,0.20)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(ringCx, ringCy, rOuter, 0, Math.PI * 2)
+    ctx.stroke()
+
+    // Filled wedge arc (starts at top, fills clockwise)
+    const startAng = -Math.PI / 2
+    const endAng = startAng + progress * Math.PI * 2
+    ctx.strokeStyle = 'rgba(255,120,210,0.75)'
+    ctx.lineWidth = rOuter - rInner
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.arc(ringCx, ringCy, (rOuter + rInner) / 2, startAng, endAng)
+    ctx.stroke()
     ctx.restore()
 
     // Laser segments.

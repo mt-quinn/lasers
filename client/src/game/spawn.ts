@@ -27,7 +27,8 @@ const normalizeCellsToOrigin = (cells: { x: number; y: number }[]) => {
 
 export const spawnBlock = (s: RunState) => {
   const t = s.timeSec
-  const cellSize = clamp(42 - Math.floor(t / 80) * 2, 32, 44)
+  // Cell size is constant so the global drop step is always exactly "1x1 block".
+  const cellSize = 40
   // Big rounding: for a 1-cell-thick block, ends should read as a half-circle (capsule).
   // Use ~cellSize/2, with a tiny epsilon to avoid degenerate geometry.
   const cornerRadius = cellSize * 0.5 - 0.6
@@ -64,6 +65,31 @@ export const spawnBlock = (s: RunState) => {
 
   const loop = buildCellLoop(cells)
   const localAabb = computeLocalAabbPx(cells, cellSize)
+
+  // Cache an "inside the piece" HP anchor in local pixel space to avoid per-frame allocations/GC.
+  // Using the nearest cell center to the average cell center keeps it always inside, even for concave shapes.
+  let avgX = 0
+  let avgY = 0
+  for (const c of cells) {
+    avgX += c.x + 0.5
+    avgY += c.y + 0.5
+  }
+  avgX /= Math.max(1, cells.length)
+  avgY /= Math.max(1, cells.length)
+  let best = { x: (cells[0]?.x ?? 0) + 0.5, y: (cells[0]?.y ?? 0) + 0.5 }
+  let bestD = Infinity
+  for (const c of cells) {
+    const cx = c.x + 0.5
+    const cy = c.y + 0.5
+    const dx = cx - avgX
+    const dy = cy - avgY
+    const d = dx * dx + dy * dy
+    if (d < bestD) {
+      bestD = d
+      best = { x: cx, y: cy }
+    }
+  }
+  const hpAnchorLocalPx = { x: best.x * cellSize, y: best.y * cellSize }
 
   // Spawn placement: never overlap any existing block AABB (including other newly-spawned blocks above).
   const pad = 18
@@ -158,6 +184,7 @@ export const spawnBlock = (s: RunState) => {
     value,
     loop,
     localAabb,
+    hpAnchorLocalPx,
   }
 
   s.blocks.push(block)

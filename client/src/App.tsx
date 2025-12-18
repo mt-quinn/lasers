@@ -200,8 +200,6 @@ export default function App() {
 
     const s = stateRef.current
     let last = performance.now()
-    let accumulator = 0
-    const FIXED_DT = 1 / 60
 
     const resize = () => {
       const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1))
@@ -229,16 +227,11 @@ export default function App() {
     window.addEventListener('resize', resize)
 
     const tick = (now: number) => {
+      // Use variable dt for simulation so damage/visuals update every frame even on
+      // 90/120Hz displays (fixed-step would "pause" every other frame).
       const dtSec = Math.min(0.05, (now - last) / 1000)
       last = now
-      accumulator += dtSec
-
-      while (accumulator >= FIXED_DT) {
-        if (!s.paused) {
-          stepSim(s, FIXED_DT)
-        }
-        accumulator -= FIXED_DT
-      }
+      if (!s.paused) stepSim(s, dtSec)
 
       drawFrame(canvas, s)
 

@@ -30,9 +30,7 @@ export const stepSim = (s: RunState, dt: number) => {
   const e = smoothstep(earlyT)
   const l = smoothstep(lateT)
 
-  // Fall speed is NOT part of difficulty for now (aiming skill > twitch).
-  // Keep the current globally-slower feel by using a single constant.
-  const fallSpeed = 45
+  // Movement is now tetris-like: blocks step down together on a global timer.
 
   // Spawn pacing: start slow enough that a new player can keep up.
   s.spawnTimer -= dt
@@ -81,11 +79,14 @@ export const stepSim = (s: RunState, dt: number) => {
   s.emitter.pos = lerpVec(s.emitter.pos, { x: targetX, y: emitterY }, 0.35)
   s.emitter.aimDir = normalize(lerpVec(s.emitter.aimDir, aimTarget, 0.22))
 
-  // Move blocks.
-  for (const b of s.blocks) {
-    // Global fall speed prevents later spawns from catching older blocks and overlapping.
-    b.vel.y = fallSpeed
-    b.pos = add(b.pos, mul(b.vel, dt))
+  // Global drop step.
+  s.dropTimerSec -= dt
+  if (s.dropTimerSec <= 0) {
+    const overshoot = Math.max(0, -s.dropTimerSec)
+    s.dropTimerSec = s.dropIntervalSec - (overshoot % s.dropIntervalSec)
+    for (const b of s.blocks) {
+      b.pos.y += b.cellSize
+    }
   }
 
   // Fail line sits just above the bottom rail (maximize board height).
