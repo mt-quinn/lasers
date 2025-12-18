@@ -3,9 +3,9 @@ import type { Rarity, RunState, UpgradeOffer, UpgradeType } from './runState'
 const rarityOrder: Rarity[] = ['common', 'rare', 'epic', 'legendary']
 
 const rarityWeight: Record<Rarity, number> = {
-  common: 70,
-  rare: 22,
-  epic: 7,
+  common: 80,
+  rare: 15,
+  epic: 4,
   legendary: 1,
 }
 
