@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Shrikhand&family=Nunito:wght@400;600;700;900&display=swap');
+
+:root {
+  font-family: 'Nunito', system-ui, -apple-system, BlinkMacSystemFont,
+    'SF Pro Text', system-ui, sans-serif;
+  line-height: 1.2;
+  font-weight: 400;
+  color: #f5f3ff;
+  background-color: #070816;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(130, 90, 255, 0.35), transparent 55%),
+    radial-gradient(circle at 90% 100%, rgba(255, 120, 200, 0.25), transparent 55%),
+    linear-gradient(180deg, #060615, #03030c 70%, #07081a);
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+
