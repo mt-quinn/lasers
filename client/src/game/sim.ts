@@ -8,6 +8,8 @@ import { getArenaLayout } from './layout'
 import { rollUpgradeOptions } from './levelUp'
 
 const EPS = 1.0
+const MAX_SPARKS = 280
+const MAX_GLOWS = 24
 
 const clampAimUpwards = (dir: Vec2) => {
   // Ensure we're aiming at least somewhat upward.
@@ -113,6 +115,25 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
+  // FX: update sparks + weld glows.
+  if (s.sparks.length > 0) {
+    for (const p of s.sparks) {
+      p.age += dt
+      p.vy += 780 * dt
+      p.vx *= Math.pow(0.08, dt) // quick air drag, dt-stable
+      p.vy *= Math.pow(0.12, dt)
+      p.x += p.vx * dt
+      p.y += p.vy * dt
+      // cool down over life
+      p.heat = Math.max(0, 1 - p.age / p.life)
+    }
+    s.sparks = s.sparks.filter((p) => p.age < p.life)
+  }
+  if (s.weldGlows.length > 0) {
+    for (const g of s.weldGlows) g.age += dt
+    s.weldGlows = s.weldGlows.filter((g) => g.age < g.life)
+  }
+
   // Update XP orbs (condense -> fly -> deliver).
   if (s.xpOrbs.length > 0) {
     const delivered: string[] = []
@@ -196,6 +217,50 @@ export const stepSim = (s: RunState, dt: number) => {
     const b = hit.blockId >= 0 ? s.blocks.find((bb) => bb.id === hit.blockId) : undefined
     if (b) {
       b.hp -= s.stats.dps * dt * intensity
+
+      // Welding FX at the damage contact point.
+      // Emit a small number of sparks per second, biased away from the surface normal.
+      const sparksPerSec = 130 * clamp(intensity, 0.15, 1)
+      s.sparkEmitAcc += sparksPerSec * dt
+      const emitN = Math.min(6, Math.floor(s.sparkEmitAcc))
+      if (emitN > 0) s.sparkEmitAcc -= emitN
+
+      if (emitN > 0) {
+        const n = hit.normal
+        const tx = -n.y
+        const ty = n.x
+        for (let i = 0; i < emitN; i++) {
+          const alongN = 80 + Math.random() * 220
+          const alongT = (Math.random() * 2 - 1) * (70 + Math.random() * 180)
+          const jitter = 2.5
+          s.sparks.push({
+            x: hit.point.x + (Math.random() * 2 - 1) * jitter,
+            y: hit.point.y + (Math.random() * 2 - 1) * jitter,
+            vx: n.x * alongN + tx * alongT + (Math.random() * 2 - 1) * 35,
+            vy: n.y * alongN + ty * alongT + (Math.random() * 2 - 1) * 35,
+            age: 0,
+            life: 0.12 + Math.random() * 0.22,
+            size: 0.9 + Math.random() * 2.4,
+            heat: 1,
+          })
+        }
+        if (s.sparks.length > MAX_SPARKS) s.sparks.splice(0, s.sparks.length - MAX_SPARKS)
+      }
+
+      // Glow: only while the block is alive. If the block dies this frame, avoid
+      // spawning a new glow that would render unclipped (and flash) after removal.
+      if (b.hp > 0) {
+        s.weldGlows.push({
+          x: hit.point.x,
+          y: hit.point.y,
+          blockId: hit.blockId,
+          age: 0,
+          life: 0.08 + 0.08 * Math.random(),
+          intensity: clamp(intensity, 0.25, 1),
+        })
+        if (s.weldGlows.length > MAX_GLOWS) s.weldGlows.splice(0, s.weldGlows.length - MAX_GLOWS)
+      }
+
       if (b.hp <= 0) {
         s.blocksDestroyed += 1
         // Spawn XP orb VFX that condenses into a sphere then flies to the XP gauge.

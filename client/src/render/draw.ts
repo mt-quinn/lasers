@@ -428,6 +428,91 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
+    // Welding hit FX: glow + sparks at beam contact points.
+    if (s.weldGlows.length > 0 || s.sparks.length > 0) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+
+      // Glows (radial gradients)
+      for (const g of s.weldGlows) {
+        const b = s.blocks.find((bb) => bb.id === g.blockId)
+        const t = clamp(g.age / Math.max(0.0001, g.life), 0, 1)
+        const aBase = (1 - t) * (0.35 + 0.55 * g.intensity)
+        const a = b ? aBase : aBase * 0.22
+
+        // Smaller, metal-like hot spot. Most of the glow is clipped inside the piece.
+        const r0 = 1.5 + 2.2 * g.intensity
+        const rInside = 9 + 13 * g.intensity
+
+        const gradInside = ctx.createRadialGradient(g.x, g.y, r0, g.x, g.y, rInside)
+        // Heated metal: white-hot core -> orange -> deep red edge.
+        gradInside.addColorStop(0, `rgba(255,255,255,${0.95 * a})`)
+        gradInside.addColorStop(0.22, `rgba(255,210,120,${0.78 * a})`)
+        gradInside.addColorStop(0.55, `rgba(255,120,40,${0.55 * a})`)
+        gradInside.addColorStop(0.9, `rgba(255,45,25,${0.28 * a})`)
+        gradInside.addColorStop(1, 'rgba(255,35,25,0)')
+
+        if (b) {
+          ctx.save()
+          // Clip glow to the block shape so it reads like the metal is glowing.
+          drawRoundedPolyomino(ctx, b.loop, b.pos, b.cellSize, b.cornerRadius)
+          ctx.clip()
+          ctx.fillStyle = gradInside
+          ctx.beginPath()
+          ctx.arc(g.x, g.y, rInside, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.restore()
+        }
+
+        // Subtle external halo (reduced outside-piece glow).
+        const rHalo = rInside + 5 + 4 * g.intensity
+        const gradHalo = ctx.createRadialGradient(g.x, g.y, rInside * 0.6, g.x, g.y, rHalo)
+        gradHalo.addColorStop(0, `rgba(255,150,60,${0.12 * a})`)
+        gradHalo.addColorStop(0.6, `rgba(255,60,40,${0.06 * a})`)
+        gradHalo.addColorStop(1, 'rgba(255,60,40,0)')
+        ctx.fillStyle = gradHalo
+        ctx.beginPath()
+        ctx.arc(g.x, g.y, rHalo, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // Sparks
+      for (const p of s.sparks) {
+        const t = clamp(p.age / Math.max(0.0001, p.life), 0, 1)
+        const a = (1 - t) * (0.45 + 0.65 * p.heat)
+        // "hot metal" spark color shifts from white -> yellow -> orange/pink
+        const c0 = `rgba(255,252,240,${0.95 * a})`
+        const c1 = `rgba(255,210,140,${0.75 * a})`
+        const c2 = `rgba(255,120,210,${0.35 * a})`
+
+        const tail = 0.018 + 0.022 * p.heat
+        const x0 = p.x - p.vx * tail
+        const y0 = p.y - p.vy * tail
+
+        ctx.lineCap = 'round'
+        ctx.lineWidth = Math.max(1, p.size)
+        ctx.strokeStyle = c2
+        ctx.beginPath()
+        ctx.moveTo(x0, y0)
+        ctx.lineTo(p.x, p.y)
+        ctx.stroke()
+
+        ctx.lineWidth = Math.max(0.8, p.size * 0.65)
+        ctx.strokeStyle = c1
+        ctx.beginPath()
+        ctx.moveTo(x0, y0)
+        ctx.lineTo(p.x, p.y)
+        ctx.stroke()
+
+        ctx.fillStyle = c0
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, Math.max(0.9, p.size * 0.55), 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.restore()
+    }
+
     // Laser segments.
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'

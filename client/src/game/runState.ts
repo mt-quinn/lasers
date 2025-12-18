@@ -11,6 +11,26 @@ export type XpOrb = {
   value: number
 }
 
+export type SparkParticle = {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  age: number
+  life: number
+  size: number
+  heat: number // 0..1, used for color/brightness
+}
+
+export type WeldGlow = {
+  x: number
+  y: number
+  blockId: number
+  age: number
+  life: number
+  intensity: number
+}
+
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
 export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow'
@@ -114,6 +134,11 @@ export type RunState = {
   xpOrbs: XpOrb[]
   nextOrbId: number
 
+  // FX
+  sparks: SparkParticle[]
+  weldGlows: WeldGlow[]
+  sparkEmitAcc: number
+
   blocks: BlockEntity[]
   nextBlockId: number
   spawnTimer: number
@@ -166,6 +191,9 @@ export const createInitialRunState = (): RunState => {
     levelUpOptions: [],
     xpOrbs: [],
     nextOrbId: 1,
+    sparks: [],
+    weldGlows: [],
+    sparkEmitAcc: 0,
     blocks: [],
     nextBlockId: 1,
     // Give the player a moment to orient before the first block arrives.
