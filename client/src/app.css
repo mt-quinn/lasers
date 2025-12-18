@@ -172,104 +172,139 @@
   touch-action: none;
 }
 
-.overlay {
-  position: fixed;
+/* Upgrades UI: compact translucent panel, no global dim/blur. */
+.upgradeOverlay {
+  position: absolute;
   inset: 0;
+  z-index: 5;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.92));
-  padding: 1rem;
+  padding: 0.8rem;
 }
 
-.card {
-  width: 100%;
-  max-width: 520px;
+.upgradePanel {
+  width: min(360px, 92vw);
   border-radius: 1rem;
-  background: linear-gradient(145deg, rgba(30, 18, 60, 0.96), rgba(14, 10, 30, 0.96));
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.8);
-  padding: 1rem;
+  background: rgba(18, 14, 34, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 22px 70px rgba(0, 0, 0, 0.60);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
 }
 
-.cardTitle {
+.upgradeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.upgradeTitle {
   font-family: 'Oxanium', system-ui, sans-serif;
-  letter-spacing: 0.10em;
-  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.88rem;
   color: #fff1b8;
-  margin-bottom: 0.25rem;
 }
 
-.cardSub {
-  opacity: 0.85;
-  margin-bottom: 0.75rem;
+.upgradeSub {
+  margin-top: 0.18rem;
+  font-size: 0.82rem;
+  opacity: 0.88;
 }
 
-.upgradeGrid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.5rem;
-  max-height: min(56vh, 520px);
-  overflow: auto;
-  padding-right: 0.15rem;
-}
-
-.upgrade {
-  text-align: left;
-  border-radius: 0.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: radial-gradient(circle at 30% 0%, rgba(180, 140, 255, 0.22), rgba(20, 12, 40, 0.92));
-  color: inherit;
-  padding: 0.65rem 0.75rem;
+.upgradeClose {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.14);
+  color: rgba(255, 247, 228, 0.92);
+  padding: 0.30rem 0.65rem;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
-.upgrade.disabled {
-  opacity: 0.5;
+.upgradeList {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.32rem;
+  padding: 0.55rem 0.55rem 0.6rem;
+  max-height: min(58vh, 520px);
+  overflow: auto;
+}
+
+.upgradeTile {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem;
+  align-items: center;
+  text-align: left;
+  border-radius: 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  padding: 0.48rem 0.55rem;
+  cursor: pointer;
+}
+
+.upgradeTile:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.upgradeTile.disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.uTop {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.uName {
+.upgradeTileName {
   font-weight: 900;
   letter-spacing: 0.02em;
 }
 
-.uLvl {
-  font-variant-numeric: tabular-nums;
+.upgradeTileDesc {
+  margin-top: 0.14rem;
   opacity: 0.85;
+  font-size: 0.80rem;
+  line-height: 1.2;
 }
 
-.uDesc {
-  margin-top: 0.3rem;
-  opacity: 0.85;
-  font-size: 0.92rem;
-  line-height: 1.25;
-}
-
-.uBottom {
-  margin-top: 0.55rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  opacity: 0.95;
-}
-
-.uCost {
+.upgradeTileMeta {
+  text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0.9;
 }
 
-.uBuy {
+.upgradeTileLevel {
+  font-size: 0.70rem;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
   font-family: 'Oxanium', system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  font-size: 0.85rem;
-  color: #fff1b8;
+  opacity: 0.75;
+}
+
+.upgradeTileCost {
+  margin-top: 0.18rem;
+  font-size: 0.88rem;
+  font-weight: 900;
+  color: #fff7e4;
+}
+
+.upgradeFooter {
+  display: flex;
+  gap: 0.45rem;
+  justify-content: flex-end;
+  padding: 0.55rem 0.65rem 0.65rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.10);
 }
 
 @media (max-width: 420px) {

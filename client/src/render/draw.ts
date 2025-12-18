@@ -229,7 +229,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
     // Fail line: keep it tight to the bottom to maximize board height.
     const railH = 14
-    const bottomPad = 16
+    const bottomPad = 16 + (s.view.safeBottom || 0)
     const railY = s.view.height - bottomPad - railH
     const failY = railY - 8
     ctx.strokeStyle = 'rgba(255,220,180,0.18)'
@@ -296,7 +296,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.fillText(label, cx, cy)
     }
 
-    // Slider rail + emitter (at bottom).
+    // Slider rail + emitter (at bottom, above safe-area).
     ctx.fillStyle = 'rgba(0,0,0,0.25)'
     ctx.fillRect(16, railY, s.view.width - 32, 14)
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'

@@ -31,6 +31,7 @@ export type ViewState = {
   width: number
   height: number
   dpr: number
+  safeBottom: number
 }
 
 export type InputState = {
@@ -85,7 +86,7 @@ export type RunState = {
 export const createInitialRunState = (): RunState => {
   return {
     paused: false,
-    view: { width: 360, height: 640, dpr: 1 },
+    view: { width: 360, height: 640, dpr: 1, safeBottom: 0 },
     input: {
       aimPointerId: null,
       aimActive: false,

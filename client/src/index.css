@@ -9,6 +9,9 @@
   background-color: #070816;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  /* Expose safe-area insets to JS via computed styles. */
+  --safe-area-bottom: env(safe-area-inset-bottom);
+  --safe-area-top: env(safe-area-inset-top);
 }
 
 *,

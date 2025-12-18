@@ -57,7 +57,7 @@ export const stepSim = (s: RunState, dt: number) => {
   // Place the slider/emitter at the very bottom to maximize playfield height.
   const sliderPad = 22
   const railH = 14
-  const bottomPad = 16
+  const bottomPad = 16 + (s.view.safeBottom || 0)
   const railY = s.view.height - bottomPad - railH
   const emitterY = railY + railH / 2
   let targetX = s.emitter.pos.x

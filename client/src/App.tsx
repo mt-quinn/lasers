@@ -217,6 +217,12 @@ export default function App() {
       s.view.dpr = dpr
       s.view.width = w
       s.view.height = h
+
+      // Read safe-area bottom inset via CSS custom property (px).
+      const rootStyle = window.getComputedStyle(document.documentElement)
+      const safeBottomStr = rootStyle.getPropertyValue('--safe-area-bottom').trim()
+      const safeBottom = safeBottomStr.endsWith('px') ? Number(safeBottomStr.replace('px', '')) : Number(safeBottomStr)
+      s.view.safeBottom = Number.isFinite(safeBottom) ? safeBottom : 0
     }
 
     resize()
@@ -334,55 +340,71 @@ export default function App() {
         <main className="lg-main">
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
+
+            {upgradeOpen && (
+              <div className="upgradeOverlay" role="dialog" aria-label="Upgrades">
+                <div className="upgradePanel">
+                  <div className="upgradeHeader">
+                    <div className="upgradeHeaderLeft">
+                      <div className="upgradeTitle">Upgrades</div>
+                      <div className="upgradeSub">
+                        Currency <b>{hud.currency}</b>
+                      </div>
+                    </div>
+                    <div className="upgradeHeaderRight">
+                      <button
+                        type="button"
+                        className="upgradeClose"
+                        onClick={toggleUpgradeMenu}
+                        aria-label="Close upgrades"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="upgradeList" aria-label="Available upgrades">
+                    {upgrades.map((id) => {
+                      const def = getUpgradeDef(id)
+                      const level = stateRef.current.upgrades[id] ?? 0
+                      const cost = def.cost(level)
+                      const canBuy = hud.currency >= cost
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          className={['upgradeTile', canBuy ? '' : 'disabled']
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => buyUpgrade(id)}
+                          disabled={!canBuy}
+                        >
+                          <div className="upgradeTileMain">
+                            <div className="upgradeTileName">{def.name}</div>
+                            <div className="upgradeTileDesc">{def.desc(level)}</div>
+                          </div>
+                          <div className="upgradeTileMeta">
+                            <div className="upgradeTileLevel">Level {level}</div>
+                            <div className="upgradeTileCost">Cost {cost}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="upgradeFooter">
+                    <button type="button" className="hudBtn primary" onClick={toggleUpgradeMenu}>
+                      Resume
+                    </button>
+                    <button type="button" className="hudBtn" onClick={restart}>
+                      Restart
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </main>
-
-        {upgradeOpen && (
-          <div className="overlay">
-            <div className="card">
-              <div className="cardTitle">Upgrades (Run Paused)</div>
-              <div className="cardSub">
-                Cash: <b>{hud.currency}</b>
-              </div>
-              <div className="upgradeGrid">
-                {upgrades.map((id) => {
-                  const def = getUpgradeDef(id)
-                  const level = stateRef.current.upgrades[id] ?? 0
-                  const cost = def.cost(level)
-                  const canBuy = hud.currency >= cost
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      className={['upgrade', canBuy ? '' : 'disabled'].filter(Boolean).join(' ')}
-                      onClick={() => buyUpgrade(id)}
-                      disabled={!canBuy}
-                    >
-                      <div className="uTop">
-                        <div className="uName">{def.name}</div>
-                        <div className="uLvl">Lv {level}</div>
-                      </div>
-                      <div className="uDesc">{def.desc(level)}</div>
-                      <div className="uBottom">
-                        <span className="uCost">Cost {cost}</span>
-                        <span className="uBuy">Buy</span>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-
-              <div className="cardActions">
-                <button type="button" className="btn" onClick={toggleUpgradeMenu}>
-                  Resume
-                </button>
-                <button type="button" className="btn ghost" onClick={restart}>
-                  Restart
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
