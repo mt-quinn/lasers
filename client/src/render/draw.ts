@@ -84,6 +84,127 @@ const drawRoundedPolyomino = (ctx: CanvasRenderingContext2D, loop: Vec2[], pos: 
   ctx.closePath()
 }
 
+const hexToRgb = (hex: string) => {
+  const h = hex.replace('#', '').trim()
+  const v = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16)
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 }
+}
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+
+const lerpColor = (a: string, b: string, t: number) => {
+  const c0 = hexToRgb(a)
+  const c1 = hexToRgb(b)
+  const r = Math.round(lerp(c0.r, c1.r, t))
+  const g = Math.round(lerp(c0.g, c1.g, t))
+  const b2 = Math.round(lerp(c0.b, c1.b, t))
+  return `rgb(${r} ${g} ${b2})`
+}
+
+// Health gradient: high HP is cooler/lighter; low HP is warmer/more urgent.
+// This fits the existing purple/pink scheme while remaining readable.
+const healthFill = (hpPct: number) => {
+  const t = clamp(hpPct, 0, 1)
+  // Stops (low -> high):
+  const c0 = '#ff3b5c' // low: hot red
+  const c1 = '#ff6bd6' // mid-low: neon pink
+  const c2 = '#c7a2ff' // mid-high: lilac
+  const c3 = '#e7ddff' // high: icy lavender
+  if (t < 0.33) return lerpColor(c0, c1, t / 0.33)
+  if (t < 0.66) return lerpColor(c1, c2, (t - 0.33) / 0.33)
+  return lerpColor(c2, c3, (t - 0.66) / 0.34)
+}
+
+const relativeLuma = (cssRgb: string) => {
+  // cssRgb is "rgb(r g b)" from lerpColor; parse quickly.
+  const m = cssRgb.match(/rgb\((\d+)\s+(\d+)\s+(\d+)\)/)
+  if (!m) return 1
+  const r = Number(m[1]) / 255
+  const g = Number(m[2]) / 255
+  const b = Number(m[3]) / 255
+  // sRGB luminance approximation
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+const pointInPoly = (p: Vec2, poly: Vec2[]) => {
+  // Ray casting; poly may be closed or not.
+  let inside = false
+  const n = poly.length
+  if (n < 3) return false
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const a = poly[i]!
+    const b = poly[j]!
+    const intersect =
+      (a.y > p.y) !== (b.y > p.y) &&
+      p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y + 1e-9) + a.x
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
+  // Desired: near center, inside the shape walls.
+  const centers = b.cells.map((c) => ({
+    x: b.pos.x + (c.x + 0.5) * b.cellSize,
+    y: b.pos.y + (c.y + 0.5) * b.cellSize,
+  }))
+  let cx = 0
+  let cy = 0
+  for (const p of centers) {
+    cx += p.x
+    cy += p.y
+  }
+  cx /= Math.max(1, centers.length)
+  cy /= Math.max(1, centers.length)
+  const loopWorld = b.loop.map((p) => ({ x: b.pos.x + p.x * b.cellSize, y: b.pos.y + p.y * b.cellSize }))
+
+  let target = { x: cx, y: cy }
+  if (!pointInPoly(target, loopWorld)) {
+    // Fallback: pick the cell center closest to the centroid.
+    let best = centers[0] ?? target
+    let bestD = Infinity
+    for (const p of centers) {
+      const dx = p.x - cx
+      const dy = p.y - cy
+      const d = dx * dx + dy * dy
+      if (d < bestD) {
+        bestD = d
+        best = p
+      }
+    }
+    target = best
+  }
+
+  // Visibility behavior:
+  // If the piece is entering from the top, render the number at the bottom of the
+  // *visible portion* first, then slide upward toward the true center as the piece becomes visible.
+  const pieceTop = b.pos.y + b.localAabb.minY
+  const pieceBottom = b.pos.y + b.localAabb.maxY
+  const visibleTop = 0
+  const visibleBottom = s.view.height
+
+  const visiblePieceTop = Math.max(pieceTop, visibleTop)
+  const visiblePieceBottom = Math.min(pieceBottom, visibleBottom)
+  const pieceH = Math.max(1, pieceBottom - pieceTop)
+  const visibleH = clamp((visiblePieceBottom - visiblePieceTop) / pieceH, 0, 1)
+
+  const pad = 10
+  const yBottomVisible = visiblePieceBottom - pad
+  // Smoothly blend from bottom-visible to target as visibility approaches full.
+  const t = Math.pow(visibleH, 2.2)
+  const y = lerp(yBottomVisible, target.y, t)
+
+  // Clamp inside the piece's AABB (a conservative "inside walls" clamp).
+  const left = b.pos.x + b.localAabb.minX + pad
+  const right = b.pos.x + b.localAabb.maxX - pad
+  const top = Math.max(visibleTop + pad, b.pos.y + b.localAabb.minY + pad)
+  const bottom = b.pos.y + b.localAabb.maxY - pad
+  return {
+    x: clamp(target.x, left, right),
+    y: clamp(y, top, bottom),
+  }
+}
+
 export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -127,44 +248,52 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
-      ctx.shadowColor = `rgba(180,140,255,${0.16 * glow})`
+      const fillBase = healthFill(hpPct)
+      const lum = relativeLuma(fillBase)
+      ctx.shadowColor = `rgba(255,120,210,${0.14 * glow})`
       ctx.shadowBlur = 18 * glow
 
       drawRoundedPolyomino(ctx, b.loop, b.pos, b.cellSize, b.cornerRadius)
 
-      const fill = ctx.createLinearGradient(b.pos.x, b.pos.y, b.pos.x, b.pos.y + b.localAabb.maxY)
-      fill.addColorStop(0, 'rgba(255,245,200,0.92)')
-      fill.addColorStop(1, 'rgba(220,160,255,0.90)')
-      ctx.fillStyle = fill
+      // Solid fill (health gradient is applied as a per-piece color, not as an internal gradient).
+      ctx.fillStyle = fillBase
       ctx.fill()
 
+      // Bevel shading overlay (subtle, still solid-colored overall).
+      ctx.save()
+      ctx.globalCompositeOperation = 'overlay'
+      const shade = ctx.createLinearGradient(
+        b.pos.x,
+        b.pos.y + b.localAabb.minY,
+        b.pos.x,
+        b.pos.y + b.localAabb.maxY,
+      )
+      shade.addColorStop(0, 'rgba(255,255,255,0.22)')
+      shade.addColorStop(0.55, 'rgba(255,255,255,0.05)')
+      shade.addColorStop(1, 'rgba(0,0,0,0.18)')
+      ctx.fillStyle = shade
+      ctx.fill()
+      ctx.restore()
+
       ctx.lineWidth = 2
-      ctx.strokeStyle = 'rgba(40,18,60,0.75)'
+      ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
       ctx.stroke()
       ctx.restore()
 
       // HP text (centered in AABB).
-      const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
-      const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
+      const anchor = pickHpAnchor(s, b)
+      const cx = anchor.x
+      const cy = anchor.y
       ctx.font = '900 18px Nunito'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillStyle = 'rgba(10,5,18,0.95)'
-      ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+      const darkText = lum > 0.55
+      ctx.fillStyle = darkText ? 'rgba(10,5,18,0.92)' : 'rgba(255,248,230,0.95)'
+      ctx.strokeStyle = darkText ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'
       ctx.lineWidth = 3
       const label = String(Math.max(0, Math.ceil(b.hp)))
       ctx.strokeText(label, cx, cy)
       ctx.fillText(label, cx, cy)
-
-      // HP rim
-      const barW = Math.min(110, (b.localAabb.maxX - b.localAabb.minX) * 0.9)
-      const barH = 6
-      const bx = cx - barW / 2
-      const by = cy + 18
-      ctx.fillStyle = 'rgba(15,10,30,0.45)'
-      ctx.fillRect(bx, by, barW, barH)
-      ctx.fillStyle = `rgba(255,120,210,${0.85})`
-      ctx.fillRect(bx, by, barW * hpPct, barH)
     }
 
     // Slider rail + emitter (at bottom).

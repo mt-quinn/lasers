@@ -21,10 +21,12 @@ html,
 body,
 #root {
   height: 100%;
+  min-height: 100dvh;
 }
 
 body {
   margin: 0;
+  height: 100dvh;
   overflow: hidden;
   touch-action: none;
   overscroll-behavior: none;
