@@ -10,6 +10,7 @@ type HudSnapshot = {
   dps: number
   maxBounces: number
   blocksDestroyed: number
+  lives: number
   paused: boolean
 }
 
@@ -25,6 +26,7 @@ export default function App() {
     dps: stateRef.current.stats.dps,
     maxBounces: stateRef.current.stats.maxBounces,
     blocksDestroyed: 0,
+    lives: stateRef.current.lives,
     paused: false,
   }))
 
@@ -255,6 +257,7 @@ export default function App() {
           dps: s.stats.dps,
           maxBounces: s.stats.maxBounces,
           blocksDestroyed: s.blocksDestroyed,
+          lives: s.lives,
           paused: s.paused,
         })
       }
@@ -280,6 +283,7 @@ export default function App() {
       dps: stateRef.current.stats.dps,
       maxBounces: stateRef.current.stats.maxBounces,
       blocksDestroyed: 0,
+      lives: stateRef.current.lives,
       paused: false,
     })
   }, [])
@@ -302,6 +306,10 @@ export default function App() {
             <div className="hudKvp">
               <span className="k">Destroyed</span>
               <span className="v">{hud.blocksDestroyed}</span>
+            </div>
+            <div className="hudKvp">
+              <span className="k">Lives</span>
+              <span className="v">{hud.lives}/3</span>
             </div>
           </div>
 

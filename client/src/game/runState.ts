@@ -34,7 +34,7 @@ export type WeldGlow = {
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
-export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow'
+export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow' | 'life'
 
 export type UpgradeOffer = {
   type: UpgradeType
@@ -149,6 +149,19 @@ export type RunState = {
   timeSec: number
   blocksDestroyed: number
 
+  // Lives: 3 max. Lose one when a block reaches the fail line; board clears and play continues.
+  lives: number
+  // Short breather after losing a life (spawns paused).
+  respiteSec: number
+  // Life-loss presentation: wipe + banner that makes it clear the run continues.
+  lifeLossFx: null | {
+    t: number
+    wipeDur: number
+    bannerDur: number
+    livesAfter: number
+    cleared: boolean
+  }
+
   // Global "tetris-like" drop pacing.
   dropIntervalSec: number
   dropTimerSec: number
@@ -206,6 +219,9 @@ export const createInitialRunState = (): RunState => {
     },
     timeSec: 0,
     blocksDestroyed: 0,
+    lives: 3,
+    respiteSec: 0,
+    lifeLossFx: null,
     // Start with a full interval so the player sees the cadence before the first step.
     dropIntervalSec: 1.275,
     dropTimerSec: 1.275,

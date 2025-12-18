@@ -24,8 +24,20 @@ export const computeXpCap = (level: number) => {
   // Level 5: ~23
   // Level 10: ~53
   // Level 15: ~120
-  const cap = Math.round(10 * Math.pow(1.18, Math.max(0, level)))
-  return Math.min(220, Math.max(10, cap))
+  const base = 10 * Math.pow(1.18, Math.max(0, level))
+
+  // Make early levels (especially first ~8) arrive 25–50% faster by reducing required XP,
+  // then smoothly converge back to the original curve.
+  // Scale:
+  // - level 0: 0.60x
+  // - level 8: 0.80x  (25% faster)
+  // - level 16+: 1.00x
+  const t0 = Math.max(0, Math.min(1, level / 8))
+  const t1 = Math.max(0, Math.min(1, (level - 8) / 8))
+  const scale = level <= 8 ? 0.6 + 0.2 * t0 : 0.8 + 0.2 * t1
+
+  const cap = Math.round(base * scale)
+  return Math.min(220, Math.max(6, cap))
 }
 
 const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number): T => {
@@ -45,6 +57,8 @@ const rollRarity = (random: () => number, allowed?: Rarity[]): Rarity => {
 
 export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOffer[] => {
   const types: UpgradeType[] = ['damage', 'bounces', 'bounceFalloff', 'dropSlow']
+  // Offer +1 life only while the player is below max lives.
+  if (s.lives < 3) types.push('life')
   const picked: UpgradeOffer[] = []
   const usedTypes = new Set<UpgradeType>()
 
@@ -56,7 +70,9 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
 
     // Bounces cannot be common.
     const rarity =
-      type === 'bounces'
+      type === 'life'
+        ? 'rare'
+        : type === 'bounces'
         ? rollRarity(random, ['rare', 'epic', 'legendary'])
         : rollRarity(random)
 
@@ -67,6 +83,15 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
 }
 
 const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffer => {
+  if (type === 'life') {
+    const next = Math.min(3, s.lives + 1)
+    return {
+      type,
+      rarity: 'rare',
+      title: 'Life',
+      description: `Gain +1 life (${next}/3)`,
+    }
+  }
   if (type === 'damage') {
     const mult = rarity === 'common' ? 1.10 : rarity === 'rare' ? 1.18 : rarity === 'epic' ? 1.30 : 1.45
     const next = Math.round(s.stats.dps * mult)
@@ -109,6 +134,10 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
 
 export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
   const r = offer.rarity
+  if (offer.type === 'life') {
+    s.lives = Math.min(3, s.lives + 1)
+    return
+  }
   if (offer.type === 'damage') {
     const mult = r === 'common' ? 1.10 : r === 'rare' ? 1.18 : r === 'epic' ? 1.30 : 1.45
     s.stats.dps = Math.round(s.stats.dps * mult)

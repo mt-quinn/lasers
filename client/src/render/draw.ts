@@ -844,6 +844,90 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.strokeText(label, cx, cy)
       ctx.fillText(label, cx, cy)
     }
+
+    // Life loss presentation: board wipe + banner (run continues).
+    if (s.lifeLossFx) {
+      const t = s.lifeLossFx.t
+      const wipeDur = s.lifeLossFx.wipeDur
+      const bannerDur = s.lifeLossFx.bannerDur
+
+      // Wipe: a bright scan band that moves top->bottom, "vaporizing" the board.
+      const p = clamp(t / Math.max(0.001, wipeDur), 0, 1)
+      if (p < 1) {
+        const y = p * s.view.height
+        const band = 90
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        const grad = ctx.createLinearGradient(0, y - band, 0, y + band)
+        grad.addColorStop(0, 'rgba(0,0,0,0)')
+        grad.addColorStop(0.35, 'rgba(255,80,120,0.10)')
+        grad.addColorStop(0.5, 'rgba(255,240,220,0.18)')
+        grad.addColorStop(0.65, 'rgba(255,80,120,0.10)')
+        grad.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = grad
+        ctx.fillRect(0, y - band, s.view.width, band * 2)
+
+        // subtle trailing vignette above the band so the wipe reads as an event.
+        const haze = ctx.createLinearGradient(0, 0, 0, y)
+        haze.addColorStop(0, 'rgba(0,0,0,0)')
+        haze.addColorStop(1, 'rgba(0,0,0,0.10)')
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = haze
+        ctx.fillRect(0, 0, s.view.width, y)
+        ctx.restore()
+      }
+
+      // Banner: "LIFE LOST" + remaining lives.
+      const bt = clamp(t / Math.max(0.001, bannerDur), 0, 1)
+      const fadeIn = clamp(bt / 0.12, 0, 1)
+      const fadeOut = clamp((1 - bt) / 0.25, 0, 1)
+      const a = fadeIn * fadeOut
+      if (a > 0.001) {
+        const cx = s.view.width * 0.5
+        const cy = s.view.height * 0.32
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+
+        // Panel
+        ctx.fillStyle = `rgba(0,0,0,${0.35 * a})`
+        const w = Math.min(320, s.view.width - 44)
+        const h = 72
+        const x = cx - w / 2
+        const y = cy - h / 2
+        ctx.beginPath()
+        const r = 14
+        ctx.moveTo(x + r, y)
+        ctx.arcTo(x + w, y, x + w, y + h, r)
+        ctx.arcTo(x + w, y + h, x, y + h, r)
+        ctx.arcTo(x, y + h, x, y, r)
+        ctx.arcTo(x, y, x + w, y, r)
+        ctx.closePath()
+        ctx.fill()
+
+        // Accent line
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.strokeStyle = `rgba(255,80,120,${0.45 * a})`
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.moveTo(x + 18, y + 14)
+        ctx.lineTo(x + w - 18, y + 14)
+        ctx.stroke()
+        ctx.restore()
+
+        // Text
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillStyle = `rgba(255,245,235,${0.95 * a})`
+        ctx.font = '900 18px Oxanium'
+        ctx.fillText('LIFE LOST', cx, cy - 10)
+        ctx.fillStyle = `rgba(255,210,210,${0.75 * a})`
+        ctx.font = '800 13px Nunito'
+        ctx.fillText(`${s.lifeLossFx.livesAfter}/3 lives remaining`, cx, cy + 14)
+
+        ctx.restore()
+      }
+    }
   })
 }
 

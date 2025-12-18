@@ -28,6 +28,42 @@ const clampAimUpwards = (dir: Vec2) => {
 export const stepSim = (s: RunState, dt: number) => {
   s.timeSec += dt
 
+  // Life-loss FX runs on top of the sim. During the wipe, freeze gameplay so it doesn't read as death.
+  if (s.lifeLossFx) {
+    s.lifeLossFx.t += dt
+
+    // Clear the board once, after the wipe has visually passed.
+    if (!s.lifeLossFx.cleared && s.lifeLossFx.t >= s.lifeLossFx.wipeDur) {
+      s.lifeLossFx.cleared = true
+
+      s.blocks = []
+      s.features = []
+      s.xpOrbs = []
+      s.sparks = []
+      s.weldGlows = []
+      s.sparkEmitAcc = 0
+      s.weld = { blockId: -1, x: 0, y: 0, dwell: 0 }
+
+      // Breather after the wipe.
+      s.respiteSec = Math.max(s.respiteSec, 1.1)
+      s.spawnTimer = Math.max(s.spawnTimer, 1.2)
+      s.dropTimerSec = s.dropIntervalSec
+    }
+
+    // End banner after duration.
+    if (s.lifeLossFx.t >= s.lifeLossFx.bannerDur) {
+      s.lifeLossFx = null
+    }
+
+    // During the wipe phase, freeze gameplay (no spawns, no movement, no laser damage).
+    if (s.lifeLossFx && s.lifeLossFx.t < s.lifeLossFx.wipeDur) {
+      // Keep laser visuals quiet during the wipe.
+      s.laser.segments = []
+      s.laser.hitBlockId = null
+      return
+    }
+  }
+
   const smoothstep = (x: number) => x * x * (3 - 2 * x)
 
   // Difficulty curve: deliberately easy first minute so players can buy upgrades,
@@ -41,6 +77,11 @@ export const stepSim = (s: RunState, dt: number) => {
 
   const layout = getArenaLayout(s.view)
   const cellSize = 40
+
+  // Respite after losing a life: no spawns for a moment.
+  if (s.respiteSec > 0) {
+    s.respiteSec = Math.max(0, s.respiteSec - dt)
+  }
 
   // Spawn pacing (director-style): a time-based target curve, with pressure guardrails
   // so the game ramps without spiraling into impossible states.
@@ -64,7 +105,7 @@ export const stepSim = (s: RunState, dt: number) => {
   const spawnEvery = spawnEveryBase * (1 + 0.85 * pressure01)
   const maxBlocks = Math.max(3, maxBlocksBase - Math.floor(2 * pressure01))
 
-  const allowSpawn = dangerCount === 0
+  const allowSpawn = dangerCount === 0 && s.respiteSec <= 0
   if (allowSpawn && s.spawnTimer <= 0) {
     const occupants = s.blocks.length + s.features.length
     if (occupants < maxBlocks) {
@@ -181,13 +222,38 @@ export const stepSim = (s: RunState, dt: number) => {
   for (const b of s.blocks) {
     const bottom = b.pos.y + b.localAabb.maxY
     if (bottom >= failY) {
-      // Reset run immediately.
-      const fresh = createInitialRunState()
-      fresh.view = s.view
-      fresh.input = s.input
-      // Preserve pause state to avoid fighting the UI.
-      fresh.paused = s.paused
-      Object.assign(s, fresh)
+      // Lose a life, clear the board, and continue with a short respite.
+      s.lives = Math.max(0, s.lives - 1)
+
+      // If out of lives, reset the run.
+      if (s.lives <= 0) {
+        const fresh = createInitialRunState()
+        fresh.view = s.view
+        fresh.input = s.input
+        fresh.paused = s.paused
+        Object.assign(s, fresh)
+        return
+      }
+
+      // Kick off a wipe + banner so this reads as "life lost" (not run over).
+      // Board clear is delayed until the wipe passes.
+      s.lifeLossFx = {
+        t: 0,
+        wipeDur: 0.35,
+        bannerDur: 0.95,
+        livesAfter: s.lives,
+        cleared: false,
+      }
+
+      // Stop spawns immediately; full respite is applied after wipe.
+      s.respiteSec = Math.max(s.respiteSec, 0.35)
+      s.spawnTimer = Math.max(s.spawnTimer, 0.7)
+
+      // Light haptic feedback on life loss (if available).
+      const nav: any = navigator
+      if (nav && typeof nav.vibrate === 'function') {
+        nav.vibrate([12, 40, 10])
+      }
       return
     }
   }
