@@ -362,11 +362,6 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                  <div className="upgradeFooter">
-                    <button type="button" className="hudBtn" onClick={restart}>
-                      Restart
-                    </button>
-                  </div>
                 </div>
               </div>
             )}

@@ -249,16 +249,20 @@ export const spawnBlock = (s: RunState) => {
   // Difficulty scaling: extremely gentle early so players can afford upgrades.
   const smoothstep = (x: number) => x * x * (3 - 2 * x)
   const earlyT = clamp(t / 60, 0, 1)
-  const lateT = clamp((t - 60) / 300, 0, 1)
+  // Slow the late-game HP ramp: spread it over a longer window so it doesn't spike quickly.
+  const lateT = clamp((t - 60) / 420, 0, 1)
   const e = smoothstep(earlyT)
   const l = smoothstep(lateT)
+  const lEased = l * l // ease-in: slower growth early in the late phase
 
   // Scale down displayed HP numbers by 10x without changing TTK (DPS is scaled too).
   const baseHpEarly = 9 + (24 - 9) * e
-  const baseHpLate = 18 + (120 - 18) * l
+  // Soften the harshest scenarios: reduce late-game endpoint and ramp more gently.
+  const baseHpLate = 18 + (92 - 18) * lEased
   const baseHp = t < 60 ? baseHpEarly : baseHpLate
-  const sizeMult = 0.7 + 0.25 * Math.sqrt(shape.cells.length)
-  const hpMax = Math.round(baseHp * sizeMult * 1.5)
+  const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
+  // Soft cap prevents late-game rolls from becoming effectively unkillable.
+  const hpMax = Math.min(240, Math.round(baseHp * sizeMult * 1.5))
   // XP per block: keep simple for now (tunable). Larger shapes are worth a bit more.
   const xpValue = Math.max(1, Math.round(Math.sqrt(shape.cells.length)))
 
