@@ -309,7 +309,7 @@ export default function App() {
     <div className="lg-viewport">
       <div className="lg-shell">
         <header className="lg-header">
-          <div className="lg-title">Laser Game</div>
+          <div className="lg-title">Big Lasers</div>
           <div className="lg-stats">
             <div className="pill">
               <span className="label">Cash</span>

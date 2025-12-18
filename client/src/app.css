@@ -19,14 +19,25 @@
 .lg-header {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 0.6rem;
+  gap: 0.55rem;
+  padding: 0.75rem 0.8rem;
+  border-radius: 1.05rem;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(255, 120, 210, 0.18), transparent 55%),
+    radial-gradient(circle at 90% 100%, rgba(140, 100, 255, 0.16), transparent 60%),
+    linear-gradient(180deg, rgba(12, 10, 28, 0.72), rgba(10, 8, 22, 0.62));
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 18px 45px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
 }
 
 .lg-title {
-  font-family: 'Shrikhand', cursive;
-  letter-spacing: 0.08em;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   color: #fff1b8;
   text-shadow:
     0 2px 0 rgba(0, 0, 0, 0.45),
@@ -34,27 +45,26 @@
 }
 
 .lg-stats {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem;
 }
 
 .pill {
-  display: inline-flex;
-  gap: 0.4rem;
-  align-items: baseline;
-  padding: 0.25rem 0.65rem;
-  border-radius: 999px;
-  background: rgba(8, 8, 20, 0.55);
-  border: 1px solid rgba(220, 210, 255, 0.25);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 10px 22px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  align-items: flex-start;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.85rem;
+  background: rgba(8, 8, 20, 0.28);
+  border: 1px solid rgba(220, 210, 255, 0.16);
 }
 
 .pill .label {
-  font-size: 0.65rem;
-  opacity: 0.8;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-size: 0.62rem;
+  opacity: 0.75;
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
@@ -62,6 +72,9 @@
 .pill .value {
   font-variant-numeric: tabular-nums;
   font-weight: 900;
+  font-size: 1.02rem;
+  color: #fff7e4;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 
 .lg-actions {
@@ -158,8 +171,8 @@
 }
 
 .cardTitle {
-  font-family: 'Shrikhand', cursive;
-  letter-spacing: 0.06em;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  letter-spacing: 0.10em;
   font-size: 1.05rem;
   color: #fff1b8;
   margin-bottom: 0.25rem;
@@ -231,10 +244,16 @@
 }
 
 .uBuy {
-  font-family: 'Shrikhand', cursive;
+  font-family: 'Oxanium', system-ui, sans-serif;
   letter-spacing: 0.08em;
   font-size: 0.85rem;
   color: #fff1b8;
+}
+
+@media (max-width: 420px) {
+  .lg-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .cardActions {

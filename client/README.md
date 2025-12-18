@@ -1,4 +1,4 @@
-## Laser Game (client)
+## Big Lasers (client)
 
 This is the playable web client for the laser game prototype.
 
