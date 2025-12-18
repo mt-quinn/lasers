@@ -62,6 +62,46 @@ export type BlockEntity = {
   hpAnchorLocalPx: Vec2
 }
 
+export type BoardFeatureKind = 'mirror' | 'prism' | 'blackHole'
+
+export type MirrorFeature = {
+  id: number
+  kind: 'mirror'
+  cells: BlockCell[]
+  cellSize: number
+  cornerRadius: number
+  pos: Vec2 // top-left in world coords
+  loop: Vec2[]
+  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
+}
+
+export type PrismFeature = {
+  id: number
+  kind: 'prism'
+  pos: Vec2 // top-left in world coords
+  cellSize: number
+  // collision radius (px) around center
+  r: number
+  // Outgoing direction offsets (degrees) relative to the incoming beam direction.
+  // Allowed values: 0, ±15, ±45, ±90. Each prism picks 2-4 distinct values at spawn.
+  exitsDeg: number[]
+  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
+}
+
+export type BlackHoleFeature = {
+  id: number
+  kind: 'blackHole'
+  pos: Vec2 // top-left in world coords
+  cellSize: number
+  // absorber core radius (px) around center
+  rCore: number
+  // influence radius (px) around center, within which beams curve
+  rInfluence: number
+  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
+}
+
+export type BoardFeature = MirrorFeature | PrismFeature | BlackHoleFeature
+
 export type RunStats = {
   dps: number
   beamWidth: number
@@ -143,6 +183,8 @@ export type RunState = {
 
   blocks: BlockEntity[]
   nextBlockId: number
+  features: BoardFeature[]
+  nextFeatureId: number
   spawnTimer: number
 }
 
@@ -199,6 +241,8 @@ export const createInitialRunState = (): RunState => {
     weld: { blockId: -1, x: 0, y: 0, dwell: 0 },
     blocks: [],
     nextBlockId: 1,
+    features: [],
+    nextFeatureId: 1,
     // Give the player a moment to orient before the first block arrives.
     spawnTimer: 1.3,
   }

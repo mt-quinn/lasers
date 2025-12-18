@@ -230,6 +230,221 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
+    // Board features: mirrors / prisms / black holes (indestructible, no HP numbers).
+    if (s.features.length > 0) {
+      for (const f of s.features) {
+        // Skip if fully above the screen (matches the "not shootable until visible" vibe visually too).
+        const maxY = f.pos.y + f.localAabb.maxY
+        if (maxY < 0) continue
+
+        if (f.kind === 'mirror') {
+          const m = f
+          const ax = m.pos.x + m.localAabb.minX
+          const ay = m.pos.y + m.localAabb.minY
+          const w = m.localAabb.maxX - m.localAabb.minX
+          const h = m.localAabb.maxY - m.localAabb.minY
+
+          ctx.save()
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.shadowColor = 'rgba(180,220,255,0.20)'
+          ctx.shadowBlur = 14
+
+          drawRoundedPolyomino(ctx, m.loop, m.pos, m.cellSize, m.cornerRadius)
+
+          const grad = ctx.createLinearGradient(ax, ay, ax + w, ay + h)
+          grad.addColorStop(0, 'rgb(60 75 105)')
+          grad.addColorStop(0.45, 'rgb(145 170 210)')
+          grad.addColorStop(1, 'rgb(55 65 90)')
+          ctx.fillStyle = grad
+          ctx.fill()
+
+          // Important: confine the shadow glow to the *fill* only.
+          // Leaving shadowBlur on will make the outline/top edge read as a thick horizontal glare band.
+          ctx.shadowBlur = 0
+          ctx.shadowColor = 'rgba(0,0,0,0)'
+
+          // Specular diagonal sheen lines.
+          ctx.save()
+          ctx.clip()
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+          ctx.lineWidth = 3
+          const step = 16
+          for (let x = -h; x < w + h; x += step) {
+            ctx.beginPath()
+            ctx.moveTo(ax + x, ay)
+            ctx.lineTo(ax + x + h, ay + h)
+            ctx.stroke()
+          }
+          ctx.restore()
+
+          // Outline (must redraw path; the sheen loop overwrote the current path).
+          drawRoundedPolyomino(ctx, m.loop, m.pos, m.cellSize, m.cornerRadius)
+          ctx.lineWidth = 2
+          ctx.strokeStyle = 'rgba(245,250,255,0.35)'
+          ctx.stroke()
+
+          ctx.restore()
+          continue
+        }
+
+        if (f.kind === 'prism') {
+          const p = f
+          const cx = p.pos.x + p.cellSize * 0.5
+          const cy = p.pos.y + p.cellSize * 0.5
+          const r = p.r
+
+          // Prism visual: prioritize glyph legibility. Use a darker crystal body + a subtle dark
+          // readability disc behind the glyph, then render the glyph with a dark outline + bright stroke.
+
+          // Soft outer halo (keeps the "special" read without washing out the glyph).
+          ctx.save()
+          ctx.globalCompositeOperation = 'lighter'
+          ctx.fillStyle = 'rgba(80,180,255,0.08)'
+          ctx.beginPath()
+          ctx.arc(cx, cy, r * 2.0, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.restore()
+
+          ctx.save()
+          ctx.globalCompositeOperation = 'source-over'
+
+          // Dark crystal sphere (less bright-on-bright).
+          const grd = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r)
+          grd.addColorStop(0, 'rgba(235,250,255,0.55)')
+          grd.addColorStop(0.35, 'rgba(70,140,190,0.45)')
+          grd.addColorStop(1, 'rgba(10,25,40,0.55)')
+          ctx.fillStyle = grd
+          ctx.beginPath()
+          ctx.arc(cx, cy, r, 0, Math.PI * 2)
+          ctx.fill()
+
+          // Rim
+          ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.arc(cx, cy, r, 0, Math.PI * 2)
+          ctx.stroke()
+
+          // Readability disc behind glyph.
+          ctx.fillStyle = 'rgba(0,0,0,0.22)'
+          ctx.beginPath()
+          ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2)
+          ctx.fill()
+
+          // Exit-direction glyph: render relative to a fixed "forward" axis (up).
+          const exits: number[] = Array.isArray((p as any).exitsDeg) ? (p as any).exitsDeg : [45, -45]
+          const base = { x: 0, y: -1 }
+          const toRad = (deg: number) => (deg * Math.PI) / 180
+          const rot = (v: Vec2, rad: number): Vec2 => {
+            const c = Math.cos(rad)
+            const sn = Math.sin(rad)
+            return { x: v.x * c - v.y * sn, y: v.x * sn + v.y * c }
+          }
+          const rayLen = r * 0.88
+          const headLen = r * 0.20
+          const headAng = Math.PI / 7 // ~25deg
+
+          const drawGlyphPass = (strokeStyle: string, lineWidth: number) => {
+            ctx.strokeStyle = strokeStyle
+            ctx.lineWidth = lineWidth
+            ctx.lineCap = 'round'
+            ctx.lineJoin = 'round'
+            for (const deg of exits) {
+              const d = rot(base, toRad(deg))
+              const ex = cx + d.x * rayLen
+              const ey = cy + d.y * rayLen
+              ctx.beginPath()
+              ctx.moveTo(cx, cy)
+              ctx.lineTo(ex, ey)
+
+              // arrowhead
+              const back = { x: -d.x, y: -d.y }
+              const left = rot(back, headAng)
+              const right = rot(back, -headAng)
+              ctx.moveTo(ex, ey)
+              ctx.lineTo(ex + left.x * headLen, ey + left.y * headLen)
+              ctx.moveTo(ex, ey)
+              ctx.lineTo(ex + right.x * headLen, ey + right.y * headLen)
+              ctx.stroke()
+            }
+          }
+
+          // Outline then bright stroke for legibility on any background.
+          drawGlyphPass('rgba(0,0,0,0.55)', 6)
+          drawGlyphPass('rgba(245,255,255,0.92)', 2.8)
+
+          // Center dot to anchor the glyph.
+          ctx.fillStyle = 'rgba(245,255,255,0.65)'
+          ctx.beginPath()
+          ctx.arc(cx, cy, Math.max(1.4, r * 0.11), 0, Math.PI * 2)
+          ctx.fill()
+
+          ctx.restore()
+          continue
+        }
+
+        // black hole
+        const bh = f
+        const cx = bh.pos.x + bh.cellSize * 0.5
+        const cy = bh.pos.y + bh.cellSize * 0.5
+        const rCore = bh.rCore
+        const rInf = bh.rInfluence
+
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+
+        // Subtle influence boundary (helps players read gravity radius).
+        // Drawn behind the core effects and kept very faint.
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.strokeStyle = 'rgba(255,190,120,0.08)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([6, 10])
+        ctx.beginPath()
+        ctx.arc(cx, cy, rInf, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.setLineDash([])
+        // very soft outer haze ring
+        const haze = ctx.createRadialGradient(cx, cy, rInf * 0.92, cx, cy, rInf)
+        haze.addColorStop(0, 'rgba(255,190,120,0)')
+        haze.addColorStop(1, 'rgba(255,120,210,0.05)')
+        ctx.fillStyle = haze
+        ctx.beginPath()
+        ctx.arc(cx, cy, rInf, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+
+        // Dark core
+        ctx.fillStyle = 'rgba(5,3,10,0.95)'
+        ctx.beginPath()
+        ctx.arc(cx, cy, rCore, 0, Math.PI * 2)
+        ctx.fill()
+
+        // Accretion ring (neon edge)
+        ctx.globalCompositeOperation = 'lighter'
+        const ringR = rCore * 1.35
+        const ring = ctx.createRadialGradient(cx, cy, rCore * 0.85, cx, cy, ringR)
+        ring.addColorStop(0, 'rgba(0,0,0,0)')
+        ring.addColorStop(0.55, 'rgba(255,120,210,0.08)')
+        ring.addColorStop(0.78, 'rgba(255,190,120,0.18)')
+        ring.addColorStop(1, 'rgba(255,120,210,0)')
+        ctx.fillStyle = ring
+        ctx.beginPath()
+        ctx.arc(cx, cy, ringR, 0, Math.PI * 2)
+        ctx.fill()
+
+        // Subtle lens sparkle
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(cx, cy, rCore * 0.85, 0, Math.PI * 2)
+        ctx.stroke()
+
+        ctx.restore()
+      }
+    }
+
     // Aim reticle: classic sniper reticle, glowing red.
     const rx = s.reticle.x
     const ry = s.reticle.y
@@ -340,39 +555,34 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.fill()
     ctx.restore()
 
-    // Drop timer indicator (radial fill): shows time until next global step.
-    // Placed just above the rail, centered, to teach cadence.
-    const progress = clamp((s.dropIntervalSec - s.dropTimerSec) / Math.max(0.001, s.dropIntervalSec), 0, 1)
-    const ringCx = s.view.width * 0.5
-    const ringCy = railY - 18
-    const rOuter = 12
-    const rInner = 8.5
-
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.strokeStyle = 'rgba(255,245,220,0.20)'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.arc(ringCx, ringCy, rOuter, 0, Math.PI * 2)
-    ctx.stroke()
-
-    // Filled wedge arc (starts at top, fills clockwise)
-    const startAng = -Math.PI / 2
-    const endAng = startAng + progress * Math.PI * 2
-    ctx.strokeStyle = 'rgba(255,120,210,0.75)'
-    ctx.lineWidth = rOuter - rInner
-    ctx.lineCap = 'round'
-    ctx.beginPath()
-    ctx.arc(ringCx, ringCy, (rOuter + rInner) / 2, startAng, endAng)
-    ctx.stroke()
-    ctx.restore()
-
     // XP gauge (vertical fill on the right).
     const gx = layout.xpGauge.x
     const gy = layout.xpGauge.y
     const gw = layout.xpGauge.w
     const gh = layout.xpGauge.h
     const xpFrac = clamp(s.xp / Math.max(1, s.xpCap), 0, 1)
+
+    // Drop timer indicator (linear fill): shows time until next global step.
+    // Move to top-right: just left of the XP gauge, aligned to its top with padding.
+    const progress = clamp((s.dropIntervalSec - s.dropTimerSec) / Math.max(0.001, s.dropIntervalSec), 0, 1)
+    const pad = 10
+    const barW = 10
+    const barH = 56
+    const barX = gx - pad - barW
+    const barY = gy
+    ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
+    // background
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'
+    ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4)
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+    ctx.lineWidth = 2
+    ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4)
+    // fill (bottom -> top)
+    const fh = barH * progress
+    ctx.fillStyle = 'rgba(255,120,210,0.80)'
+    ctx.fillRect(barX, barY + (barH - fh), barW, fh)
+    ctx.restore()
 
     ctx.save()
     ctx.globalCompositeOperation = 'source-over'
@@ -502,24 +712,115 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     // Laser segments.
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
+    // IMPORTANT: draw contiguous segments as a single polyline so we don't get bright "striations"
+    // at every vertex (per-segment round caps overlap heavily, especially on curved black-hole arcs).
+    const stitched: Array<{ pts: Vec2[]; intensity: number }> = []
+    const eps2 = 0.9 * 0.9
+    const intEps = 0.035
     for (const seg of s.laser.segments) {
-      const alpha = clamp(seg.intensity, 0, 1)
-      // outer glow
-      ctx.strokeStyle = `rgba(255,120,210,${0.22 * alpha})`
-      ctx.lineWidth = s.stats.beamWidth * 3.4
-      ctx.lineCap = 'round'
+      const dx = seg.b.x - seg.a.x
+      const dy = seg.b.y - seg.a.y
+      if (dx * dx + dy * dy < 0.0001) continue
+
+      const last = stitched[stitched.length - 1]
+      if (last) {
+        const p = last.pts[last.pts.length - 1]!
+        const dxa = seg.a.x - p.x
+        const dya = seg.a.y - p.y
+        const canJoin = dxa * dxa + dya * dya <= eps2 && Math.abs(last.intensity - seg.intensity) <= intEps
+        if (canJoin) {
+          last.pts.push(seg.b)
+          continue
+        }
+      }
+      stitched.push({ pts: [seg.a, seg.b], intensity: seg.intensity })
+    }
+
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    const pathLen = (pts: Vec2[]) => {
+      let L = 0
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]!
+        const b = pts[i]!
+        L += Math.hypot(b.x - a.x, b.y - a.y)
+      }
+      return L
+    }
+
+    const pointAndTanAt = (pts: Vec2[], dist: number): { p: Vec2; tan: Vec2 } | null => {
+      if (pts.length < 2) return null
+      let acc = 0
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]!
+        const b = pts[i]!
+        const segL = Math.hypot(b.x - a.x, b.y - a.y)
+        if (segL <= 1e-6) continue
+        if (acc + segL >= dist) {
+          const t = clamp((dist - acc) / segL, 0, 1)
+          const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+          const inv = 1 / segL
+          const tan = { x: (b.x - a.x) * inv, y: (b.y - a.y) * inv }
+          return { p, tan }
+        }
+        acc += segL
+      }
+      // Past the end: return last segment tangent.
+      const a = pts[pts.length - 2]!
+      const b = pts[pts.length - 1]!
+      const segL = Math.hypot(b.x - a.x, b.y - a.y) || 1
+      return { p: { ...b }, tan: { x: (b.x - a.x) / segL, y: (b.y - a.y) / segL } }
+    }
+
+    for (let li = 0; li < stitched.length; li++) {
+      const line = stitched[li]!
+      const alpha = clamp(line.intensity, 0, 1)
+      if (alpha <= 0) continue
+
+      // Build path once.
       ctx.beginPath()
-      ctx.moveTo(seg.a.x, seg.a.y)
-      ctx.lineTo(seg.b.x, seg.b.y)
+      ctx.moveTo(line.pts[0]!.x, line.pts[0]!.y)
+      for (let i = 1; i < line.pts.length; i++) ctx.lineTo(line.pts[i]!.x, line.pts[i]!.y)
+
+      // Laser palette: darker reticle-red, with a warm core.
+      // (Reticle uses reds; keep this cohesive and more dangerous-looking.)
+      // outer glow
+      ctx.strokeStyle = `rgba(255,60,60,${0.16 * alpha})`
+      ctx.lineWidth = s.stats.beamWidth * 3.4
       ctx.stroke()
 
-      // core
-      ctx.strokeStyle = `rgba(255,245,210,${0.78 * alpha})`
+      // core (restroke same path)
+      ctx.strokeStyle = `rgba(255,90,90,${0.78 * alpha})`
       ctx.lineWidth = s.stats.beamWidth
-      ctx.beginPath()
-      ctx.moveTo(seg.a.x, seg.a.y)
-      ctx.lineTo(seg.b.x, seg.b.y)
       ctx.stroke()
+
+      // Animated pulse streak: a white scanline (perpendicular to the beam) that travels forward.
+      const L = pathLen(line.pts)
+      if (L > 6) {
+        const speedPxPerSec = 410
+        const spacing = 240 // distance between pulses on long beams
+        const base = (s.timeSec * speedPxPerSec + li * 37) % (spacing * 4)
+        const pulses = Math.max(1, Math.min(3, Math.floor(L / spacing)))
+        for (let k = 0; k < pulses; k++) {
+          const d = (base + k * spacing) % L
+          const pt = pointAndTanAt(line.pts, d)
+          if (!pt) continue
+          const perp = { x: -pt.tan.y, y: pt.tan.x }
+          // Streak length should match the *core* beam width (not the outer glow).
+          const half = s.stats.beamWidth * 0.52
+          const a0 = pt.p
+          const a1 = { x: a0.x - perp.x * half, y: a0.y - perp.y * half }
+          const a2 = { x: a0.x + perp.x * half, y: a0.y + perp.y * half }
+
+          // Thin crisp white streak (no wide glow band).
+          ctx.strokeStyle = `rgba(255,255,255,${0.55 * alpha})`
+          ctx.lineWidth = Math.max(3.2, s.stats.beamWidth * 0.84)
+          ctx.beginPath()
+          ctx.moveTo(a1.x, a1.y)
+          ctx.lineTo(a2.x, a2.y)
+          ctx.stroke()
+        }
+      }
     }
     ctx.restore()
 
