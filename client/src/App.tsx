@@ -292,7 +292,7 @@ export default function App() {
     <div className="lg-viewport">
       <div className="lg-shell">
         <header className="hudBar">
-          <div className="hudTitle">Big Lasers</div>
+          <div className="hudTitle">LASERS! LASERS! LASERS!</div>
 
           <div className="hudStats" aria-label="Run stats">
             <div className="hudKvp">
