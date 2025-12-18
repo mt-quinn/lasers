@@ -190,7 +190,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.stroke()
     ctx.setLineDash([])
 
-    // Blocks.
+    // Blocks (base render; HP text is drawn at the very end so it stays above glow/laser).
     for (const b of s.blocks) {
       const hpPct = clamp(b.hp / b.hpMax, 0, 1)
       const glow = 0.35 + 0.65 * (1 - hpPct)
@@ -228,21 +228,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
       ctx.stroke()
       ctx.restore()
-
-      // HP text (centered in AABB).
-      const anchor = pickHpAnchor(s, b)
-      const cx = anchor.x
-      const cy = anchor.y
-      ctx.font = '900 18px Nunito'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      const darkText = lum > 0.55
-      ctx.fillStyle = darkText ? 'rgba(10,5,18,0.92)' : 'rgba(255,248,230,0.95)'
-      ctx.strokeStyle = darkText ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'
-      ctx.lineWidth = 3
-      const label = String(Math.max(0, Math.ceil(b.hp)))
-      ctx.strokeText(label, cx, cy)
-      ctx.fillText(label, cx, cy)
     }
 
     // Aim reticle: classic sniper reticle, glowing red.
@@ -440,9 +425,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         const aBase = (1 - t) * (0.35 + 0.55 * g.intensity)
         const a = b ? aBase : aBase * 0.22
 
-        // Smaller, metal-like hot spot. Most of the glow is clipped inside the piece.
+        // Smaller, metal-like hot spot. Growth should be mostly inside the piece.
         const r0 = 1.5 + 2.2 * g.intensity
-        const rInside = 9 + 13 * g.intensity
+        const baseInside = 9 + 13 * g.intensity
+        const rInside = baseInside * (g.bloom || 1)
 
         const gradInside = ctx.createRadialGradient(g.x, g.y, r0, g.x, g.y, rInside)
         // Heated metal: white-hot core -> orange -> deep red edge.
@@ -464,11 +450,11 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           ctx.restore()
         }
 
-        // Subtle external halo (reduced outside-piece glow).
-        const rHalo = rInside + 5 + 4 * g.intensity
-        const gradHalo = ctx.createRadialGradient(g.x, g.y, rInside * 0.6, g.x, g.y, rHalo)
-        gradHalo.addColorStop(0, `rgba(255,150,60,${0.12 * a})`)
-        gradHalo.addColorStop(0.6, `rgba(255,60,40,${0.06 * a})`)
+        // Subtle external halo (reduced outside-piece glow; NOT scaled by bloom).
+        const rHalo = baseInside + 6 + 4 * g.intensity
+        const gradHalo = ctx.createRadialGradient(g.x, g.y, baseInside * 0.6, g.x, g.y, rHalo)
+        gradHalo.addColorStop(0, `rgba(255,150,60,${0.07 * a})`)
+        gradHalo.addColorStop(0.6, `rgba(255,60,40,${0.035 * a})`)
         gradHalo.addColorStop(1, 'rgba(255,60,40,0)')
         ctx.fillStyle = gradHalo
         ctx.beginPath()
@@ -536,6 +522,27 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.stroke()
     }
     ctx.restore()
+
+    // HP text last so it stays readable above welding glow + sparks + laser.
+    for (const b of s.blocks) {
+      const hpPct = clamp(b.hp / b.hpMax, 0, 1)
+      const fillBase = healthFill(hpPct)
+      const lum = relativeLuma(fillBase)
+
+      const anchor = pickHpAnchor(s, b)
+      const cx = anchor.x
+      const cy = anchor.y
+      ctx.font = '900 18px Nunito'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const darkText = lum > 0.55
+      ctx.fillStyle = darkText ? 'rgba(10,5,18,0.92)' : 'rgba(255,248,230,0.95)'
+      ctx.strokeStyle = darkText ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'
+      ctx.lineWidth = 3
+      const label = String(Math.max(0, Math.ceil(b.hp)))
+      ctx.strokeText(label, cx, cy)
+      ctx.fillText(label, cx, cy)
+    }
   })
 }
 

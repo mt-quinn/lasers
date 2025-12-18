@@ -189,6 +189,8 @@ export const stepSim = (s: RunState, dt: number) => {
   s.laser.segments = []
   s.laser.hitBlockId = null
 
+  let didDamageBlockThisFrame = false
+
   let origin = { ...s.emitter.pos }
   let dir = { ...s.emitter.aimDir }
   let intensity = 1
@@ -217,6 +219,7 @@ export const stepSim = (s: RunState, dt: number) => {
     const b = hit.blockId >= 0 ? s.blocks.find((bb) => bb.id === hit.blockId) : undefined
     if (b) {
       b.hp -= s.stats.dps * dt * intensity
+      didDamageBlockThisFrame = true
 
       // Welding FX at the damage contact point.
       // Emit a small number of sparks per second, biased away from the surface normal.
@@ -247,13 +250,30 @@ export const stepSim = (s: RunState, dt: number) => {
         if (s.sparks.length > MAX_SPARKS) s.sparks.splice(0, s.sparks.length - MAX_SPARKS)
       }
 
+      // "Dwell" bloom: if the beam stays on the same spot of the same block,
+      // the inside glow grows. Moving the contact point shrinks it quickly.
+      const sameBlock = s.weld.blockId === hit.blockId
+      const dx = hit.point.x - s.weld.x
+      const dy = hit.point.y - s.weld.y
+      const sameSpot = sameBlock && dx * dx + dy * dy <= 8 * 8
+      if (sameSpot) {
+        s.weld.dwell = Math.min(1, s.weld.dwell + dt * 3.2) // ~0.3s to full
+      } else {
+        s.weld.dwell = Math.max(0, s.weld.dwell - dt * 7.0) // quick decay when moving
+        s.weld.blockId = hit.blockId
+        s.weld.x = hit.point.x
+        s.weld.y = hit.point.y
+      }
+
       // Glow: only while the block is alive. If the block dies this frame, avoid
       // spawning a new glow that would render unclipped (and flash) after removal.
       if (b.hp > 0) {
+        const bloom = 1 + 1.15 * s.weld.dwell
         s.weldGlows.push({
           x: hit.point.x,
           y: hit.point.y,
           blockId: hit.blockId,
+          bloom,
           age: 0,
           life: 0.08 + 0.08 * Math.random(),
           intensity: clamp(intensity, 0.25, 1),
@@ -296,6 +316,12 @@ export const stepSim = (s: RunState, dt: number) => {
     origin = add(hit.point, mul(dir, EPS + beamRadius))
     // After the first impact, ignore any t extremely close to 0 on subsequent casts.
     minT = EPS + beamRadius * 0.75
+  }
+
+  // If we're not actively damaging a block this frame, let dwell cool off.
+  if (!didDamageBlockThisFrame) {
+    s.weld.dwell = Math.max(0, s.weld.dwell - dt * 6.5)
+    if (s.weld.dwell === 0) s.weld.blockId = -1
   }
 }
 

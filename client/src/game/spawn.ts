@@ -59,7 +59,7 @@ export const spawnBlock = (s: RunState) => {
   const baseHpLate = 18 + (120 - 18) * l
   const baseHp = t < 60 ? baseHpEarly : baseHpLate
   const sizeMult = 0.7 + 0.25 * Math.sqrt(shape.cells.length)
-  const hpMax = Math.round(baseHp * sizeMult)
+  const hpMax = Math.round(baseHp * sizeMult * 1.5)
   // XP per block: keep simple for now (tunable). Larger shapes are worth a bit more.
   const xpValue = Math.max(1, Math.round(Math.sqrt(shape.cells.length)))
 

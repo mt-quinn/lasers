@@ -26,6 +26,7 @@ export type WeldGlow = {
   x: number
   y: number
   blockId: number
+  bloom: number // 1.., grows with dwell at a stable contact point
   age: number
   life: number
   intensity: number
@@ -138,6 +139,7 @@ export type RunState = {
   sparks: SparkParticle[]
   weldGlows: WeldGlow[]
   sparkEmitAcc: number
+  weld: { blockId: number; x: number; y: number; dwell: number }
 
   blocks: BlockEntity[]
   nextBlockId: number
@@ -194,6 +196,7 @@ export const createInitialRunState = (): RunState => {
     sparks: [],
     weldGlows: [],
     sparkEmitAcc: 0,
+    weld: { blockId: -1, x: 0, y: 0, dwell: 0 },
     blocks: [],
     nextBlockId: 1,
     // Give the player a moment to orient before the first block arrives.
