@@ -18,6 +18,16 @@ const rarityColor: Record<Rarity, string> = {
 
 export const getRarityColor = (r: Rarity) => rarityColor[r]
 
+export const computeXpCap = (level: number) => {
+  // Goal: early upgrades arrive quickly (teach the system), then gradually slow.
+  // Level 0: 10
+  // Level 5: ~23
+  // Level 10: ~53
+  // Level 15: ~120
+  const cap = Math.round(10 * Math.pow(1.18, Math.max(0, level)))
+  return Math.min(220, Math.max(10, cap))
+}
+
 const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number): T => {
   const total = items.reduce((s, x) => s + x.weight, 0)
   let t = r * total
@@ -68,7 +78,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     }
   }
   if (type === 'bounces') {
-    const add = rarity === 'rare' ? 1 : rarity === 'epic' ? 1 : 2
+    const add = rarity === 'rare' ? 1 : rarity === 'epic' ? 2 : 3
     return {
       type,
       rarity,
@@ -87,7 +97,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     }
   }
   // dropSlow
-  const mult = rarity === 'common' ? 1.10 : rarity === 'rare' ? 1.18 : rarity === 'epic' ? 1.28 : 1.40
+  const mult = rarity === 'common' ? 1.05 : rarity === 'rare' ? 1.1 : rarity === 'epic' ? 1.15 : 1.2
   const next = Math.min(3.0, s.dropIntervalSec * mult)
   return {
     type,
@@ -105,7 +115,7 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     return
   }
   if (offer.type === 'bounces') {
-    const add = r === 'rare' ? 1 : r === 'epic' ? 1 : 2
+    const add = r === 'rare' ? 1 : r === 'epic' ? 2 : 3
     s.stats.maxBounces = Math.min(12, s.stats.maxBounces + add)
     return
   }
@@ -115,7 +125,7 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     return
   }
   // dropSlow
-  const mult = r === 'common' ? 1.10 : r === 'rare' ? 1.18 : r === 'epic' ? 1.28 : 1.40
+  const mult = r === 'common' ? 1.05 : r === 'rare' ? 1.1 : r === 'epic' ? 1.15 : 1.2
   s.dropIntervalSec = Math.min(3.0, s.dropIntervalSec * mult)
   // Keep timer in range so cadence doesn't "jump" badly.
   s.dropTimerSec = Math.min(s.dropTimerSec, s.dropIntervalSec)

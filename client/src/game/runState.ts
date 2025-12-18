@@ -107,6 +107,7 @@ export type RunState = {
   // XP / level-up loop
   xp: number
   xpCap: number
+  level: number
   pendingLevelUps: number
   levelUpActive: boolean
   levelUpOptions: UpgradeOffer[]
@@ -159,6 +160,7 @@ export const createInitialRunState = (): RunState => {
     },
     xp: 0,
     xpCap: 10,
+    level: 0,
     pendingLevelUps: 0,
     levelUpActive: false,
     levelUpOptions: [],

@@ -4,7 +4,7 @@ import { createInitialRunState, type RunState } from './game/runState'
 import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
-import { applyOffer, getRarityColor } from './game/levelUp'
+import { applyOffer, computeXpCap, getRarityColor } from './game/levelUp'
 
 type HudSnapshot = {
   dps: number
@@ -335,8 +335,12 @@ export default function App() {
                         onClick={() => {
                           const s = stateRef.current
                           applyOffer(s, opt)
+                          s.level += 1
+                          s.xpCap = computeXpCap(s.level)
                           s.levelUpActive = false
                           s.levelUpOptions = []
+                          // Micro "breather" after choices so the board doesn't immediately re-spawn into pressure.
+                          s.spawnTimer = Math.max(s.spawnTimer, 0.75)
                           // Resume; sim will re-open if more pending levels.
                           s.paused = false
                         }}

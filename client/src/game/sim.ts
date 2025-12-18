@@ -34,26 +34,44 @@ export const stepSim = (s: RunState, dt: number) => {
 
   // Movement is now tetris-like: blocks step down together on a global timer.
 
-  // Spawn pacing: start slow enough that a new player can keep up.
-  s.spawnTimer -= dt
-  const spawnEveryEarly = 1.9 + (1.2 - 1.9) * e
-  const spawnEveryLate = 1.4 + (0.70 - 1.4) * l
-  const spawnEvery = s.timeSec < 60 ? spawnEveryEarly : spawnEveryLate
+  const layout = getArenaLayout(s.view)
+  const cellSize = 40
 
-  const maxBlocksEarly = Math.floor(4 + 3 * e) // 4 -> 7
-  const maxBlocksLate = Math.floor(7 + 7 * l) // 7 -> 14
-  const maxBlocks = s.timeSec < 60 ? maxBlocksEarly : maxBlocksLate
-  if (s.spawnTimer <= 0) {
+  // Spawn pacing (director-style): a time-based target curve, with pressure guardrails
+  // so the game ramps without spiraling into impossible states.
+  s.spawnTimer -= dt
+  const spawnEveryEarly = 2.35 + (1.65 - 2.35) * e // 0-60s: 2.35 -> 1.65
+  const spawnEveryLate = 1.55 + (0.95 - 1.55) * l // 60-360s: 1.55 -> 0.95
+  const spawnEveryBase = s.timeSec < 60 ? spawnEveryEarly : spawnEveryLate
+
+  const maxBlocksEarly = Math.floor(4 + 2 * e) // 4 -> 6
+  const maxBlocksLate = Math.floor(6 + 5 * l) // 6 -> 11
+  const maxBlocksBase = s.timeSec < 60 ? maxBlocksEarly : maxBlocksLate
+
+  // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
+  const dangerY = layout.failY - 2 * cellSize
+  let dangerCount = 0
+  for (const b of s.blocks) {
+    const bottom = b.pos.y + b.localAabb.maxY
+    if (bottom >= dangerY) dangerCount++
+  }
+  const pressure01 = clamp(dangerCount / 3, 0, 1)
+  const spawnEvery = spawnEveryBase * (1 + 0.85 * pressure01)
+  const maxBlocks = Math.max(3, maxBlocksBase - Math.floor(2 * pressure01))
+
+  const allowSpawn = dangerCount === 0
+  if (allowSpawn && s.spawnTimer <= 0) {
     if (s.blocks.length < maxBlocks) {
       spawnBlock(s)
       s.spawnTimer = spawnEvery
     } else {
-      // Back off slightly and try again soon; this also helps avoid overstacking.
-      s.spawnTimer = 0.18
+      // Back off slightly and try again soon; helps prevent overstacking at cap.
+      s.spawnTimer = 0.25
     }
+  } else if (!allowSpawn) {
+    // If we're in a danger state, keep checking frequently so spawns resume quickly after recovery.
+    s.spawnTimer = Math.min(s.spawnTimer, 0.18)
   }
-
-  const layout = getArenaLayout(s.view)
 
   // Emitter position (move pointer or keyboard) + aim (aim pointer).
   const sliderPad = 22
