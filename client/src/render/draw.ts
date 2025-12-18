@@ -445,100 +445,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // Aim reticle: classic sniper reticle, glowing red.
-    const rx = s.reticle.x
-    const ry = s.reticle.y
-    const pulse = 0.55 + 0.45 * Math.sin(s.timeSec * 5.2)
-    const retScale = 0.75
-    const retOuterR = (22 + pulse * 1.2) * retScale
-    const retInnerR = 8.5 * retScale
-
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.lineCap = 'round'
-
-    // Red glow halo
-    ctx.strokeStyle = `rgba(255, 60, 60, ${0.18 + pulse * 0.08})`
-    ctx.lineWidth = 9
-    ctx.beginPath()
-    ctx.arc(rx, ry, retOuterR, 0, Math.PI * 2)
-    ctx.stroke()
-
-    // Outer ring with quadrant gaps (classic scope feel)
-    ctx.strokeStyle = 'rgba(255, 80, 80, 0.85)'
-    ctx.lineWidth = 2.25
-    const gap = Math.PI / 10
-    for (let q = 0; q < 4; q++) {
-      const a0 = q * (Math.PI / 2) + gap
-      const a1 = (q + 1) * (Math.PI / 2) - gap
-      ctx.beginPath()
-      ctx.arc(rx, ry, retOuterR, a0, a1)
-      ctx.stroke()
-    }
-
-    // Crosshair lines (stop short of center ring)
-    const arm = retOuterR + 10 * retScale
-    const innerStop = retInnerR + 2 * retScale
-    ctx.strokeStyle = 'rgba(255, 120, 120, 0.9)'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    // horizontal
-    ctx.moveTo(rx - arm, ry)
-    ctx.lineTo(rx - innerStop, ry)
-    ctx.moveTo(rx + innerStop, ry)
-    ctx.lineTo(rx + arm, ry)
-    // vertical
-    ctx.moveTo(rx, ry - arm)
-    ctx.lineTo(rx, ry - innerStop)
-    ctx.moveTo(rx, ry + innerStop)
-    ctx.lineTo(rx, ry + arm)
-    ctx.stroke()
-
-    // Tick marks along crosshair (small, tight, and contained within the outer ring)
-    ctx.strokeStyle = 'rgba(255, 120, 120, 0.70)'
-    ctx.lineWidth = 1.4
-    const tickStep = 4 * retScale
-    const tickLen = 2.5 * retScale
-    const tickInset = 4 * retScale
-    const maxTicks = Math.max(
-      0,
-      Math.min(4, Math.floor((retOuterR - tickInset - innerStop) / tickStep)),
-    )
-    // left/right ticks
-    for (let i = 1; i <= maxTicks; i++) {
-      const dx = innerStop + i * tickStep
-      ctx.beginPath()
-      ctx.moveTo(rx - dx, ry - tickLen)
-      ctx.lineTo(rx - dx, ry + tickLen)
-      ctx.moveTo(rx + dx, ry - tickLen)
-      ctx.lineTo(rx + dx, ry + tickLen)
-      ctx.stroke()
-    }
-    // up/down ticks
-    for (let i = 1; i <= maxTicks; i++) {
-      const dy = innerStop + i * tickStep
-      ctx.beginPath()
-      ctx.moveTo(rx - tickLen, ry - dy)
-      ctx.lineTo(rx + tickLen, ry - dy)
-      ctx.moveTo(rx - tickLen, ry + dy)
-      ctx.lineTo(rx + tickLen, ry + dy)
-      ctx.stroke()
-    }
-
-    // Center ring + dot
-    ctx.strokeStyle = 'rgba(255, 120, 120, 0.9)'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.arc(rx, ry, retInnerR, 0, Math.PI * 2)
-    ctx.stroke()
-
-    ctx.fillStyle = 'rgba(255, 210, 210, 0.95)'
-    ctx.beginPath()
-    ctx.arc(rx, ry, 1.7, 0, Math.PI * 2)
-    ctx.fill()
-
-    ctx.restore()
-
     // Slider rail + emitter (at bottom, above safe-area).
     ctx.fillStyle = 'rgba(0,0,0,0.25)'
     ctx.fillRect(16, railY, s.view.width - 32, 14)
@@ -823,6 +729,145 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
     ctx.restore()
+
+    // Aim reticle: draw late (above weld glow) and auto-darken when bright welding glow is behind it.
+    {
+      const rx = s.reticle.x
+      const ry = s.reticle.y
+      const pulse = 0.55 + 0.45 * Math.sin(s.timeSec * 5.2)
+      const retScale = 0.75
+      const retOuterR = (22 + pulse * 1.2) * retScale
+      const retInnerR = 8.5 * retScale
+
+      // Estimate "backlight" from nearby weld glows.
+      let back = 0
+      if (s.weldGlows.length > 0) {
+        for (const g of s.weldGlows) {
+          const tt = clamp(g.age / Math.max(0.0001, g.life), 0, 1)
+          const a = (1 - tt) * (0.35 + 0.55 * g.intensity)
+          const baseInside = 9 + 13 * g.intensity
+          const rInside = baseInside * (g.bloom || 1)
+          const rr = rInside + 18
+          const dx = rx - g.x
+          const dy = ry - g.y
+          const d2 = dx * dx + dy * dy
+          if (d2 > rr * rr) continue
+          const d = Math.sqrt(d2)
+          back += a * (1 - d / rr)
+        }
+      }
+      back = clamp(back * 1.6, 0, 1)
+      const darkMode = back > 0.22
+      const aScale = darkMode ? 0.55 : 1
+
+      // Dark underlay (improves legibility against bright additive glows).
+      if (darkMode) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.strokeStyle = `rgba(0,0,0,${0.62 * back})`
+        ctx.lineWidth = 6
+        ctx.beginPath()
+        ctx.arc(rx, ry, retOuterR, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.lineWidth = 5
+        const arm = retOuterR + 10 * retScale
+        const innerStop = retInnerR + 2 * retScale
+        ctx.beginPath()
+        ctx.moveTo(rx - arm, ry)
+        ctx.lineTo(rx - innerStop, ry)
+        ctx.moveTo(rx + innerStop, ry)
+        ctx.lineTo(rx + arm, ry)
+        ctx.moveTo(rx, ry - arm)
+        ctx.lineTo(rx, ry - innerStop)
+        ctx.moveTo(rx, ry + innerStop)
+        ctx.lineTo(rx, ry + arm)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      ctx.save()
+      ctx.globalCompositeOperation = darkMode ? 'source-over' : 'lighter'
+      ctx.lineCap = 'round'
+
+      // Red glow halo (reduced when backlit).
+      ctx.strokeStyle = `rgba(255, 60, 60, ${(0.18 + pulse * 0.08) * aScale * 0.65})`
+      ctx.lineWidth = 9
+      ctx.beginPath()
+      ctx.arc(rx, ry, retOuterR, 0, Math.PI * 2)
+      ctx.stroke()
+
+      // Outer ring with quadrant gaps (classic scope feel)
+      ctx.strokeStyle = `rgba(255, 80, 80, ${0.85 * aScale})`
+      ctx.lineWidth = 2.25
+      const gap = Math.PI / 10
+      for (let q = 0; q < 4; q++) {
+        const a0 = q * (Math.PI / 2) + gap
+        const a1 = (q + 1) * (Math.PI / 2) - gap
+        ctx.beginPath()
+        ctx.arc(rx, ry, retOuterR, a0, a1)
+        ctx.stroke()
+      }
+
+      // Crosshair lines (stop short of center ring)
+      const arm = retOuterR + 10 * retScale
+      const innerStop = retInnerR + 2 * retScale
+      ctx.strokeStyle = `rgba(255, 120, 120, ${0.9 * aScale})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      // horizontal
+      ctx.moveTo(rx - arm, ry)
+      ctx.lineTo(rx - innerStop, ry)
+      ctx.moveTo(rx + innerStop, ry)
+      ctx.lineTo(rx + arm, ry)
+      // vertical
+      ctx.moveTo(rx, ry - arm)
+      ctx.lineTo(rx, ry - innerStop)
+      ctx.moveTo(rx, ry + innerStop)
+      ctx.lineTo(rx, ry + arm)
+      ctx.stroke()
+
+      // Tick marks along crosshair (small, tight, and contained within the outer ring)
+      ctx.strokeStyle = `rgba(255, 120, 120, ${0.7 * aScale})`
+      ctx.lineWidth = 1.4
+      const tickStep = 4 * retScale
+      const tickLen = 2.5 * retScale
+      const tickInset = 4 * retScale
+      const maxTicks = Math.max(0, Math.min(4, Math.floor((retOuterR - tickInset - innerStop) / tickStep)))
+      for (let i = 1; i <= maxTicks; i++) {
+        const dx = innerStop + i * tickStep
+        ctx.beginPath()
+        ctx.moveTo(rx - dx, ry - tickLen)
+        ctx.lineTo(rx - dx, ry + tickLen)
+        ctx.moveTo(rx + dx, ry - tickLen)
+        ctx.lineTo(rx + dx, ry + tickLen)
+        ctx.stroke()
+      }
+      for (let i = 1; i <= maxTicks; i++) {
+        const dy = innerStop + i * tickStep
+        ctx.beginPath()
+        ctx.moveTo(rx - tickLen, ry - dy)
+        ctx.lineTo(rx + tickLen, ry - dy)
+        ctx.moveTo(rx - tickLen, ry + dy)
+        ctx.lineTo(rx + tickLen, ry + dy)
+        ctx.stroke()
+      }
+
+      // Center ring + dot
+      ctx.strokeStyle = `rgba(255, 120, 120, ${0.9 * aScale})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(rx, ry, retInnerR, 0, Math.PI * 2)
+      ctx.stroke()
+
+      ctx.fillStyle = `rgba(255, 210, 210, ${0.95 * aScale})`
+      ctx.beginPath()
+      ctx.arc(rx, ry, 1.7, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.restore()
+    }
 
     // HP text last so it stays readable above welding glow + sparks + laser.
     for (const b of s.blocks) {
