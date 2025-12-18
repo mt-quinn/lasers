@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './app.css'
-import type { UpgradeId } from './game/upgrades'
 import { createInitialRunState, type RunState } from './game/runState'
-import { getUpgradeDef, listUpgradesInOrder } from './game/upgrades'
 import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
+import { applyOffer, getRarityColor } from './game/levelUp'
 
 type HudSnapshot = {
-  currency: number
   dps: number
   maxBounces: number
   blocksDestroyed: number
@@ -23,29 +21,17 @@ export default function App() {
 
   const stateRef = useRef<RunState>(createInitialRunState())
 
-  const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [hud, setHud] = useState<HudSnapshot>(() => ({
-    currency: 0,
     dps: stateRef.current.stats.dps,
     maxBounces: stateRef.current.stats.maxBounces,
     blocksDestroyed: 0,
     paused: false,
   }))
 
-  const upgrades = useMemo(() => listUpgradesInOrder(), [])
-
   const setPaused = useCallback((paused: boolean) => {
     stateRef.current.paused = paused
     setHud((h) => ({ ...h, paused }))
   }, [])
-
-  const toggleUpgradeMenu = useCallback(() => {
-    setUpgradeOpen((open) => {
-      const next = !open
-      setPaused(next)
-      return next
-    })
-  }, [setPaused])
 
   // Pointer input: touch anywhere -> slider position + aim direction.
   useEffect(() => {
@@ -187,13 +173,13 @@ export default function App() {
       if (e.key !== 'Escape') return
       if (e.repeat) return
       e.preventDefault()
-      toggleUpgradeMenu()
+      setPaused(!stateRef.current.paused)
     }
     window.addEventListener('keydown', onKeyDown, { passive: false })
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [toggleUpgradeMenu])
+  }, [setPaused])
 
   // Main loop.
   useEffect(() => {
@@ -266,7 +252,6 @@ export default function App() {
       if (bucket !== hudBucketRef.current) {
         hudBucketRef.current = bucket
         setHud({
-          currency: Math.floor(s.currency),
           dps: s.stats.dps,
           maxBounces: s.stats.maxBounces,
           blocksDestroyed: s.blocksDestroyed,
@@ -289,35 +274,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const buyUpgrade = useCallback((id: UpgradeId) => {
-    const s = stateRef.current
-    const def = getUpgradeDef(id)
-    const level = s.upgrades[id] ?? 0
-    const cost = def.cost(level)
-    if (s.currency < cost) return
-    s.currency -= cost
-    s.upgrades[id] = level + 1
-    def.apply(s, level + 1)
-
-    // micro haptics
-    const nav: any = navigator
-    if (nav && typeof nav.vibrate === 'function') {
-      nav.vibrate(8)
-    }
-
-    setHud((h) => ({
-      ...h,
-      currency: Math.floor(s.currency),
-      dps: s.stats.dps,
-      maxBounces: s.stats.maxBounces,
-    }))
-  }, [])
-
   const restart = useCallback(() => {
     stateRef.current = createInitialRunState()
-    setUpgradeOpen(false)
     setHud({
-      currency: 0,
       dps: stateRef.current.stats.dps,
       maxBounces: stateRef.current.stats.maxBounces,
       blocksDestroyed: 0,
@@ -333,10 +292,6 @@ export default function App() {
 
           <div className="hudStats" aria-label="Run stats">
             <div className="hudKvp">
-              <span className="k">Currency</span>
-              <span className="v">{hud.currency}</span>
-            </div>
-            <div className="hudKvp">
               <span className="k">DPS</span>
               <span className="v">{hud.dps.toFixed(0)}</span>
             </div>
@@ -351,10 +306,7 @@ export default function App() {
           </div>
 
           <div className="hudActions">
-            <button type="button" className="hudBtn primary" onClick={toggleUpgradeMenu}>
-              {upgradeOpen ? 'Resume' : 'Upgrades'}
-            </button>
-            <button type="button" className="hudBtn" onClick={() => setPaused(!hud.paused)}>
+            <button type="button" className="hudBtn primary" onClick={() => setPaused(!hud.paused)}>
               {hud.paused ? 'Play' : 'Pause'}
             </button>
           </div>
@@ -364,61 +316,41 @@ export default function App() {
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
 
-            {upgradeOpen && (
-              <div className="upgradeOverlay" role="dialog" aria-label="Upgrades">
+            {stateRef.current.levelUpActive && (
+              <div className="upgradeOverlay" role="dialog" aria-label="Choose an upgrade">
                 <div className="upgradePanel">
                   <div className="upgradeHeader">
                     <div className="upgradeHeaderLeft">
-                      <div className="upgradeTitle">Upgrades</div>
-                      <div className="upgradeSub">
-                        Currency <b>{hud.currency}</b>
-                      </div>
+                      <div className="upgradeTitle">Choose an Upgrade</div>
+                      <div className="upgradeSub">Select one</div>
                     </div>
-                    <div className="upgradeHeaderRight">
+                  </div>
+                  <div className="upgradeList" aria-label="Upgrade choices">
+                    {stateRef.current.levelUpOptions.map((opt, idx) => (
                       <button
+                        key={opt.type + opt.rarity + idx}
                         type="button"
-                        className="upgradeClose"
-                        onClick={toggleUpgradeMenu}
-                        aria-label="Close upgrades"
+                        className="upgradeTile"
+                        style={{ borderColor: `${getRarityColor(opt.rarity)}55` }}
+                        onClick={() => {
+                          const s = stateRef.current
+                          applyOffer(s, opt)
+                          s.levelUpActive = false
+                          s.levelUpOptions = []
+                          // Resume; sim will re-open if more pending levels.
+                          s.paused = false
+                        }}
                       >
-                        Close
+                        <div className="upgradeTileMain">
+                          <div className="upgradeTileName">
+                            {opt.title} ({opt.rarity})
+                          </div>
+                          <div className="upgradeTileDesc">{opt.description}</div>
+                        </div>
                       </button>
-                    </div>
+                    ))}
                   </div>
-
-                  <div className="upgradeList" aria-label="Available upgrades">
-                    {upgrades.map((id) => {
-                      const def = getUpgradeDef(id)
-                      const level = stateRef.current.upgrades[id] ?? 0
-                      const cost = def.cost(level)
-                      const canBuy = hud.currency >= cost
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={['upgradeTile', canBuy ? '' : 'disabled']
-                            .filter(Boolean)
-                            .join(' ')}
-                          onClick={() => buyUpgrade(id)}
-                          disabled={!canBuy}
-                        >
-                          <div className="upgradeTileMain">
-                            <div className="upgradeTileName">{def.name}</div>
-                            <div className="upgradeTileDesc">{def.desc(level)}</div>
-                          </div>
-                          <div className="upgradeTileMeta">
-                            <div className="upgradeTileLevel">Level {level}</div>
-                            <div className="upgradeTileCost">Cost {cost}</div>
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-
                   <div className="upgradeFooter">
-                    <button type="button" className="hudBtn primary" onClick={toggleUpgradeMenu}>
-                      Resume
-                    </button>
                     <button type="button" className="hudBtn" onClick={restart}>
                       Restart
                     </button>

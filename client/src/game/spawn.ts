@@ -54,14 +54,14 @@ export const spawnBlock = (s: RunState) => {
   const e = smoothstep(earlyT)
   const l = smoothstep(lateT)
 
-  const baseHpEarly = 90 + (240 - 90) * e
-  const baseHpLate = 180 + (1200 - 180) * l
+  // Scale down displayed HP numbers by 10x without changing TTK (DPS is scaled too).
+  const baseHpEarly = 9 + (24 - 9) * e
+  const baseHpLate = 18 + (120 - 18) * l
   const baseHp = t < 60 ? baseHpEarly : baseHpLate
   const sizeMult = 0.7 + 0.25 * Math.sqrt(shape.cells.length)
   const hpMax = Math.round(baseHp * sizeMult)
-  // Keep value proportional to HP; slightly more generous so milestone purchases
-  // like Ricochet are reachable before the run ends.
-  const value = Math.round(6 + hpMax * 0.07)
+  // XP per block: keep simple for now (tunable). Larger shapes are worth a bit more.
+  const xpValue = Math.max(1, Math.round(Math.sqrt(shape.cells.length)))
 
   const loop = buildCellLoop(cells)
   const localAabb = computeLocalAabbPx(cells, cellSize)
@@ -181,7 +181,7 @@ export const spawnBlock = (s: RunState) => {
     vel: { x: 0, y: 0 },
     hpMax,
     hp: hpMax,
-    value,
+    xpValue,
     loop,
     localAabb,
     hpAnchorLocalPx,

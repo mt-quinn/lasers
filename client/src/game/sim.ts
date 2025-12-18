@@ -4,6 +4,8 @@ import type { RunState } from './runState'
 import { raycastBlocksThick } from './raycast'
 import { spawnBlock } from './spawn'
 import { createInitialRunState } from './runState'
+import { getArenaLayout } from './layout'
+import { rollUpgradeOptions } from './levelUp'
 
 const EPS = 1.0
 
@@ -51,14 +53,11 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
+  const layout = getArenaLayout(s.view)
+
   // Emitter position (move pointer or keyboard) + aim (aim pointer).
-  // Place the slider/emitter at the very bottom to maximize playfield height.
   const sliderPad = 22
-  const railH = 14
-  // Keep the rail/emitter safely inside the visible area on mobile.
-  const bottomPad = 18 + (s.view.safeBottom || 0)
-  const railY = s.view.height - bottomPad - railH
-  const emitterY = railY + railH / 2
+  const emitterY = layout.emitterY
   let targetX = s.emitter.pos.x
 
   if (s.input.moveActive) {
@@ -96,8 +95,43 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  // Fail line sits just above the bottom rail (maximize board height).
-  const failY = railY - 8
+  // Update XP orbs (condense -> fly -> deliver).
+  if (s.xpOrbs.length > 0) {
+    const delivered: string[] = []
+    for (const orb of s.xpOrbs) {
+      orb.t += dt
+      if (orb.phase === 'condense') {
+        if (orb.t >= 0.12) {
+          orb.phase = 'fly'
+          orb.t = 0
+        }
+      } else {
+        if (orb.t >= 0.55) {
+          // Deliver XP at end of flight.
+          s.xp += orb.value
+          delivered.push(orb.id)
+        }
+      }
+    }
+    if (delivered.length > 0) {
+      s.xpOrbs = s.xpOrbs.filter((o) => !delivered.includes(o.id))
+    }
+  }
+
+  // Level-up trigger: when XP fills, open the choice menu (pause).
+  if (!s.levelUpActive && s.xp >= s.xpCap) {
+    s.xp -= s.xpCap
+    s.pendingLevelUps += 1
+  }
+  if (!s.levelUpActive && s.pendingLevelUps > 0) {
+    s.levelUpActive = true
+    s.paused = true
+    s.pendingLevelUps -= 1
+    s.levelUpOptions = rollUpgradeOptions(s, Math.random)
+  }
+
+  // Fail line sits just above the bottom rail.
+  const failY = layout.failY
   for (const b of s.blocks) {
     const bottom = b.pos.y + b.localAabb.maxY
     if (bottom >= failY) {
@@ -145,8 +179,18 @@ export const stepSim = (s: RunState, dt: number) => {
     if (b) {
       b.hp -= s.stats.dps * dt * intensity
       if (b.hp <= 0) {
-        s.currency += b.value
         s.blocksDestroyed += 1
+        // Spawn XP orb VFX that condenses into a sphere then flies to the XP gauge.
+        const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
+        const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
+        s.xpOrbs.push({
+          id: `orb-${s.nextOrbId++}`,
+          from: { x: cx, y: cy },
+          to: { ...layout.xpTarget },
+          t: 0,
+          phase: 'condense',
+          value: b.xpValue,
+        })
         s.blocks = s.blocks.filter((x) => x.id !== b.id)
 
         // Stronger haptic on destroy.

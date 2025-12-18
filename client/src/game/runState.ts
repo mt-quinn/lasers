@@ -1,7 +1,26 @@
-import type { UpgradeId } from './upgrades'
 import type { Vec2 } from './math'
 
 export type BlockCell = { x: number; y: number }
+
+export type XpOrb = {
+  id: string
+  from: Vec2
+  to: Vec2
+  t: number
+  phase: 'condense' | 'fly'
+  value: number
+}
+
+export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
+
+export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow'
+
+export type UpgradeOffer = {
+  type: UpgradeType
+  rarity: Rarity
+  title: string
+  description: string
+}
 
 export type BlockEntity = {
   id: number
@@ -13,7 +32,7 @@ export type BlockEntity = {
   vel: Vec2
   hpMax: number
   hp: number
-  value: number
+  xpValue: number
   // local-space loop points in *cell* units (not pixels), closed (last==first)
   loop: Vec2[]
   // local-space AABB in pixels (for quick reject); updated at spawn from shape
@@ -67,14 +86,12 @@ export type RunState = {
   input: InputState
 
   timeSec: number
-  currency: number
   blocksDestroyed: number
 
   // Global "tetris-like" drop pacing.
   dropIntervalSec: number
   dropTimerSec: number
 
-  upgrades: Partial<Record<UpgradeId, number>>
   stats: RunStats
 
   // Persistent aim reticle (screen-space in arena coordinates).
@@ -86,6 +103,15 @@ export type RunState = {
   }
 
   laser: LaserState
+
+  // XP / level-up loop
+  xp: number
+  xpCap: number
+  pendingLevelUps: number
+  levelUpActive: boolean
+  levelUpOptions: UpgradeOffer[]
+  xpOrbs: XpOrb[]
+  nextOrbId: number
 
   blocks: BlockEntity[]
   nextBlockId: number
@@ -109,15 +135,16 @@ export const createInitialRunState = (): RunState => {
       keyRight: false,
     },
     timeSec: 0,
-    currency: 0,
     blocksDestroyed: 0,
     // Start with a full interval so the player sees the cadence before the first step.
     dropIntervalSec: 1.275,
     dropTimerSec: 1.275,
-    upgrades: {},
     stats: {
-      dps: 90,
-      beamWidth: 4.0,
+      // Scale down visible numbers (HP/DPS) without changing time-to-kill:
+      // we scale both damage and health by the same factor.
+      dps: 9,
+      // Default beam width increased by 50% (width is no longer an upgrade).
+      beamWidth: 6.0,
       maxBounces: 0,
       bounceFalloff: 0.82,
     },
@@ -130,6 +157,13 @@ export const createInitialRunState = (): RunState => {
       segments: [],
       hitBlockId: null,
     },
+    xp: 0,
+    xpCap: 10,
+    pendingLevelUps: 0,
+    levelUpActive: false,
+    levelUpOptions: [],
+    xpOrbs: [],
+    nextOrbId: 1,
     blocks: [],
     nextBlockId: 1,
     // Give the player a moment to orient before the first block arrives.

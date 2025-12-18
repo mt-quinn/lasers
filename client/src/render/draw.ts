@@ -1,6 +1,8 @@
 import type { RunState } from '../game/runState'
 import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
+import { getArenaLayout } from '../game/layout'
+// (getRarityColor will be used by the level-up menu overlay; keep renderer lean for now.)
 
 const withDpr = (ctx: CanvasRenderingContext2D, dpr: number, fn: () => void) => {
   ctx.save()
@@ -160,6 +162,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
   const dpr = s.view.dpr
   withDpr(ctx, dpr, () => {
     ctx.clearRect(0, 0, s.view.width, s.view.height)
+    const layout = getArenaLayout(s.view)
 
     // Arena glow vignette.
     const grd = ctx.createRadialGradient(
@@ -176,10 +179,8 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.fillRect(0, 0, s.view.width, s.view.height)
 
     // Fail line: keep it tight to the bottom to maximize board height.
-    const railH = 14
-    const bottomPad = 18 + (s.view.safeBottom || 0)
-    const railY = s.view.height - bottomPad - railH
-    const failY = railY - 8
+    const railY = layout.railY
+    const failY = layout.failY
     ctx.strokeStyle = 'rgba(255,220,180,0.18)'
     ctx.lineWidth = 2
     ctx.setLineDash([8, 10])
@@ -380,6 +381,52 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.arc(ringCx, ringCy, (rOuter + rInner) / 2, startAng, endAng)
     ctx.stroke()
     ctx.restore()
+
+    // XP gauge (vertical fill on the right).
+    const gx = layout.xpGauge.x
+    const gy = layout.xpGauge.y
+    const gw = layout.xpGauge.w
+    const gh = layout.xpGauge.h
+    const xpFrac = clamp(s.xp / Math.max(1, s.xpCap), 0, 1)
+
+    ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'
+    ctx.fillRect(gx - 2, gy - 2, gw + 4, gh + 4)
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+    ctx.lineWidth = 2
+    ctx.strokeRect(gx - 2, gy - 2, gw + 4, gh + 4)
+
+    // fill
+    const fillH = gh * xpFrac
+    ctx.fillStyle = 'rgba(255,120,210,0.78)'
+    ctx.fillRect(gx, gy + (gh - fillH), gw, fillH)
+    ctx.restore()
+
+    // XP orbs (condense -> fly).
+    if (s.xpOrbs.length > 0) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      for (const orb of s.xpOrbs) {
+        const p =
+          orb.phase === 'condense'
+            ? orb.from
+            : {
+                x: orb.from.x + (orb.to.x - orb.from.x) * Math.pow(clamp(orb.t / 0.55, 0, 1), 0.75),
+                y: orb.from.y + (orb.to.y - orb.from.y) * Math.pow(clamp(orb.t / 0.55, 0, 1), 0.75),
+              }
+        const r = orb.phase === 'condense' ? 16 * (1 - clamp(orb.t / 0.12, 0, 1)) + 4 : 5
+        ctx.fillStyle = 'rgba(255,120,210,0.35)'
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, r * 2.2, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = 'rgba(255,245,230,0.85)'
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.restore()
+    }
 
     // Laser segments.
     ctx.save()
