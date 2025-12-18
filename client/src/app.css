@@ -42,12 +42,16 @@
   font-family: 'Oxanium', system-ui, sans-serif;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
+  line-height: 1.05;
   color: #fff1b8;
   text-shadow:
     0 2px 0 rgba(0, 0, 0, 0.45),
     0 0 16px rgba(120, 90, 255, 0.35);
-  white-space: nowrap;
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
 }
 
 .hudStats {
