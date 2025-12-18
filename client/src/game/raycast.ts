@@ -63,7 +63,7 @@ const buildPrimsForBlock = (block: BlockEntity): { segments: Segment[]; arcs: Ar
   const ptsLocal = block.loop
   const n = ptsLocal.length
   const m = Math.max(0, n - 1) // unique vertices (closed loop duplicates first at end)
-  const r = clamp(block.cornerRadius, 0, block.cellSize * 0.49)
+  const r = clamp(block.cornerRadius, 0, block.cellSize * 0.5 - 0.6)
   const segments: Segment[] = []
   const arcs: Arc[] = []
 
@@ -97,8 +97,8 @@ const buildPrimsForBlock = (block: BlockEntity): { segments: Segment[]; arcs: Ar
     const b0 = pt(i + 1)
     const d = normalize({ x: b0.x - a0.x, y: b0.y - a0.y })
     const segLen = len({ x: (b0.x - a0.x) * block.cellSize, y: (b0.y - a0.y) * block.cellSize })
-    const cutA = convex[i] ? Math.min(r, segLen * 0.49) : 0
-    const cutB = convex[(i + 1) % m] ? Math.min(r, segLen * 0.49) : 0
+    const cutA = convex[i] ? Math.min(r, segLen * 0.5 - 0.6) : 0
+    const cutB = convex[(i + 1) % m] ? Math.min(r, segLen * 0.5 - 0.6) : 0
 
     const a = world(add(a0, mul(d, cutA / block.cellSize)))
     const b = world(sub(b0, mul(d, cutB / block.cellSize)))
@@ -115,7 +115,7 @@ const buildPrimsForBlock = (block: BlockEntity): { segments: Segment[]; arcs: Ar
     const p = pt(i)
     const inD = dirAt(i - 1, i)
     const outD = dirAt(i, i + 1)
-    const rp = Math.min(r, block.cellSize * 0.49)
+    const rp = Math.min(r, block.cellSize * 0.5 - 0.6)
 
     const startPt = world(sub(p, mul(inD, rp / block.cellSize)))
     const endPt = world(add(p, mul(outD, rp / block.cellSize)))

@@ -28,7 +28,9 @@ const normalizeCellsToOrigin = (cells: { x: number; y: number }[]) => {
 export const spawnBlock = (s: RunState) => {
   const t = s.timeSec
   const cellSize = clamp(42 - Math.floor(t / 80) * 2, 32, 44)
-  const cornerRadius = Math.min(12, Math.max(6, Math.floor(cellSize * 0.22)))
+  // Big rounding: for a 1-cell-thick block, ends should read as a half-circle (capsule).
+  // Use ~cellSize/2, with a tiny epsilon to avoid degenerate geometry.
+  const cornerRadius = cellSize * 0.5 - 0.6
 
   // Shape weighting: simpler early, bigger later.
   const pool =

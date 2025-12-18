@@ -25,7 +25,7 @@ const drawRoundedPolyomino = (ctx: CanvasRenderingContext2D, loop: Vec2[], pos: 
 
   const n = pts.length
   const m = Math.max(0, n - 1) // unique vertices
-  const r = clamp(rPx, 0, cellSize * 0.49)
+  const r = clamp(rPx, 0, cellSize * 0.5 - 0.6)
 
   const dir = (a: Vec2, b: Vec2): Vec2 => {
     const dx = b.x - a.x
@@ -61,8 +61,8 @@ const drawRoundedPolyomino = (ctx: CanvasRenderingContext2D, loop: Vec2[], pos: 
     const b = pts[i + 1]!
     const d = dir(a, b)
     const segLen = Math.hypot(b.x - a.x, b.y - a.y)
-    const cutA = isConvex(i) ? Math.min(r, segLen * 0.49) : 0
-    const cutB = isConvex(i + 1) ? Math.min(r, segLen * 0.49) : 0
+    const cutA = isConvex(i) ? Math.min(r, segLen * 0.5 - 0.6) : 0
+    const cutB = isConvex(i + 1) ? Math.min(r, segLen * 0.5 - 0.6) : 0
     const a2 = { x: a.x + d.x * cutA, y: a.y + d.y * cutA }
     const b2 = { x: b.x - d.x * cutB, y: b.y - d.y * cutB }
     ctx.lineTo(b2.x, b2.y)
