@@ -54,8 +54,12 @@ export const stepSim = (s: RunState, dt: number) => {
   }
 
   // Emitter position (move pointer or keyboard) + aim (aim pointer).
+  // Place the slider/emitter at the very bottom to maximize playfield height.
   const sliderPad = 22
-  const emitterY = s.view.height - 86
+  const railH = 14
+  const bottomPad = 16
+  const railY = s.view.height - bottomPad - railH
+  const emitterY = railY + railH / 2
   let targetX = s.emitter.pos.x
 
   if (s.input.moveActive) {
@@ -84,9 +88,8 @@ export const stepSim = (s: RunState, dt: number) => {
     b.pos = add(b.pos, mul(b.vel, dt))
   }
 
-  // Fail line.
-  // Slightly more generous than before so early-game isn't razor-thin.
-  const failY = s.view.height - 110
+  // Fail line sits just above the bottom rail (maximize board height).
+  const failY = railY - 8
   for (const b of s.blocks) {
     const bottom = b.pos.y + b.localAabb.maxY
     if (bottom >= failY) {

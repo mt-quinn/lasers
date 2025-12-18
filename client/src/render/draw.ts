@@ -106,8 +106,11 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.fillStyle = grd
     ctx.fillRect(0, 0, s.view.width, s.view.height)
 
-    // Fail line.
-    const failY = s.view.height - 140
+    // Fail line: keep it tight to the bottom to maximize board height.
+    const railH = 14
+    const bottomPad = 16
+    const railY = s.view.height - bottomPad - railH
+    const failY = railY - 8
     ctx.strokeStyle = 'rgba(255,220,180,0.18)'
     ctx.lineWidth = 2
     ctx.setLineDash([8, 10])
@@ -164,8 +167,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.fillRect(bx, by, barW * hpPct, barH)
     }
 
-    // Slider rail + emitter.
-    const railY = s.view.height - 62
+    // Slider rail + emitter (at bottom).
     ctx.fillStyle = 'rgba(0,0,0,0.25)'
     ctx.fillRect(16, railY, s.view.width - 32, 14)
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'

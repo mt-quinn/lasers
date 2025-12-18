@@ -9,9 +9,7 @@ import { drawFrame } from './render/draw'
 type HudSnapshot = {
   currency: number
   dps: number
-  beamWidth: number
   maxBounces: number
-  timeSec: number
   blocksDestroyed: number
   paused: boolean
 }
@@ -27,9 +25,7 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(() => ({
     currency: 0,
     dps: stateRef.current.stats.dps,
-    beamWidth: stateRef.current.stats.beamWidth,
     maxBounces: stateRef.current.stats.maxBounces,
-    timeSec: 0,
     blocksDestroyed: 0,
     paused: false,
   }))
@@ -247,9 +243,7 @@ export default function App() {
         setHud({
           currency: Math.floor(s.currency),
           dps: s.stats.dps,
-          beamWidth: s.stats.beamWidth,
           maxBounces: s.stats.maxBounces,
-          timeSec: s.timeSec,
           blocksDestroyed: s.blocksDestroyed,
           paused: s.paused,
         })
@@ -286,7 +280,6 @@ export default function App() {
       ...h,
       currency: Math.floor(s.currency),
       dps: s.stats.dps,
-      beamWidth: s.stats.beamWidth,
       maxBounces: s.stats.maxBounces,
     }))
   }, [])
@@ -297,9 +290,7 @@ export default function App() {
     setHud({
       currency: 0,
       dps: stateRef.current.stats.dps,
-      beamWidth: stateRef.current.stats.beamWidth,
       maxBounces: stateRef.current.stats.maxBounces,
-      timeSec: 0,
       blocksDestroyed: 0,
       paused: false,
     })
@@ -308,31 +299,33 @@ export default function App() {
   return (
     <div className="lg-viewport">
       <div className="lg-shell">
-        <header className="lg-header">
-          <div className="lg-title">Big Lasers</div>
-          <div className="lg-stats">
-            <div className="pill">
-              <span className="label">Cash</span>
-              <span className="value">{hud.currency}</span>
+        <header className="hudBar">
+          <div className="hudTitle">Big Lasers</div>
+
+          <div className="hudStats" aria-label="Run stats">
+            <div className="hudKvp">
+              <span className="k">Currency</span>
+              <span className="v">{hud.currency}</span>
             </div>
-            <div className="pill">
-              <span className="label">DPS</span>
-              <span className="value">{hud.dps.toFixed(0)}</span>
+            <div className="hudKvp">
+              <span className="k">DPS</span>
+              <span className="v">{hud.dps.toFixed(0)}</span>
             </div>
-            <div className="pill">
-              <span className="label">Width</span>
-              <span className="value">{hud.beamWidth.toFixed(1)}</span>
+            <div className="hudKvp">
+              <span className="k">Bounces</span>
+              <span className="v">{hud.maxBounces}</span>
             </div>
-            <div className="pill">
-              <span className="label">Bounces</span>
-              <span className="value">{hud.maxBounces}</span>
+            <div className="hudKvp">
+              <span className="k">Destroyed</span>
+              <span className="v">{hud.blocksDestroyed}</span>
             </div>
           </div>
-          <div className="lg-actions">
-            <button type="button" className="btn" onClick={toggleUpgradeMenu}>
+
+          <div className="hudActions">
+            <button type="button" className="hudBtn primary" onClick={toggleUpgradeMenu}>
               {upgradeOpen ? 'Resume' : 'Upgrades'}
             </button>
-            <button type="button" className="btn ghost" onClick={() => setPaused(!hud.paused)}>
+            <button type="button" className="hudBtn" onClick={() => setPaused(!hud.paused)}>
               {hud.paused ? 'Play' : 'Pause'}
             </button>
           </div>
@@ -341,11 +334,6 @@ export default function App() {
         <main className="lg-main">
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
-            <div className="lg-hud-bottom">
-              <div className="tiny">
-                Time {Math.floor(hud.timeSec)}s · Destroyed {hud.blocksDestroyed}
-              </div>
-            </div>
           </div>
         </main>
 
