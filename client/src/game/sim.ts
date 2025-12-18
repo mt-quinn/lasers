@@ -55,7 +55,8 @@ export const stepSim = (s: RunState, dt: number) => {
   // Place the slider/emitter at the very bottom to maximize playfield height.
   const sliderPad = 22
   const railH = 14
-  const bottomPad = 16 + (s.view.safeBottom || 0)
+  // Keep the rail/emitter safely inside the visible area on mobile.
+  const bottomPad = 18 + (s.view.safeBottom || 0)
   const railY = s.view.height - bottomPad - railH
   const emitterY = railY + railH / 2
   let targetX = s.emitter.pos.x
@@ -71,13 +72,19 @@ export const stepSim = (s: RunState, dt: number) => {
 
   targetX = clamp(targetX, sliderPad, s.view.width - sliderPad)
 
-  const aimRaw = s.input.aimActive
-    ? sub({ x: s.input.aimX, y: s.input.aimY }, { x: s.emitter.pos.x, y: emitterY })
-    : s.emitter.aimDir
-
-  const aimTarget = clampAimUpwards(aimRaw)
   s.emitter.pos = lerpVec(s.emitter.pos, { x: targetX, y: emitterY }, 0.35)
-  s.emitter.aimDir = normalize(lerpVec(s.emitter.aimDir, aimTarget, 0.22))
+
+  // Keep the reticle in a physically-aimable region (above the emitter) so
+  // we can aim *exactly* at it without introducing non-physical clamps.
+  const minReticleGap = 18
+  if (s.reticle.y > emitterY - minReticleGap) {
+    s.reticle.y = emitterY - minReticleGap
+  }
+
+  // Lock-on: aim direction is computed directly from emitter -> reticle every frame,
+  // after emitter movement is applied, so the beam stays pinned to the reticle.
+  const aimRaw = sub(s.reticle, s.emitter.pos)
+  s.emitter.aimDir = clampAimUpwards(aimRaw)
 
   // Global drop step.
   s.dropTimerSec -= dt
@@ -120,7 +127,10 @@ export const stepSim = (s: RunState, dt: number) => {
   let minT = 0
 
   for (let bounce = 0; bounce <= maxBounces; bounce++) {
-    const hit = raycastBlocksThick(origin, dir, s.blocks, maxDist, beamRadius, minT)
+    const hit = raycastBlocksThick(origin, dir, s.blocks, maxDist, beamRadius, minT, {
+      w: s.view.width,
+      h: s.view.height,
+    })
     if (!hit) {
       const end = add(origin, mul(dir, maxDist))
       s.laser.segments.push({ a: origin, b: end, intensity })
@@ -128,10 +138,10 @@ export const stepSim = (s: RunState, dt: number) => {
     }
 
     s.laser.segments.push({ a: origin, b: hit.point, intensity })
-    s.laser.hitBlockId = hit.blockId
+    s.laser.hitBlockId = hit.blockId >= 0 ? hit.blockId : null
 
     // Apply damage to hit block for this segment.
-    const b = s.blocks.find((bb) => bb.id === hit.blockId)
+    const b = hit.blockId >= 0 ? s.blocks.find((bb) => bb.id === hit.blockId) : undefined
     if (b) {
       b.hp -= s.stats.dps * dt * intensity
       if (b.hp <= 0) {

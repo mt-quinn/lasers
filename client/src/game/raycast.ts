@@ -208,6 +208,7 @@ export const raycastBlocksThick = (
   maxDist: number,
   radius: number,
   minT: number = 0,
+  bounds?: { w: number; h: number },
 ): RayHit | null => {
   if (radius <= 0.01) return raycastBlocks(o, dIn, blocks, maxDist, minT)
 
@@ -221,9 +222,58 @@ export const raycastBlocksThick = (
   let best: RayHit | null = null
   for (const off of offsets) {
     const oo = off === 0 ? o : add(o, mul(perp, off))
-    const hit = raycastBlocks(oo, d, blocks, maxDist, minT)
+    const hitBlock = raycastBlocks(oo, d, blocks, maxDist, minT)
+    const hitWall = bounds ? raycastWalls(oo, d, bounds.w, bounds.h, maxDist, minT) : null
+    const hit =
+      hitBlock && hitWall ? (hitBlock.t <= hitWall.t ? hitBlock : hitWall) : hitBlock ?? hitWall
     if (!hit) continue
     if (!best || hit.t < best.t) best = hit
+  }
+
+  return best
+}
+
+const raycastWalls = (
+  o: Vec2,
+  d: Vec2,
+  w: number,
+  h: number,
+  maxDist: number,
+  minT: number,
+): RayHit | null => {
+  let bestT = Infinity
+  let best: RayHit | null = null
+
+  const consider = (t: number, nx: number, ny: number) => {
+    if (t < minT || t > maxDist) return
+    if (t >= bestT) return
+    const p = add(o, mul(d, t))
+    // Only accept if the point lies on-screen (with a tiny tolerance).
+    const eps = 1e-3
+    if (p.x < -eps || p.x > w + eps || p.y < -eps || p.y > h + eps) return
+    bestT = t
+    best = { t, point: p, normal: normalize({ x: nx, y: ny }), blockId: -1 }
+  }
+
+  // Left wall x=0 (normal +X)
+  if (Math.abs(d.x) > 1e-9 && d.x < 0) {
+    const t = (0 - o.x) / d.x
+    consider(t, 1, 0)
+  }
+  // Right wall x=w (normal -X)
+  if (Math.abs(d.x) > 1e-9 && d.x > 0) {
+    const t = (w - o.x) / d.x
+    consider(t, -1, 0)
+  }
+  // Top wall y=0 (normal +Y)
+  if (Math.abs(d.y) > 1e-9 && d.y < 0) {
+    const t = (0 - o.y) / d.y
+    consider(t, 0, 1)
+  }
+  // Bottom wall y=h (normal -Y)
+  if (Math.abs(d.y) > 1e-9 && d.y > 0) {
+    const t = (h - o.y) / d.y
+    consider(t, 0, -1)
   }
 
   return best

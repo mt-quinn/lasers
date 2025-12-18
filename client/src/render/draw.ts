@@ -177,7 +177,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
     // Fail line: keep it tight to the bottom to maximize board height.
     const railH = 14
-    const bottomPad = 16 + (s.view.safeBottom || 0)
+    const bottomPad = 18 + (s.view.safeBottom || 0)
     const railY = s.view.height - bottomPad - railH
     const failY = railY - 8
     ctx.strokeStyle = 'rgba(255,220,180,0.18)'
@@ -243,6 +243,100 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.strokeText(label, cx, cy)
       ctx.fillText(label, cx, cy)
     }
+
+    // Aim reticle: classic sniper reticle, glowing red.
+    const rx = s.reticle.x
+    const ry = s.reticle.y
+    const pulse = 0.55 + 0.45 * Math.sin(s.timeSec * 5.2)
+    const retScale = 0.75
+    const retOuterR = (22 + pulse * 1.2) * retScale
+    const retInnerR = 8.5 * retScale
+
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.lineCap = 'round'
+
+    // Red glow halo
+    ctx.strokeStyle = `rgba(255, 60, 60, ${0.18 + pulse * 0.08})`
+    ctx.lineWidth = 9
+    ctx.beginPath()
+    ctx.arc(rx, ry, retOuterR, 0, Math.PI * 2)
+    ctx.stroke()
+
+    // Outer ring with quadrant gaps (classic scope feel)
+    ctx.strokeStyle = 'rgba(255, 80, 80, 0.85)'
+    ctx.lineWidth = 2.25
+    const gap = Math.PI / 10
+    for (let q = 0; q < 4; q++) {
+      const a0 = q * (Math.PI / 2) + gap
+      const a1 = (q + 1) * (Math.PI / 2) - gap
+      ctx.beginPath()
+      ctx.arc(rx, ry, retOuterR, a0, a1)
+      ctx.stroke()
+    }
+
+    // Crosshair lines (stop short of center ring)
+    const arm = retOuterR + 10 * retScale
+    const innerStop = retInnerR + 2 * retScale
+    ctx.strokeStyle = 'rgba(255, 120, 120, 0.9)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    // horizontal
+    ctx.moveTo(rx - arm, ry)
+    ctx.lineTo(rx - innerStop, ry)
+    ctx.moveTo(rx + innerStop, ry)
+    ctx.lineTo(rx + arm, ry)
+    // vertical
+    ctx.moveTo(rx, ry - arm)
+    ctx.lineTo(rx, ry - innerStop)
+    ctx.moveTo(rx, ry + innerStop)
+    ctx.lineTo(rx, ry + arm)
+    ctx.stroke()
+
+    // Tick marks along crosshair (small, tight, and contained within the outer ring)
+    ctx.strokeStyle = 'rgba(255, 120, 120, 0.70)'
+    ctx.lineWidth = 1.4
+    const tickStep = 4 * retScale
+    const tickLen = 2.5 * retScale
+    const tickInset = 4 * retScale
+    const maxTicks = Math.max(
+      0,
+      Math.min(4, Math.floor((retOuterR - tickInset - innerStop) / tickStep)),
+    )
+    // left/right ticks
+    for (let i = 1; i <= maxTicks; i++) {
+      const dx = innerStop + i * tickStep
+      ctx.beginPath()
+      ctx.moveTo(rx - dx, ry - tickLen)
+      ctx.lineTo(rx - dx, ry + tickLen)
+      ctx.moveTo(rx + dx, ry - tickLen)
+      ctx.lineTo(rx + dx, ry + tickLen)
+      ctx.stroke()
+    }
+    // up/down ticks
+    for (let i = 1; i <= maxTicks; i++) {
+      const dy = innerStop + i * tickStep
+      ctx.beginPath()
+      ctx.moveTo(rx - tickLen, ry - dy)
+      ctx.lineTo(rx + tickLen, ry - dy)
+      ctx.moveTo(rx - tickLen, ry + dy)
+      ctx.lineTo(rx + tickLen, ry + dy)
+      ctx.stroke()
+    }
+
+    // Center ring + dot
+    ctx.strokeStyle = 'rgba(255, 120, 120, 0.9)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(rx, ry, retInnerR, 0, Math.PI * 2)
+    ctx.stroke()
+
+    ctx.fillStyle = 'rgba(255, 210, 210, 0.95)'
+    ctx.beginPath()
+    ctx.arc(rx, ry, 1.7, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.restore()
 
     // Slider rail + emitter (at bottom, above safe-area).
     ctx.fillStyle = 'rgba(0,0,0,0.25)'

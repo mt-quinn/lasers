@@ -5,6 +5,7 @@ import { createInitialRunState, type RunState } from './game/runState'
 import { getUpgradeDef, listUpgradesInOrder } from './game/upgrades'
 import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
+import { clamp } from './game/math'
 
 type HudSnapshot = {
   currency: number
@@ -18,6 +19,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
+  const safeProbeRef = useRef<HTMLDivElement | null>(null)
 
   const stateRef = useRef<RunState>(createInitialRunState())
 
@@ -108,12 +110,9 @@ export default function App() {
         const inside =
           local.x >= 0 && local.x <= local.w && local.y >= 0 && local.y <= local.h
         if (inside) {
-          s.input.aimPointerId = e.pointerId
-          s.input.aimActive = true
-          s.input.aimX = local.x
-          s.input.aimY = local.y
-        } else if (s.input.aimPointerId === e.pointerId) {
-          s.input.aimActive = false
+          // Reticle follows mouse while inside; stays where it was when you leave.
+          s.reticle.x = local.x
+          s.reticle.y = local.y
         }
       }
 
@@ -121,6 +120,9 @@ export default function App() {
         s.input.aimActive = true
         s.input.aimX = local.x
         s.input.aimY = local.y
+        // Touch/stylus aim updates reticle; reticle remains stationary after release.
+        s.reticle.x = local.x
+        s.reticle.y = local.y
       }
       if (s.input.movePointerId === e.pointerId) {
         s.input.moveActive = true
@@ -201,6 +203,22 @@ export default function App() {
     const s = stateRef.current
     let last = performance.now()
 
+    // Probe element to reliably resolve env(safe-area-inset-bottom) on mobile browsers.
+    // (Reading CSS variables can return "env(...)" instead of a computed px value.)
+    if (!safeProbeRef.current) {
+      const el = document.createElement('div')
+      el.style.position = 'fixed'
+      el.style.left = '0'
+      el.style.right = '0'
+      el.style.bottom = '0'
+      el.style.height = '0'
+      el.style.paddingBottom = 'env(safe-area-inset-bottom)'
+      el.style.pointerEvents = 'none'
+      el.style.visibility = 'hidden'
+      document.body.appendChild(el)
+      safeProbeRef.current = el
+    }
+
     const resize = () => {
       const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1))
       const parent = canvas.parentElement
@@ -216,11 +234,19 @@ export default function App() {
       s.view.width = w
       s.view.height = h
 
-      // Read safe-area bottom inset via CSS custom property (px).
-      const rootStyle = window.getComputedStyle(document.documentElement)
-      const safeBottomStr = rootStyle.getPropertyValue('--safe-area-bottom').trim()
-      const safeBottom = safeBottomStr.endsWith('px') ? Number(safeBottomStr.replace('px', '')) : Number(safeBottomStr)
-      s.view.safeBottom = Number.isFinite(safeBottom) ? safeBottom : 0
+      // Read safe-area bottom inset as a resolved px value via the probe element.
+      const probe = safeProbeRef.current
+      if (probe) {
+        const pb = window.getComputedStyle(probe).paddingBottom
+        const safeBottom = parseFloat(pb)
+        s.view.safeBottom = Number.isFinite(safeBottom) ? safeBottom : 0
+      } else {
+        s.view.safeBottom = 0
+      }
+
+      // Keep reticle within the arena bounds after resize.
+      s.reticle.x = clamp(s.reticle.x, 0, w)
+      s.reticle.y = clamp(s.reticle.y, 0, h)
     }
 
     resize()
@@ -255,6 +281,10 @@ export default function App() {
     return () => {
       window.removeEventListener('resize', resize)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      if (safeProbeRef.current) {
+        safeProbeRef.current.remove()
+        safeProbeRef.current = null
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

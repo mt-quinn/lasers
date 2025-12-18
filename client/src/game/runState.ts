@@ -77,6 +77,9 @@ export type RunState = {
   upgrades: Partial<Record<UpgradeId, number>>
   stats: RunStats
 
+  // Persistent aim reticle (screen-space in arena coordinates).
+  reticle: Vec2
+
   emitter: {
     pos: Vec2
     aimDir: Vec2
@@ -118,6 +121,7 @@ export const createInitialRunState = (): RunState => {
       maxBounces: 0,
       bounceFalloff: 0.82,
     },
+    reticle: { x: 180, y: 220 },
     emitter: {
       pos: { x: 180, y: 600 },
       aimDir: { x: 0, y: -1 },
