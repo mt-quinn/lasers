@@ -244,7 +244,7 @@ export const createInitialRunState = (): RunState => {
       hitBlockId: null,
     },
     xp: 0,
-    xpCap: 10,
+    xpCap: 5,
     level: 0,
     pendingLevelUps: 0,
     levelUpActive: false,

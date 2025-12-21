@@ -19,25 +19,19 @@ const rarityColor: Record<Rarity, string> = {
 export const getRarityColor = (r: Rarity) => rarityColor[r]
 
 export const computeXpCap = (level: number) => {
-  // Goal: early upgrades arrive quickly (teach the system), then gradually slow.
-  // Level 0: 10
-  // Level 5: ~23
-  // Level 10: ~53
-  // Level 15: ~120
-  const base = 10 * Math.pow(1.18, Math.max(0, level))
+  // XP needed to go from `level` -> `level + 1`.
+  //
+  // Design:
+  // - Level 1 costs 5 XP.
+  // - Then +1 XP per level-up through reaching level 15.
+  // - Then +2 XP per level-up until a hard cap of 50 XP.
+  //
+  // Note: `level` is the *current* level; this returns the requirement for the *next* level.
+  const l = Math.max(0, Math.floor(level))
 
-  // Make early levels (especially first ~8) arrive 25–50% faster by reducing required XP,
-  // then smoothly converge back to the original curve.
-  // Scale:
-  // - level 0: 0.60x
-  // - level 8: 0.80x  (25% faster)
-  // - level 16+: 1.00x
-  const t0 = Math.max(0, Math.min(1, level / 8))
-  const t1 = Math.max(0, Math.min(1, (level - 8) / 8))
-  const scale = level <= 8 ? 0.6 + 0.2 * t0 : 0.8 + 0.2 * t1
-
-  const cap = Math.round(base * scale)
-  return Math.min(220, Math.max(6, cap))
+  // Levels 0..14 (reaching levels 1..15): 5, 6, 7, ..., 19
+  const cap = l <= 14 ? 5 + l : 19 + 2 * (l - 14)
+  return Math.min(50, Math.max(5, cap))
 }
 
 const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number): T => {
