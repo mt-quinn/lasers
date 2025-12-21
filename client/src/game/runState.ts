@@ -261,7 +261,7 @@ export const createInitialRunState = (): RunState => {
       dps: 9,
       // Default beam width increased by 50% (width is no longer an upgrade).
       beamWidth: 6.0,
-      maxBounces: 0,
+      maxBounces: 1,
       bounceFalloff: 0.82,
     },
     reticle: { x: 180, y: 220 },
