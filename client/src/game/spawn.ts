@@ -165,6 +165,7 @@ const spawnMirror = (s: RunState) => {
     localAabb,
   }
   s.features.push(mirror)
+  s.normalBlocksSinceFeature = 0
 }
 
 const spawnPrism = (s: RunState) => {
@@ -195,6 +196,7 @@ const spawnPrism = (s: RunState) => {
     localAabb: { minX: 0, minY: 0, maxX: cellSize, maxY: cellSize },
   }
   s.features.push(prism)
+  s.normalBlocksSinceFeature = 0
 }
 
 const spawnBlackHole = (s: RunState) => {
@@ -214,10 +216,15 @@ const spawnBlackHole = (s: RunState) => {
     localAabb: { minX: 0, minY: 0, maxX: cellSize, maxY: cellSize },
   }
   s.features.push(hole)
+  s.normalBlocksSinceFeature = 0
 }
 
 export const spawnBoardThing = (s: RunState) => {
   const kind = rollFeatureKind(s.timeSec)
+  // Protection: require at least 3 normal blocks between each feature spawn.
+  if (kind != null && s.normalBlocksSinceFeature < 3) {
+    return spawnBlock(s)
+  }
   if (kind === 'mirror') return spawnMirror(s)
   if (kind === 'prism') return spawnPrism(s)
   if (kind === 'blackHole') return spawnBlackHole(s)
@@ -314,6 +321,7 @@ export const spawnBlock = (s: RunState) => {
   }
 
   s.blocks.push(block)
+  s.normalBlocksSinceFeature = Math.min(3, s.normalBlocksSinceFeature + 1)
 }
 
 

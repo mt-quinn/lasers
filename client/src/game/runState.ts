@@ -198,6 +198,9 @@ export type RunState = {
   nextBlockId: number
   features: BoardFeature[]
   nextFeatureId: number
+  // Spawn director: enforce spacing so we never spawn too many undamageable board features in a row.
+  // Requirement: at least 3 normal blocks must spawn between each feature.
+  normalBlocksSinceFeature: number
   spawnTimer: number
 }
 
@@ -259,6 +262,8 @@ export const createInitialRunState = (): RunState => {
     nextBlockId: 1,
     features: [],
     nextFeatureId: 1,
+    // Allow features immediately at the start (no prior feature to "cool down" from).
+    normalBlocksSinceFeature: 3,
     // Give the player a moment to orient before the first block arrives.
     spawnTimer: 1.3,
   }
