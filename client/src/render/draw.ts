@@ -849,47 +849,146 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // XP gauge (vertical fill on the right).
+    // Compact top-right "pill HUD": radial drop timer + XP bar + XP counter.
     const gx = layout.xpGauge.x
     const gy = layout.xpGauge.y
     const gw = layout.xpGauge.w
     const gh = layout.xpGauge.h
     const xpFrac = clamp(s.xp / Math.max(1, s.xpCap), 0, 1)
+    // Countdown: full -> empty as we approach the next drop.
+    const dropRemain = clamp(s.dropTimerSec / Math.max(0.001, s.dropIntervalSec), 0, 1)
 
-    // Drop timer indicator (linear fill): shows time until next global step.
-    // Move to top-right: just left of the XP gauge, aligned to its top with padding.
-    const progress = clamp((s.dropIntervalSec - s.dropTimerSec) / Math.max(0.001, s.dropIntervalSec), 0, 1)
-    const pad = 10
-    const barW = 10
-    const barH = 56
-    const barX = gx - pad - barW
-    const barY = gy
+    // Module geometry: container wraps a radial timer at the top and the XP bar below.
+    const padIn = 7
+    const moduleW = gw + padIn * 2
+    const radialD = 26
+    const gapY = 10
+    const moduleH = radialD + gapY + gh + 26 // include text area
+    const moduleX = gx - padIn
+    const moduleY = gy - (radialD + gapY) - 14
+
+    // Container (rounded pill)
     ctx.save()
     ctx.globalCompositeOperation = 'source-over'
-    // background
-    ctx.fillStyle = 'rgba(0,0,0,0.22)'
-    ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4)
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)'
-    ctx.lineWidth = 2
-    ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4)
-    // fill (bottom -> top)
-    const fh = barH * progress
-    ctx.fillStyle = 'rgba(255,120,210,0.80)'
-    ctx.fillRect(barX, barY + (barH - fh), barW, fh)
+    const r = 14
+    const bg = ctx.createLinearGradient(0, moduleY, 0, moduleY + moduleH)
+    bg.addColorStop(0, 'rgba(12, 10, 28, 0.62)')
+    bg.addColorStop(1, 'rgba(10, 8, 22, 0.50)')
+    ctx.fillStyle = bg
+    roundedRectPath(moduleX, moduleY, moduleW, moduleH, r)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+    ctx.lineWidth = 1.5
+    roundedRectPath(moduleX, moduleY, moduleW, moduleH, r)
+    ctx.stroke()
+
+    // Radial timer (top): full disc that empties counterclockwise.
+    {
+      const cx = moduleX + moduleW / 2
+      const cy = moduleY + 16 + radialD / 2
+      const rr = radialD / 2
+
+      // Groove disc
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      const disc = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
+      disc.addColorStop(0, 'rgba(0,0,0,0.16)')
+      disc.addColorStop(1, 'rgba(0,0,0,0.28)')
+      ctx.fillStyle = disc
+      ctx.beginPath()
+      ctx.arc(cx, cy, rr, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
+      // Fill wedge: start at top, sweep CCW as remaining decreases.
+      ctx.globalCompositeOperation = 'lighter'
+      const start = -Math.PI / 2
+      const end = start - Math.PI * 2 * dropRemain
+      // Mostly flat pink, with only a subtle edge gradient so it feels like a soft lens.
+      const fill = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
+      fill.addColorStop(0, 'rgba(255,120,210,0.52)')
+      fill.addColorStop(0.84, 'rgba(255,120,210,0.52)')
+      fill.addColorStop(1, 'rgba(255,120,210,0.36)')
+      ctx.fillStyle = fill
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.arc(cx, cy, rr - 1, end, start, false)
+      ctx.closePath()
+      ctx.fill()
+
+      // Subtle highlight cap at the leading edge for motion readability.
+      ctx.globalCompositeOperation = 'screen'
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(cx, cy, rr - 1.2, end, end + 0.24)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    // XP bar groove (full width)
+    const trackX = moduleX + padIn
+    const trackY = moduleY + 16 + radialD + gapY
+    const trackW = gw
+    const trackH = gh
+    {
+      const rr = Math.min(10, trackW / 2)
+      const g = ctx.createLinearGradient(0, trackY, 0, trackY + trackH)
+      g.addColorStop(0, 'rgba(0,0,0,0.35)')
+      g.addColorStop(1, 'rgba(255,255,255,0.05)')
+      ctx.fillStyle = g
+      roundedRectPath(trackX, trackY, trackW, trackH, rr)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+      ctx.lineWidth = 1
+      roundedRectPath(trackX, trackY, trackW, trackH, rr)
+      ctx.stroke()
+    }
+
+    // XP fill (subtle glow)
+    const fillH = trackH * xpFrac
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.fillStyle = 'rgba(255,120,210,0.22)'
+    roundedRectPath(trackX, trackY + (trackH - fillH), trackW, fillH, Math.min(9, trackW / 2))
+    ctx.fill()
+    ctx.fillStyle = 'rgba(255,120,210,0.70)'
+    roundedRectPath(
+      trackX + 1,
+      trackY + (trackH - fillH) + 1,
+      trackW - 2,
+      Math.max(0, fillH - 2),
+      Math.min(8, (trackW - 2) / 2),
+    )
+    ctx.fill()
     ctx.restore()
 
-    ctx.save()
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = 'rgba(0,0,0,0.22)'
-    ctx.fillRect(gx - 2, gy - 2, gw + 4, gh + 4)
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)'
-    ctx.lineWidth = 2
-    ctx.strokeRect(gx - 2, gy - 2, gw + 4, gh + 4)
+    // XP counter text: centered inside the XP bar.
+    {
+      const label = `${Math.floor(s.xp)}/${s.xpCap}`
+      const tx = trackX + trackW / 2
+      const ty = trackY + trackH / 2
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.font = "800 11px 'Oxanium', system-ui, sans-serif"
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      // Small backing for legibility over the fill.
+      const tw = ctx.measureText(label).width
+      ctx.fillStyle = 'rgba(0,0,0,0.22)'
+      roundedRectPath(tx - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+      ctx.lineWidth = 1
+      roundedRectPath(tx - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
+      ctx.stroke()
+      ctx.fillStyle = 'rgba(255,246,213,0.92)'
+      ctx.fillText(label, tx, ty)
+      ctx.restore()
+    }
 
-    // fill
-    const fillH = gh * xpFrac
-    ctx.fillStyle = 'rgba(255,120,210,0.78)'
-    ctx.fillRect(gx, gy + (gh - fillH), gw, fillH)
     ctx.restore()
 
     // XP orbs (condense -> fly).

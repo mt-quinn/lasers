@@ -17,14 +17,19 @@ export const getArenaLayout = (view: ViewState): ArenaLayout => {
   const emitterY = railY + railH / 2
   const failY = railY - 8
 
-  const pad = 14
-  const gaugeW = 10
-  const gaugeH = Math.max(80, railY - 26)
-  const gaugeX = view.width - pad - gaugeW
-  const gaugeY = 16
-  const gauge = { x: gaugeX, y: gaugeY, w: gaugeW, h: gaugeH - gaugeY, pad }
+  // Compact HUD module (top-right): pill container with a radial timer at the top,
+  // then a full-width XP bar below.
+  // xpGauge describes the inner XP bar track.
+  const pad = 12
+  const xpW = 36
+  const xpH = 86
+  const radialH = 30 // space reserved above xpGauge for the radial timer
+  const gaugeX = view.width - pad - xpW
+  const gaugeY = 14 + radialH + 8
+  const gauge = { x: gaugeX, y: gaugeY, w: xpW, h: xpH, pad }
 
-  const xpTarget = { x: gaugeX + gaugeW / 2, y: gaugeY + gauge.h + 2 }
+  // Default target for XP orbs (used for legacy paths); most code now targets the top-of-fill dynamically.
+  const xpTarget = { x: gaugeX + xpW / 2, y: gaugeY + gauge.h }
 
   return { railH, bottomPad, railY, failY, emitterY, xpGauge: gauge, xpTarget }
 }
