@@ -270,8 +270,8 @@ export const spawnBlock = (s: RunState) => {
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
   // Soft cap prevents late-game rolls from becoming effectively unkillable.
   const hpMax = Math.min(240, Math.round(baseHp * sizeMult * 1.5))
-  // XP per block: keep simple for now (tunable). Larger shapes are worth a bit more.
-  const xpValue = Math.max(1, Math.round(Math.sqrt(shape.cells.length)))
+  // XP per block: always 1 (no scaling by piece size).
+  const xpValue = 1
 
   const loop = buildCellLoop(cells)
   const localAabb = computeLocalAabbPx(cells, cellSize)

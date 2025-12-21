@@ -136,7 +136,11 @@ export const stepSim = (s: RunState, dt: number) => {
 
   targetX = clamp(targetX, sliderPad, s.view.width - sliderPad)
 
+  const prevEmitterX = s.emitter.pos.x
   s.emitter.pos = lerpVec(s.emitter.pos, { x: targetX, y: emitterY }, 0.35)
+  if (!s.tutorialMovedEmitter && Math.abs(s.emitter.pos.x - prevEmitterX) > 0.5) {
+    s.tutorialMovedEmitter = true
+  }
 
   // Keep the reticle in a physically-aimable region (above the emitter) so
   // we can aim *exactly* at it without introducing non-physical clamps.

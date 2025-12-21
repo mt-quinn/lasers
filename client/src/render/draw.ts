@@ -163,6 +163,16 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
   withDpr(ctx, dpr, () => {
     ctx.clearRect(0, 0, s.view.width, s.view.height)
     const layout = getArenaLayout(s.view)
+    const roundedRectPath = (x: number, y: number, w: number, h: number, r: number) => {
+      const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2))
+      ctx.beginPath()
+      ctx.moveTo(x + rr, y)
+      ctx.arcTo(x + w, y, x + w, y + h, rr)
+      ctx.arcTo(x + w, y + h, x, y + h, rr)
+      ctx.arcTo(x, y + h, x, y, rr)
+      ctx.arcTo(x, y, x + w, y, rr)
+      ctx.closePath()
+    }
 
     // Arena glow vignette.
     const grd = ctx.createRadialGradient(
@@ -445,22 +455,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // Slider rail + emitter (at bottom, above safe-area).
-    ctx.fillStyle = 'rgba(0,0,0,0.25)'
-    ctx.fillRect(16, railY, s.view.width - 32, 14)
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)'
-    ctx.lineWidth = 2
-    ctx.strokeRect(16, railY, s.view.width - 32, 14)
-
-    ctx.save()
-    ctx.shadowColor = 'rgba(255,120,210,0.55)'
-    ctx.shadowBlur = 18
-    ctx.fillStyle = 'rgba(255,245,200,0.95)'
-    ctx.beginPath()
-    ctx.arc(s.emitter.pos.x, s.emitter.pos.y, 11, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.restore()
-
     // XP gauge (vertical fill on the right).
     const gx = layout.xpGauge.x
     const gy = layout.xpGauge.y
@@ -729,6 +723,112 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
     ctx.restore()
+
+    // Slider rail + emitter (at bottom, above safe-area). Draw *after* the laser so the emitter sits on top.
+    {
+      const railX = 16
+      const railW = s.view.width - 32
+      const railH = layout.railH
+      const railR = railH / 2
+
+      // Outer rail body
+      ctx.save()
+      const railGrad = ctx.createLinearGradient(0, railY, 0, railY + railH)
+      railGrad.addColorStop(0, 'rgba(255,255,255,0.06)')
+      railGrad.addColorStop(0.5, 'rgba(0,0,0,0.22)')
+      railGrad.addColorStop(1, 'rgba(0,0,0,0.34)')
+      ctx.fillStyle = railGrad
+      roundedRectPath(railX, railY, railW, railH, railR)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // Inner groove
+      const groovePad = 3
+      const grooveH = Math.max(6, railH - 6)
+      const grooveY = railY + (railH - grooveH) / 2
+      const grooveR = grooveH / 2
+      const grooveGrad = ctx.createLinearGradient(0, grooveY, 0, grooveY + grooveH)
+      grooveGrad.addColorStop(0, 'rgba(0,0,0,0.38)')
+      grooveGrad.addColorStop(1, 'rgba(255,255,255,0.05)')
+      ctx.fillStyle = grooveGrad
+      roundedRectPath(railX + groovePad, grooveY, railW - groovePad * 2, grooveH, grooveR)
+      ctx.fill()
+      ctx.restore()
+
+      // Emitter knob (slider handle)
+      const knobR = 13
+      const knobX = s.emitter.pos.x
+      const knobY = s.emitter.pos.y
+      ctx.save()
+      ctx.shadowColor = 'rgba(255,120,210,0.45)'
+      ctx.shadowBlur = 18
+      const knobGrad = ctx.createRadialGradient(
+        knobX - knobR * 0.35,
+        knobY - knobR * 0.45,
+        2,
+        knobX,
+        knobY,
+        knobR * 1.25,
+      )
+      knobGrad.addColorStop(0, 'rgba(255,255,255,0.95)')
+      knobGrad.addColorStop(0.55, 'rgba(255,245,200,0.92)')
+      knobGrad.addColorStop(1, 'rgba(180,150,255,0.70)')
+      ctx.fillStyle = knobGrad
+      ctx.beginPath()
+      ctx.arc(knobX, knobY, knobR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.shadowBlur = 0
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(knobX, knobY, knobR, 0, Math.PI * 2)
+      ctx.stroke()
+
+      // Grip lines
+      ctx.strokeStyle = 'rgba(0,0,0,0.26)'
+      ctx.lineWidth = 1.5
+      for (let i = -1; i <= 1; i++) {
+        const xx = knobX + i * 3.5
+        ctx.beginPath()
+        ctx.moveTo(xx, knobY - 6)
+        ctx.lineTo(xx, knobY + 6)
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      // Tutorial label: persists until the player moves the emitter.
+      if (!s.tutorialMovedEmitter) {
+        const pulse = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(s.timeSec * 3.1))
+        const label = 'Move Laser ↔'
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.font = "800 12px 'Oxanium', system-ui, sans-serif"
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        const padX = 10
+        const textW = ctx.measureText(label).width
+        const boxW = Math.ceil(textW + padX * 2)
+        const boxH = 22
+        const boxX = knobX - boxW / 2
+        const boxY = knobY - knobR - 10 - boxH
+        ctx.globalAlpha = pulse
+        ctx.shadowColor = 'rgba(255,120,210,0.35)'
+        ctx.shadowBlur = 14
+        ctx.fillStyle = 'rgba(10, 8, 22, 0.72)'
+        roundedRectPath(boxX, boxY, boxW, boxH, 10)
+        ctx.fill()
+        ctx.shadowBlur = 0
+        ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+        ctx.lineWidth = 2
+        roundedRectPath(boxX, boxY, boxW, boxH, 10)
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(255,246,213,0.98)'
+        ctx.fillText(label, knobX, boxY + boxH / 2)
+        ctx.restore()
+      }
+    }
 
     // Aim reticle: draw late (above weld glow) and auto-darken when bright welding glow is behind it.
     {

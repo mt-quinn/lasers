@@ -149,6 +149,9 @@ export type RunState = {
   timeSec: number
   blocksDestroyed: number
 
+  // Tutorial/first-play helpers.
+  tutorialMovedEmitter: boolean
+
   // Lives: 3 max. Lose one when a block reaches the fail line; board clears and play continues.
   lives: number
   // Short breather after losing a life (spawns paused).
@@ -222,6 +225,7 @@ export const createInitialRunState = (): RunState => {
     },
     timeSec: 0,
     blocksDestroyed: 0,
+    tutorialMovedEmitter: false,
     lives: 3,
     respiteSec: 0,
     lifeLossFx: null,

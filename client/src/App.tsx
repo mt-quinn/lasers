@@ -5,6 +5,7 @@ import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 import { applyOffer, computeXpCap, getRarityColor } from './game/levelUp'
+import { getArenaLayout } from './game/layout'
 
 type HudSnapshot = {
   dps: number
@@ -49,10 +50,13 @@ export default function App() {
       }
     }
 
-    const pickRoleForPointerDown = (localY: number, viewH: number) => {
-      // Bottom band is primarily for the slider finger.
-      const controlBand = 140
-      return localY >= viewH - controlBand ? 'move' : 'aim'
+    const pickRoleForPointerDown = (localY: number, s: RunState) => {
+      // Keep the movement hitbox tight to the visible rail/knob so aiming at low blocks
+      // doesn't accidentally grab the slider.
+      const layout = getArenaLayout(s.view)
+      const bandTop = layout.railY - 5
+      const bandBottom = layout.railY + layout.railH + 12
+      return localY >= bandTop && localY <= bandBottom ? 'move' : 'aim'
     }
 
     const onPointerDown = (e: PointerEvent) => {
@@ -60,8 +64,7 @@ export default function App() {
       const local = getLocal(e)
       if (!local) return
 
-      const preferredRole =
-        e.pointerType === 'mouse' ? 'aim' : pickRoleForPointerDown(local.y, local.h)
+      const preferredRole = pickRoleForPointerDown(local.y, s)
 
       const assign = (role: 'aim' | 'move') => {
         if (role === 'aim') {
