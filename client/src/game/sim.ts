@@ -3,7 +3,7 @@ import type { Vec2 } from './math'
 import type { RunState } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing } from './spawn'
-import { createInitialRunState } from './runState'
+import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR, createInitialRunState } from './runState'
 import { getArenaLayout } from './layout'
 import { rollUpgradeOptions } from './levelUp'
 
@@ -77,6 +77,17 @@ export const stepSim = (s: RunState, dt: number) => {
 
   const layout = getArenaLayout(s.view)
   const cellSize = 40
+
+  const xpOrbTarget = (): Vec2 => {
+    // Aim for the *current* top of the filled portion of the XP bar.
+    const gx = layout.xpGauge.x
+    const gy = layout.xpGauge.y
+    const gw = layout.xpGauge.w
+    const gh = layout.xpGauge.h
+    const xpFrac = clamp(s.xp / Math.max(1, s.xpCap), 0, 1)
+    const fillH = gh * xpFrac
+    return { x: gx + gw / 2, y: gy + (gh - fillH) }
+  }
 
   // Respite after losing a life: no spawns for a moment.
   if (s.respiteSec > 0) {
@@ -186,18 +197,41 @@ export const stepSim = (s: RunState, dt: number) => {
     s.weldGlows = s.weldGlows.filter((g) => g.age < g.life)
   }
 
+  // Melt FX: blocks collapse into a molten blob, then release an XP orb that flies away.
+  if (s.meltFx.length > 0) {
+    const done: string[] = []
+    for (const fx of s.meltFx) {
+      fx.t += dt
+      if (fx.t >= fx.dur) {
+        // Spawn the XP orb in fly phase at the end of the melt.
+        s.xpOrbs.push({
+          id: `orb-${s.nextOrbId++}`,
+          from: { ...fx.orbFrom },
+          to: xpOrbTarget(),
+          t: 0,
+          phase: 'fly',
+          value: fx.value,
+        })
+        done.push(fx.id)
+      }
+    }
+    if (done.length > 0) {
+      s.meltFx = s.meltFx.filter((f) => !done.includes(f.id))
+    }
+  }
+
   // Update XP orbs (condense -> fly -> deliver).
   if (s.xpOrbs.length > 0) {
     const delivered: string[] = []
     for (const orb of s.xpOrbs) {
       orb.t += dt
       if (orb.phase === 'condense') {
-        if (orb.t >= 0.12) {
+        if (orb.t >= XP_ORB_CONDENSE_DUR) {
           orb.phase = 'fly'
           orb.t = 0
         }
       } else {
-        if (orb.t >= 0.55) {
+        if (orb.t >= XP_ORB_FLY_DUR) {
           // Deliver XP at end of flight.
           s.xp += orb.value
           delivered.push(orb.id)
@@ -419,13 +453,24 @@ export const stepSim = (s: RunState, dt: number) => {
       s.blocksDestroyed += 1
       const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
       const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
-      s.xpOrbs.push({
-        id: `orb-${s.nextOrbId++}`,
-        from: { x: cx, y: cy },
-        to: { ...layout.xpTarget },
+      const w = b.localAabb.maxX - b.localAabb.minX
+      const h = b.localAabb.maxY - b.localAabb.minY
+      // Melt collapses downward into a small blob near the *bottom* of the piece, then releases the XP orb.
+      const bottom = b.pos.y + b.localAabb.maxY
+      const orbFrom = { x: cx, y: bottom - 6 }
+      s.meltFx.push({
+        id: `melt-${s.nextMeltId++}`,
+        pos: { ...b.pos },
+        cellSize: b.cellSize,
+        cornerRadius: b.cornerRadius,
+        loop: b.loop,
+        localAabb: { ...b.localAabb },
         t: 0,
-        phase: 'condense',
+        dur: BLOCK_MELT_DUR,
+        orbFrom,
+        orbTo: { ...layout.xpTarget },
         value: b.xpValue,
+        seed: Math.random() * 1000,
       })
       s.blocks = s.blocks.filter((x) => x.id !== b.id)
 

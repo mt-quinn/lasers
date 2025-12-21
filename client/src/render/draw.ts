@@ -1,3 +1,4 @@
+import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from '../game/runState'
 import type { RunState } from '../game/runState'
 import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
@@ -287,6 +288,349 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
+    // Melt-on-death FX: the block turns red-hot and squishes (gravity) into the XP particle.
+    if (s.meltFx.length > 0) {
+      const smoothstep = (x: number) => {
+        const t = clamp(x, 0, 1)
+        return t * t * (3 - 2 * t)
+      }
+      const drawSmoothClosed = (pts: Vec2[]) => {
+        if (pts.length < 3) return
+        // If closed (last == first), drop the duplicate.
+        const p0 = pts[0]!
+        const pn = pts[pts.length - 1]!
+        const arr =
+          Math.abs(pn.x - p0.x) < 1e-6 && Math.abs(pn.y - p0.y) < 1e-6 ? pts.slice(0, -1) : pts
+        const n = arr.length
+        if (n < 3) return
+        const mid = (a: Vec2, b: Vec2) => ({ x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 })
+        const m0 = mid(arr[0]!, arr[1]!)
+        ctx.beginPath()
+        ctx.moveTo(m0.x, m0.y)
+        for (let i = 1; i < n; i++) {
+          const a = arr[i]!
+          const b = arr[(i + 1) % n]!
+          const m = mid(a, b)
+          ctx.quadraticCurveTo(a.x, a.y, m.x, m.y)
+        }
+        // close via first vertex
+        const mEnd = mid(arr[0]!, arr[1]!)
+        ctx.quadraticCurveTo(arr[0]!.x, arr[0]!.y, mEnd.x, mEnd.y)
+        ctx.closePath()
+      }
+      for (const fx of s.meltFx) {
+        const p = clamp(fx.t / Math.max(0.0001, fx.dur), 0, 1)
+        const e = smoothstep(p)
+
+        const ax0 = fx.pos.x + fx.localAabb.minX
+        const ay0 = fx.pos.y + fx.localAabb.minY
+        const w0 = fx.localAabb.maxX - fx.localAabb.minX
+        const h0 = fx.localAabb.maxY - fx.localAabb.minY
+        const cx0 = ax0 + w0 * 0.5
+
+        // Keep the melt/orb the exact "dead piece" red (healthFill(0) == #ff3b5c).
+        // No hue shift during the melt—only shape changes.
+        const molten = 'rgb(255 59 92)'
+
+        // Single-shape morph (no fades, no separate puddle/orb draw):
+        // - Early: gravity sag + pooling deformation (stronger near the bottom).
+        // - Late: smoothly morph into a circle at orbFrom with the same radius as the XP orb.
+        const phase1End = 0.78
+        const a = smoothstep(p / phase1End) // pooling/sag amount
+        const c = smoothstep((p - phase1End) / (1 - phase1End)) // circle morph amount
+
+        const top0 = ay0
+        const bottom0 = ay0 + h0
+        const wob = Math.sin(fx.seed + fx.t * 7.5)
+
+        const ptsWorld: Vec2[] = fx.loop.map((q) => ({
+          x: fx.pos.x + q.x * fx.cellSize,
+          y: fx.pos.y + q.y * fx.cellSize,
+        }))
+        const ptsWarp: Vec2[] = []
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity
+        const R = 5 // must match XP orb fly radius
+
+        // 1) Warp points with a gravity + pooling field.
+        for (const pt of ptsWorld) {
+          const v = clamp((pt.y - top0) / Math.max(1, h0), 0, 1) // 0 top -> 1 bottom
+          const dy = bottom0 - pt.y
+          const edge01 = clamp(Math.abs(pt.x - cx0) / Math.max(1, w0 * 0.5), 0, 1)
+
+          // Compress upper mass downward (sag), much less at the bottom so it "piles up".
+          const compress = 1 - a * 0.80 * Math.pow(1 - v, 1.7)
+          let y1 = bottom0 - dy * compress
+          // Downward drift: affects edges too so horizontal surfaces don't only divot in the middle.
+          y1 += a * 0.07 * h0 * Math.pow(v, 2.2) * (0.65 + 0.35 * edge01)
+
+          // Spread more near the bottom (puddle) + a bit of viscous lateral slop.
+          // Additionally, cantilevered parts (high + far from center) should flow inward as they melt
+          // instead of "dripping" straight down as thin strings.
+          const spread = 1 + a * (0.55 * v * v) + a * 0.06 * wob * Math.pow(v, 2.8)
+
+          // Inward reflow is strongest for points that are:
+          // - higher up (1 - v)
+          // - further from center (edge01)
+          // This helps overhangs collapse back toward the body of the piece.
+          const inward = a * 0.62 * Math.pow(1 - v, 1.55) * Math.pow(edge01, 1.35)
+          const spreadAdj = Math.max(0.15, spread * (1 - inward))
+
+          let x1 = cx0 + (pt.x - cx0) * spreadAdj
+          x1 += a * 6.5 * wob * (1 - v) * 0.25
+
+          ptsWarp.push({ x: x1, y: y1 })
+        }
+
+        // 2) Viscosity smoothing to combat “balloon animal” pinches (diffuses sharp necks).
+        // This keeps thin connectors from collapsing into single vertices with long smooth curves.
+        if (ptsWarp.length >= 6) {
+          const iters = 2
+          const k = 0.22
+          for (let it = 0; it < iters; it++) {
+            const next: Vec2[] = []
+            for (let i = 0; i < ptsWarp.length; i++) {
+              const prev = ptsWarp[(i - 1 + ptsWarp.length) % ptsWarp.length]!
+              const cur = ptsWarp[i]!
+              const nxt = ptsWarp[(i + 1) % ptsWarp.length]!
+              next.push({
+                x: cur.x + k * ((prev.x + nxt.x) * 0.5 - cur.x),
+                y: cur.y + k * ((prev.y + nxt.y) * 0.5 - cur.y),
+              })
+            }
+            for (let i = 0; i < ptsWarp.length; i++) ptsWarp[i] = next[i]!
+          }
+
+          // Extra mild “nub killer” near the end: remove tiny protrusions without changing the overall melt.
+          // Only activates late to avoid over-smoothing the early recognizable silhouette.
+          const nub = smoothstep((p - 0.68) / 0.32)
+          if (nub > 0.001) {
+            const n = ptsWarp.length
+            const extraIters = nub > 0.85 ? 2 : 1
+            const kk = 0.10 + 0.10 * nub
+            const minEdge = Math.max(1.2, fx.cellSize * 0.06)
+            for (let it = 0; it < extraIters; it++) {
+              const next: Vec2[] = []
+              for (let i = 0; i < n; i++) {
+                const prev = ptsWarp[(i - 1 + n) % n]!
+                const cur = ptsWarp[i]!
+                const nxt = ptsWarp[(i + 1) % n]!
+                const lp = Math.hypot(cur.x - prev.x, cur.y - prev.y)
+                const ln = Math.hypot(nxt.x - cur.x, nxt.y - cur.y)
+                // Only damp when we see very short edges (typical nub signature).
+                const w = clamp((minEdge - Math.min(lp, ln)) / minEdge, 0, 1) * nub
+                const kLocal = kk * (0.25 + 0.75 * w)
+                next.push({
+                  x: cur.x + kLocal * ((prev.x + nxt.x) * 0.5 - cur.x),
+                  y: cur.y + kLocal * ((prev.y + nxt.y) * 0.5 - cur.y),
+                })
+              }
+              for (let i = 0; i < n; i++) ptsWarp[i] = next[i]!
+            }
+          }
+        }
+
+        // 3) Late circle morph: preserve perimeter order using arclength parameterization.
+        // Mapping by polar angle can reorder points and self-intersect (the “inside-out” artifact).
+        //
+        // Also apply a mild late-stage "surface tension" smoothing in *radius-vs-parameter* space.
+        // This specifically combats small lobes/nubbins ("balloon animal" artifacts) that show up
+        // near the end (e.g. the T-piece smile + corner blobs).
+        //
+        // Finally, enforce a consistent "ground plane" (bottom) reference to avoid any perceived
+        // rotation: anchor the parameter start at the bottom-most point, and use a fixed downward
+        // angle as the phase reference.
+        const ptsM: Vec2[] = []
+        if (ptsWarp.length >= 3) {
+          // Center for radius smoothing: use centroid of the warped loop so the blob stays coherent.
+          let cxx = 0
+          let cyy = 0
+          for (const q of ptsWarp) {
+            cxx += q.x
+            cyy += q.y
+          }
+          cxx /= ptsWarp.length
+          cyy /= ptsWarp.length
+
+          // Rotate the loop so index 0 is the bottom-most point (stable "ground" anchor).
+          let i0 = 0
+          let bestY = -Infinity
+          let bestDx = Infinity
+          for (let i = 0; i < ptsWarp.length; i++) {
+            const q = ptsWarp[i]!
+            const dx = Math.abs(q.x - cx0)
+            if (q.y > bestY + 0.001 || (Math.abs(q.y - bestY) <= 0.001 && dx < bestDx)) {
+              bestY = q.y
+              bestDx = dx
+              i0 = i
+            }
+          }
+          const pts = ptsWarp.slice(i0).concat(ptsWarp.slice(0, i0))
+
+          let total = 0
+          const cum: number[] = [0]
+          for (let i = 1; i < pts.length; i++) {
+            const a0 = pts[i - 1]!
+            const b0 = pts[i]!
+            total += Math.hypot(b0.x - a0.x, b0.y - a0.y)
+            cum.push(total)
+          }
+          // close
+          total += Math.hypot(pts[0]!.x - pts[pts.length - 1]!.x, pts[0]!.y - pts[pts.length - 1]!.y)
+          const inv = 1 / Math.max(1e-6, total)
+
+          // Angle parameterization is based on perimeter order (t), not geometric angle.
+          // Use a fixed downward phase so the blob doesn't "rotate" as it melts.
+          const baseAng = Math.PI / 2
+
+          // Late-stage surface tension: smooth radius along the loop parameter.
+          const tension = smoothstep((p - 0.62) / 0.28)
+          const n = pts.length
+          const tParam: number[] = new Array(n)
+          const angParam: number[] = new Array(n)
+          for (let i = 0; i < n; i++) {
+            const tt = (cum[i]! * inv) % 1
+            tParam[i] = tt
+            angParam[i] = baseAng + tt * Math.PI * 2
+          }
+          const radii: number[] = new Array(n)
+          for (let i = 0; i < n; i++) {
+            const dx = pts[i]!.x - cxx
+            const dy = pts[i]!.y - cyy
+            radii[i] = Math.hypot(dx, dy)
+          }
+          if (tension > 0.001 && n >= 6) {
+            const iters = tension > 0.82 ? 3 : 2
+            const alpha = 0.35 * tension
+            let r = radii
+            for (let it = 0; it < iters; it++) {
+              const next = new Array(n)
+              for (let i = 0; i < n; i++) {
+                const rm1 = r[(i - 1 + n) % n]!
+                const r0 = r[i]!
+                const rp1 = r[(i + 1) % n]!
+                const avg = (rm1 + 2 * r0 + rp1) / 4
+                // Stronger smoothing on the *upper* surfaces to remove lingering sag-divots.
+                // With baseAng=pi/2, "top" is around ang=-pi/2 (sin is -1).
+                const top01 = clamp((-Math.sin(angParam[i]!)) * 0.5 + 0.5, 0, 1)
+                // Increase smoothing as it progresses; reduce slightly once fully circle-morphing.
+                const aLocal = alpha * (1 + 0.95 * top01) * (0.8 + 0.2 * (1 - c))
+                next[i] = lerp(r0, avg, aLocal)
+              }
+              r = next
+            }
+            // Clamp high-frequency bumps AND divots.
+            // Max clamp kills tiny lobes; min clamp fills in sharp concave dents that can persist as it shrinks.
+            const capHi = Math.max(0.75, fx.cellSize * 0.08) * (1 - 0.35 * c)
+            // Keep the allowed "divot depth" quite small on the upper surfaces; otherwise you get
+            // those unnatural V-notches that become more pronounced as the blob shrinks.
+            const capLoBase = Math.max(0.30, fx.cellSize * 0.04) * (1 - 0.35 * c)
+            for (let i = 0; i < n; i++) {
+              const rm1 = r[(i - 1 + n) % n]!
+              const r0 = r[i]!
+              const rp1 = r[(i + 1) % n]!
+              const base = (rm1 + rp1) * 0.5
+              const top01 = clamp((-Math.sin(angParam[i]!)) * 0.5 + 0.5, 0, 1)
+              const capLo = capLoBase * (1 + 1.55 * top01)
+              if (r0 > base + capHi) r[i] = base + capHi
+              if (r[i]! < base - capLo) r[i] = base - capLo
+            }
+
+            // Explicitly fill persistent V-divots on the upper arc by biasing radii upward
+            // toward the neighbor baseline (surface tension "rounds out" dents).
+            // This prevents top dents from sharpening as the blob shrinks.
+            const fill = smoothstep((p - 0.50) / 0.40) * (1 - 0.15 * c)
+            if (fill > 0.001) {
+              const passIters = fill > 0.8 ? 2 : 1
+              for (let it = 0; it < passIters; it++) {
+                const next = r.slice()
+                for (let i = 0; i < n; i++) {
+                  const top01 = clamp((-Math.sin(angParam[i]!)) * 0.5 + 0.5, 0, 1)
+                  if (top01 < 0.55) continue
+                  const rm1 = r[(i - 1 + n) % n]!
+                  const r0 = r[i]!
+                  const rp1 = r[(i + 1) % n]!
+                  const base = (rm1 + rp1) * 0.5
+                  // If we're below the baseline (a divot), push up strongly.
+                  if (r0 < base) {
+                    const k = fill * (0.45 + 0.55 * top01)
+                    next[i] = lerp(r0, base, k)
+                  }
+                }
+                r = next
+              }
+            }
+            for (let i = 0; i < n; i++) radii[i] = r[i]!
+          }
+
+          // Ground plane: make the blob *literally* settle onto a flat base line.
+          // We do this by progressively flattening points that are near the bottom of the shape
+          // onto `floorY`, producing a clear "sitting on a plane" read (no rotation).
+          const floorY = bottom0
+          const floorAmt = (1 - c) * smoothstep((p - 0.22) / 0.55)
+          const floorBand = Math.max(8, fx.cellSize * 0.24)
+
+          for (let i = 0; i < pts.length; i++) {
+            const t = tParam[i]!
+            const ang = angParam[i]!
+            // Use the smoothed radius to build a single-lobed blob, then morph to the final circle.
+            const bx = cxx + Math.cos(ang) * radii[i]!
+            const by = cyy + Math.sin(ang) * radii[i]!
+            const tx = fx.orbFrom.x + Math.cos(ang) * R
+            const ty = fx.orbFrom.y + Math.sin(ang) * R
+            const x2 = lerp(bx, tx, c)
+            let y2 = lerp(by, ty, c)
+            if (floorAmt > 0.001) {
+              // Clamp below-floor points up to the plane.
+              if (y2 > floorY) y2 = floorY
+              // Flatten a band of near-floor points down onto the plane (literal flat base).
+              const contact = clamp((y2 - (floorY - floorBand)) / Math.max(1e-6, floorBand), 0, 1)
+              y2 = lerp(y2, floorY, floorAmt * contact)
+            }
+            ptsM.push({ x: x2, y: y2 })
+            minX = Math.min(minX, x2)
+            minY = Math.min(minY, y2)
+            maxX = Math.max(maxX, x2)
+            maxY = Math.max(maxY, y2)
+          }
+        }
+
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.shadowColor = 'rgba(255,80,80,0.14)'
+        ctx.shadowBlur = 12 * (1 - c)
+        drawSmoothClosed(ptsM)
+        ctx.fillStyle = molten
+        ctx.fill()
+        ctx.shadowBlur = 0
+
+        // Face lighting + molten flow (clipped) for the whole morph.
+        const bbW = Math.max(1, maxX - minX)
+        const bbH = Math.max(1, maxY - minY)
+        applyDomedDepth(minX, minY, bbW, bbH, 1.0)
+
+        ctx.save()
+        ctx.clip()
+        ctx.globalCompositeOperation = 'screen'
+        const tt = fx.t * 2.3 + fx.seed
+        const bandH = Math.max(10, bbH * 0.28)
+        for (let k = 0; k < 3; k++) {
+          const yy = minY + ((tt * 34 + k * bandH * 1.25) % (bbH + bandH)) - bandH
+          const band = ctx.createLinearGradient(minX, yy, minX, yy + bandH)
+          band.addColorStop(0, 'rgba(255,255,255,0)')
+          band.addColorStop(0.5, `rgba(255,255,255,${0.10 * (1 - c)})`)
+          band.addColorStop(1, 'rgba(255,255,255,0)')
+          ctx.fillStyle = band
+          ctx.fillRect(minX - 2, yy, bbW + 4, bandH)
+        }
+        ctx.restore()
+
+        ctx.restore()
+      }
+    }
+
     // Board features: mirrors / prisms / black holes (indestructible, no HP numbers).
     if (s.features.length > 0) {
       for (const f of s.features) {
@@ -557,15 +901,16 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           orb.phase === 'condense'
             ? orb.from
             : {
-                x: orb.from.x + (orb.to.x - orb.from.x) * Math.pow(clamp(orb.t / 0.55, 0, 1), 0.75),
-                y: orb.from.y + (orb.to.y - orb.from.y) * Math.pow(clamp(orb.t / 0.55, 0, 1), 0.75),
+                x: orb.from.x + (orb.to.x - orb.from.x) * Math.pow(clamp(orb.t / XP_ORB_FLY_DUR, 0, 1), 0.75),
+                y: orb.from.y + (orb.to.y - orb.from.y) * Math.pow(clamp(orb.t / XP_ORB_FLY_DUR, 0, 1), 0.75),
               }
-        const r = orb.phase === 'condense' ? 16 * (1 - clamp(orb.t / 0.12, 0, 1)) + 4 : 5
-        ctx.fillStyle = 'rgba(255,120,210,0.35)'
+        const r = orb.phase === 'condense' ? 16 * (1 - clamp(orb.t / XP_ORB_CONDENSE_DUR, 0, 1)) + 4 : 5
+        // Keep orb color the exact "dead piece" red (no hue shift).
+        ctx.fillStyle = 'rgba(255,59,92,0.32)'
         ctx.beginPath()
         ctx.arc(p.x, p.y, r * 2.2, 0, Math.PI * 2)
         ctx.fill()
-        ctx.fillStyle = 'rgba(255,245,230,0.85)'
+        ctx.fillStyle = 'rgba(255,59,92,0.92)'
         ctx.beginPath()
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
         ctx.fill()

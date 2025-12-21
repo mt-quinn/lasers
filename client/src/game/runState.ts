@@ -1,5 +1,9 @@
 import type { Vec2 } from './math'
 
+export const XP_ORB_CONDENSE_DUR = 0.5
+export const XP_ORB_FLY_DUR = 0.55
+export const BLOCK_MELT_DUR = 0.5
+
 export type BlockCell = { x: number; y: number }
 
 export type XpOrb = {
@@ -9,6 +13,23 @@ export type XpOrb = {
   t: number
   phase: 'condense' | 'fly'
   value: number
+}
+
+export type MeltFx = {
+  id: string
+  pos: Vec2
+  cellSize: number
+  cornerRadius: number
+  loop: Vec2[]
+  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
+  t: number
+  dur: number
+  // Where the molten blob collapses into (gravity squish target).
+  orbFrom: Vec2
+  // Where the XP orb flies to (usually the XP gauge target).
+  orbTo: Vec2
+  value: number
+  seed: number
 }
 
 export type SparkParticle = {
@@ -192,6 +213,8 @@ export type RunState = {
   nextOrbId: number
 
   // FX
+  meltFx: MeltFx[]
+  nextMeltId: number
   sparks: SparkParticle[]
   weldGlows: WeldGlow[]
   sparkEmitAcc: number
@@ -258,6 +281,8 @@ export const createInitialRunState = (): RunState => {
     levelUpOptions: [],
     xpOrbs: [],
     nextOrbId: 1,
+    meltFx: [],
+    nextMeltId: 1,
     sparks: [],
     weldGlows: [],
     sparkEmitAcc: 0,
