@@ -173,6 +173,59 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.arcTo(x, y, x + w, y, rr)
       ctx.closePath()
     }
+    const applyDomedDepth = (ax: number, ay: number, w: number, h: number, strength: number) => {
+      // “Pressed pill” look: depth comes from lighting/shadow *on the face* only.
+      // No drop shadow, no thick rim strokes—just clipped gradients.
+      const s01 = clamp(strength, 0, 1)
+      const r = Math.max(w, h) * 0.95
+
+      ctx.save()
+      ctx.clip()
+
+      // Broad highlight (top-left)
+      ctx.globalCompositeOperation = 'screen'
+      const hi = ctx.createRadialGradient(ax + w * 0.28, ay + h * 0.22, 0, ax + w * 0.28, ay + h * 0.22, r)
+      hi.addColorStop(0, `rgba(255,255,255,${0.34 * s01})`)
+      hi.addColorStop(0.35, `rgba(255,255,255,${0.14 * s01})`)
+      hi.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = hi
+      ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+
+      // Soft shadow falloff (bottom-right)
+      ctx.globalCompositeOperation = 'multiply'
+      const sh = ctx.createRadialGradient(ax + w * 0.80, ay + h * 0.86, 0, ax + w * 0.80, ay + h * 0.86, r)
+      sh.addColorStop(0, `rgba(0,0,0,${0.30 * s01})`)
+      sh.addColorStop(0.55, `rgba(0,0,0,${0.10 * s01})`)
+      sh.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = sh
+      ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+
+      // Edge vignette (darken near edges slightly to sell curvature without a “stroke”)
+      ctx.globalCompositeOperation = 'multiply'
+      const cx = ax + w * 0.5
+      const cy = ay + h * 0.5
+      const edge = ctx.createRadialGradient(cx, cy, Math.max(4, r * 0.22), cx, cy, r * 0.98)
+      edge.addColorStop(0, 'rgba(0,0,0,0)')
+      edge.addColorStop(0.72, 'rgba(0,0,0,0)')
+      edge.addColorStop(1, `rgba(0,0,0,${0.16 * s01})`)
+      ctx.fillStyle = edge
+      ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+
+      // Small specular “pill shine” streak (very subtle, keeps it tactile)
+      ctx.globalCompositeOperation = 'screen'
+      const sx = ax + w * 0.30
+      const sy = ay + h * 0.26
+      const sw = w * 0.55
+      const shh = Math.max(10, h * 0.18)
+      const sheen = ctx.createLinearGradient(sx, sy, sx + sw, sy + shh)
+      sheen.addColorStop(0, 'rgba(255,255,255,0)')
+      sheen.addColorStop(0.35, `rgba(255,255,255,${0.11 * s01})`)
+      sheen.addColorStop(0.7, 'rgba(255,255,255,0)')
+      ctx.fillStyle = sheen
+      ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+
+      ctx.restore()
+    }
 
     // Arena glow vignette.
     const grd = ctx.createRadialGradient(
@@ -218,21 +271,15 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.fillStyle = fillBase
       ctx.fill()
 
-      // Bevel shading overlay (subtle, still solid-colored overall).
-      ctx.save()
-      ctx.globalCompositeOperation = 'overlay'
-      const shade = ctx.createLinearGradient(
-        b.pos.x,
-        b.pos.y + b.localAabb.minY,
-        b.pos.x,
-        b.pos.y + b.localAabb.maxY,
-      )
-      shade.addColorStop(0, 'rgba(255,255,255,0.22)')
-      shade.addColorStop(0.55, 'rgba(255,255,255,0.05)')
-      shade.addColorStop(1, 'rgba(0,0,0,0.18)')
-      ctx.fillStyle = shade
-      ctx.fill()
-      ctx.restore()
+      // Tactile depth: make blocks read as slightly domed/protruding.
+      {
+        const ax = b.pos.x + b.localAabb.minX
+        const ay = b.pos.y + b.localAabb.minY
+        const w = b.localAabb.maxX - b.localAabb.minX
+        const h = b.localAabb.maxY - b.localAabb.minY
+        // Strong but still “face-only” so it reads like a pressed, domed pill.
+        applyDomedDepth(ax, ay, w, h, 1.0)
+      }
 
       ctx.lineWidth = 2
       ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
@@ -267,6 +314,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           grad.addColorStop(1, 'rgb(55 65 90)')
           ctx.fillStyle = grad
           ctx.fill()
+
+          // Tactile depth on mirrors too (face-only).
+          applyDomedDepth(ax, ay, w, h, 0.78)
 
           // Important: confine the shadow glow to the *fill* only.
           // Leaving shadowBlur on will make the outline/top edge read as a thick horizontal glare band.
