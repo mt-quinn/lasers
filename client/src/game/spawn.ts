@@ -263,12 +263,13 @@ export const spawnBlock = (s: RunState) => {
   // Scale down displayed HP numbers by 10x without changing TTK (DPS is scaled too).
   const baseHp0 = 9
   const baseHp60 = 24
-  const baseHpEnd = 92
   const baseHpEarly = baseHp0 + (baseHp60 - baseHp0) * e
 
-  // After 60s, linearly increase from 24 -> 92 over the next 7 minutes (420s).
-  const lateT = clamp((t - 60) / 420, 0, 1)
-  const baseHpLate = baseHp60 + (baseHpEnd - baseHp60) * lateT
+  // After 60s, continue linearly upward forever (no cap).
+  // Keep the same slope as the previous 60s->480s ramp:
+  // slope = (92 - 24) / 420  HP per second.
+  const lateSlope = (92 - 24) / 420
+  const baseHpLate = baseHp60 + Math.max(0, t - 60) * lateSlope
   const baseHp = t < 60 ? baseHpEarly : baseHpLate
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
   // No cap: HP continues to increase slowly but linearly as time progresses.
