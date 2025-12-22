@@ -171,7 +171,7 @@
 .arenaPauseBtn {
   position: absolute;
   left: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom));
+  /* bottom is set inline from App.tsx so it can track the death line */
   z-index: 4;
   border-radius: 999px;
   border: 1px solid rgba(255, 245, 200, 0.22);

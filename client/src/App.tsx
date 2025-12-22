@@ -9,6 +9,7 @@ import { getArenaLayout } from './game/layout'
 
 type HudSnapshot = {
   paused: boolean
+  pauseBtnBottomPx: number
 }
 
 export default function App() {
@@ -19,8 +20,17 @@ export default function App() {
 
   const stateRef = useRef<RunState>(createInitialRunState())
 
+  const computePauseBtnBottomPx = useCallback(() => {
+    const s = stateRef.current
+    const layout = getArenaLayout(s.view)
+    // Place the button just above the death line.
+    const margin = 8
+    return Math.max(10, s.view.height - layout.failY + margin)
+  }, [])
+
   const [hud, setHud] = useState<HudSnapshot>(() => ({
     paused: false,
+    pauseBtnBottomPx: computePauseBtnBottomPx(),
   }))
 
   const setPaused = useCallback((paused: boolean) => {
@@ -43,12 +53,10 @@ export default function App() {
     }
 
     const pickRoleForPointerDown = (localY: number, s: RunState) => {
-      // Keep the movement hitbox tight to the visible rail/knob so aiming at low blocks
-      // doesn't accidentally grab the slider.
+      // Any interaction below the death line should move the slider (easy to control),
+      // while anything above should aim (prevents accidental grabs when aiming low).
       const layout = getArenaLayout(s.view)
-      const bandTop = layout.railY - 5
-      const bandBottom = layout.railY + layout.railH + 12
-      return localY >= bandTop && localY <= bandBottom ? 'move' : 'aim'
+      return localY >= layout.failY ? 'move' : 'aim'
     }
 
     const onPointerDown = (e: PointerEvent) => {
@@ -250,6 +258,7 @@ export default function App() {
         hudBucketRef.current = bucket
         setHud({
           paused: s.paused,
+          pauseBtnBottomPx: computePauseBtnBottomPx(),
         })
       }
 
@@ -272,8 +281,9 @@ export default function App() {
     stateRef.current = createInitialRunState()
     setHud({
       paused: false,
+      pauseBtnBottomPx: computePauseBtnBottomPx(),
     })
-  }, [])
+  }, [computePauseBtnBottomPx])
 
   return (
     <div className="lg-viewport">
@@ -283,7 +293,12 @@ export default function App() {
             <canvas ref={canvasRef} className="lg-canvas" />
 
             {!stateRef.current.levelUpActive && (
-              <button type="button" className="arenaPauseBtn" onClick={() => setPaused(!hud.paused)}>
+              <button
+                type="button"
+                className="arenaPauseBtn"
+                style={{ bottom: `${hud.pauseBtnBottomPx}px` }}
+                onClick={() => setPaused(!hud.paused)}
+              >
                 {hud.paused ? 'Play' : 'Pause'}
               </button>
             )}
