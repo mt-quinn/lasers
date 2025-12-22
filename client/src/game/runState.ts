@@ -169,6 +169,8 @@ export type RunState = {
 
   timeSec: number
   blocksDestroyed: number
+  // Number of global drop steps that have occurred (0 at run start).
+  depth: number
 
   // Tutorial/first-play helpers.
   tutorialMovedEmitter: boolean
@@ -248,6 +250,7 @@ export const createInitialRunState = (): RunState => {
     },
     timeSec: 0,
     blocksDestroyed: 0,
+    depth: 0,
     tutorialMovedEmitter: false,
     lives: 3,
     respiteSec: 0,

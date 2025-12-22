@@ -858,12 +858,14 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     // Countdown: full -> empty as we approach the next drop.
     const dropRemain = clamp(s.dropTimerSec / Math.max(0.001, s.dropIntervalSec), 0, 1)
 
-    // Module geometry: container wraps a radial timer at the top and the XP bar below.
+    // Module geometry: container wraps a radial timer at the top, the XP bar below, and stats at the bottom.
     const padIn = 7
     const moduleW = gw + padIn * 2
     const radialD = 26
     const gapY = 10
-    const moduleH = radialD + gapY + gh + 26 // include text area
+    // Give the pill extra breathing room so all elements feel intentional (not cramped).
+    const statsH = 34
+    const moduleH = radialD + gapY + gh + statsH + 24
     const moduleX = gx - padIn
     const moduleY = gy - (radialD + gapY) - 14
 
@@ -925,6 +927,14 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.beginPath()
       ctx.arc(cx, cy, rr - 1.2, end, end + 0.24)
       ctx.stroke()
+
+      // Depth readout in the center of the dial.
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.font = "900 12px 'Oxanium', system-ui, sans-serif"
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = 'rgba(255,246,213,0.92)'
+      ctx.fillText(`${s.depth}`, cx, cy + 0.5)
       ctx.restore()
     }
 
@@ -986,6 +996,21 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.stroke()
       ctx.fillStyle = 'rgba(255,246,213,0.92)'
       ctx.fillText(label, tx, ty)
+      ctx.restore()
+    }
+
+    // DPS / Depth / Lives (small, integrated at the bottom of the pill)
+    {
+      const sx = moduleX + moduleW / 2
+      const y0 = trackY + trackH + 10
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.font = "700 10px 'Oxanium', system-ui, sans-serif"
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = 'rgba(255,246,213,0.85)'
+      ctx.fillText(`DPS ${Math.round(s.stats.dps)}`, sx, y0)
+      ctx.fillText(`♥ ${s.lives}/3`, sx, y0 + 14)
       ctx.restore()
     }
 

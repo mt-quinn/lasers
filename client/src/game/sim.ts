@@ -170,6 +170,7 @@ export const stepSim = (s: RunState, dt: number) => {
   if (s.dropTimerSec <= 0) {
     const overshoot = Math.max(0, -s.dropTimerSec)
     s.dropTimerSec = s.dropIntervalSec - (overshoot % s.dropIntervalSec)
+    s.depth += 1
     for (const b of s.blocks) {
       b.pos.y += b.cellSize
     }

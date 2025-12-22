@@ -8,10 +8,6 @@ import { applyOffer, computeXpCap, getRarityColor } from './game/levelUp'
 import { getArenaLayout } from './game/layout'
 
 type HudSnapshot = {
-  dps: number
-  maxBounces: number
-  blocksDestroyed: number
-  lives: number
   paused: boolean
 }
 
@@ -24,10 +20,6 @@ export default function App() {
   const stateRef = useRef<RunState>(createInitialRunState())
 
   const [hud, setHud] = useState<HudSnapshot>(() => ({
-    dps: stateRef.current.stats.dps,
-    maxBounces: stateRef.current.stats.maxBounces,
-    blocksDestroyed: 0,
-    lives: stateRef.current.lives,
     paused: false,
   }))
 
@@ -257,10 +249,6 @@ export default function App() {
       if (bucket !== hudBucketRef.current) {
         hudBucketRef.current = bucket
         setHud({
-          dps: s.stats.dps,
-          maxBounces: s.stats.maxBounces,
-          blocksDestroyed: s.blocksDestroyed,
-          lives: s.lives,
           paused: s.paused,
         })
       }
@@ -283,10 +271,6 @@ export default function App() {
   const restart = useCallback(() => {
     stateRef.current = createInitialRunState()
     setHud({
-      dps: stateRef.current.stats.dps,
-      maxBounces: stateRef.current.stats.maxBounces,
-      blocksDestroyed: 0,
-      lives: stateRef.current.lives,
       paused: false,
     })
   }, [])
@@ -294,42 +278,15 @@ export default function App() {
   return (
     <div className="lg-viewport">
       <div className="lg-shell">
-        <header className="hudBar">
-          <div className="hudTitle" aria-label="LASERS! LASERS! LASERS!">
-            <span>LASERS!</span>
-            <span>LASERS!</span>
-            <span>LASERS!</span>
-          </div>
-
-          <div className="hudStats" aria-label="Run stats">
-            <div className="hudKvp">
-              <span className="k">DPS</span>
-              <span className="v">{hud.dps.toFixed(0)}</span>
-            </div>
-            <div className="hudKvp">
-              <span className="k">Bounces</span>
-              <span className="v">{hud.maxBounces}</span>
-            </div>
-            <div className="hudKvp">
-              <span className="k">Destroyed</span>
-              <span className="v">{hud.blocksDestroyed}</span>
-            </div>
-            <div className="hudKvp">
-              <span className="k">Lives</span>
-              <span className="v">{hud.lives}/3</span>
-            </div>
-          </div>
-
-          <div className="hudActions">
-            <button type="button" className="hudBtn primary" onClick={() => setPaused(!hud.paused)}>
-              {hud.paused ? 'Play' : 'Pause'}
-            </button>
-          </div>
-        </header>
-
         <main className="lg-main">
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
+
+            {!stateRef.current.levelUpActive && (
+              <button type="button" className="arenaPauseBtn" onClick={() => setPaused(!hud.paused)}>
+                {hud.paused ? 'Play' : 'Pause'}
+              </button>
+            )}
 
             {stateRef.current.levelUpActive && (
               <div className="upgradeOverlay" role="dialog" aria-label="Choose an upgrade">
