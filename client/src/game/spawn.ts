@@ -221,6 +221,10 @@ const spawnBlackHole = (s: RunState) => {
 
 export const spawnBoardThing = (s: RunState) => {
   const kind = rollFeatureKind(s.timeSec)
+  // Early-run safeguard: first 15 blocks must be normal (no undamageable features).
+  if (s.blocksSpawned < 15) {
+    return spawnBlock(s)
+  }
   // Protection: require at least 3 normal blocks between each feature spawn.
   if (kind != null && s.normalBlocksSinceFeature < 3) {
     return spawnBlock(s)
@@ -255,14 +259,14 @@ export const spawnBlock = (s: RunState) => {
  
   // Difficulty scaling: based on DEPTH (global drop steps), not time.
   //
-  // Target: ~+10 base HP per minute at the *un-upgraded* drop rate.
-  // Un-upgraded drop interval is 1.275s, so drops/minute = 60 / 1.275.
-  // Therefore HP per drop = 10 / (60 / 1.275) = 10 * 1.275 / 60 = 0.2125.
+  // Target: ~+8 base HP per minute at the *un-upgraded* drop rate.
+  // Baseline drop interval is 1.2s, so drops/minute = 60 / 1.2 = 50.
+  // Therefore HP per drop = 8 / 50 = 0.16.
   //
   // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
   // more slowly in real time (but stays consistent per “lines survived”).
   const baseHp0 = 9
-  const hpPerDepth = 0.2125
+  const hpPerDepth = 0.16
   const baseHp = baseHp0 + Math.max(0, s.depth) * hpPerDepth
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
   // No cap: HP continues to increase slowly but linearly as time progresses.
@@ -318,6 +322,7 @@ export const spawnBlock = (s: RunState) => {
   }
 
   s.blocks.push(block)
+  s.blocksSpawned += 1
   s.normalBlocksSinceFeature = Math.min(3, s.normalBlocksSinceFeature + 1)
 }
 
