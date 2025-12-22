@@ -256,8 +256,8 @@ export const createInitialRunState = (): RunState => {
     respiteSec: 0,
     lifeLossFx: null,
     // Start with a full interval so the player sees the cadence before the first step.
-    dropIntervalSec: 1.275,
-    dropTimerSec: 1.275,
+    dropIntervalSec: 1.2,
+    dropTimerSec: 1.2,
     stats: {
       // Scale down visible numbers (HP/DPS) without changing time-to-kill:
       // we scale both damage and health by the same factor.

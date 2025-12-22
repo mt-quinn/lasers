@@ -34,6 +34,12 @@ export const computeXpCap = (level: number) => {
   return Math.min(50, Math.max(5, cap))
 }
 
+const fmt = (v: number, maxDecimals = 2) => {
+  // Trim trailing zeros: 1.20 -> 1.2, 0.10 -> 0.1, 2.00 -> 2
+  const s = v.toFixed(maxDecimals)
+  return s.replace(/(?:\.0+|(\.\d+?)0+)$/, '$1')
+}
+
 const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number): T => {
   const total = items.reduce((s, x) => s + x.weight, 0)
   let t = r * total
@@ -112,7 +118,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
       type,
       rarity,
       title: 'Bounce Degradation',
-      description: `Increase bounce multiplier to ${next.toFixed(2)} per bounce`,
+      description: `Increase bounce multiplier to ${fmt(next, 2)} per bounce`,
     }
   }
   // dropSlow
@@ -122,7 +128,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     type,
     rarity,
     title: 'Piece Drop Speed',
-    description: `Slow drop interval to ${next.toFixed(2)} seconds`,
+    description: `Slow drop interval to ${fmt(next, 2)} seconds`,
   }
 }
 
@@ -186,9 +192,9 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
     const afterV = beforeV + delta
     return {
       label: 'Bounce multiplier',
-      before: beforeV.toFixed(2),
-      after: afterV.toFixed(2),
-      delta: `+${(afterV - beforeV).toFixed(2)}`,
+      before: fmt(beforeV, 2),
+      after: fmt(afterV, 2),
+      delta: `+${fmt(afterV - beforeV, 2)}`,
     }
   }
   // dropSlow
@@ -197,9 +203,9 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
   const afterV = Math.min(3.0, s.dropIntervalSec + add)
   return {
     label: 'Drop interval',
-    before: `${beforeV.toFixed(2)}s`,
-    after: `${afterV.toFixed(2)}s`,
-    delta: `+${(afterV - beforeV).toFixed(2)}s`,
+    before: `${fmt(beforeV, 2)}s`,
+    after: `${fmt(afterV, 2)}s`,
+    delta: `+${fmt(afterV - beforeV, 2)}s`,
   }
 }
 

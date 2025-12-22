@@ -306,12 +306,6 @@ export default function App() {
             {stateRef.current.levelUpActive && (
               <div className="upgradeOverlay" role="dialog" aria-label="Choose an upgrade">
                 <div className="upgradePanel">
-                  <div className="upgradeHeader">
-                    <div className="upgradeHeaderLeft">
-                      <div className="upgradeTitle">Choose an Upgrade</div>
-                      <div className="upgradeSub">Select one</div>
-                    </div>
-                  </div>
                   <div className="upgradeCards" aria-label="Upgrade choices">
                     {stateRef.current.levelUpOptions.map((opt, idx) => {
                       const prev = getOfferPreview(stateRef.current, opt)

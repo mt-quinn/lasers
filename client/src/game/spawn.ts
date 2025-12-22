@@ -253,24 +253,17 @@ export const spawnBlock = (s: RunState) => {
   const wPx = bounds.w * cellSize
   const hPx = bounds.h * cellSize
  
-  // Difficulty scaling:
-  // - 0..60s: gentle ramp up to 24 HP baseline (teaches + lets upgrades happen).
-  // - 60s+: continue upward from 24 with a steady linear growth (no discontinuity).
-  const smoothstep = (x: number) => x * x * (3 - 2 * x)
-  const earlyT = clamp(t / 60, 0, 1)
-  const e = smoothstep(earlyT)
-
-  // Scale down displayed HP numbers by 10x without changing TTK (DPS is scaled too).
+  // Difficulty scaling: based on DEPTH (global drop steps), not time.
+  //
+  // Target: ~+10 base HP per minute at the *un-upgraded* drop rate.
+  // Un-upgraded drop interval is 1.275s, so drops/minute = 60 / 1.275.
+  // Therefore HP per drop = 10 / (60 / 1.275) = 10 * 1.275 / 60 = 0.2125.
+  //
+  // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
+  // more slowly in real time (but stays consistent per “lines survived”).
   const baseHp0 = 9
-  const baseHp60 = 24
-  const baseHpEarly = baseHp0 + (baseHp60 - baseHp0) * e
-
-  // After 60s, continue linearly upward forever (no cap).
-  // Keep the same slope as the previous 60s->480s ramp:
-  // slope = (92 - 24) / 420  HP per second.
-  const lateSlope = (92 - 24) / 420
-  const baseHpLate = baseHp60 + Math.max(0, t - 60) * lateSlope
-  const baseHp = t < 60 ? baseHpEarly : baseHpLate
+  const hpPerDepth = 0.2125
+  const baseHp = baseHp0 + Math.max(0, s.depth) * hpPerDepth
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
   // No cap: HP continues to increase slowly but linearly as time progresses.
   const hpMax = Math.round(baseHp * sizeMult * 1.5)
