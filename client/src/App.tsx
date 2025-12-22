@@ -4,7 +4,7 @@ import { createInitialRunState, type RunState } from './game/runState'
 import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
-import { applyOffer, computeXpCap, getRarityColor } from './game/levelUp'
+import { applyOffer, computeXpCap, getOfferPreview, getRarityColor } from './game/levelUp'
 import { getArenaLayout } from './game/layout'
 
 type HudSnapshot = {
@@ -312,34 +312,57 @@ export default function App() {
                       <div className="upgradeSub">Select one</div>
                     </div>
                   </div>
-                  <div className="upgradeList" aria-label="Upgrade choices">
-                    {stateRef.current.levelUpOptions.map((opt, idx) => (
-                      <button
-                        key={opt.type + opt.rarity + idx}
-                        type="button"
-                        className="upgradeTile"
-                        style={{ borderColor: `${getRarityColor(opt.rarity)}55` }}
-                        onClick={() => {
-                          const s = stateRef.current
-                          applyOffer(s, opt)
-                          s.level += 1
-                          s.xpCap = computeXpCap(s.level)
-                          s.levelUpActive = false
-                          s.levelUpOptions = []
-                          // Micro "breather" after choices so the board doesn't immediately re-spawn into pressure.
-                          s.spawnTimer = Math.max(s.spawnTimer, 0.75)
-                          // Resume; sim will re-open if more pending levels.
-                          s.paused = false
-                        }}
-                      >
-                        <div className="upgradeTileMain">
-                          <div className="upgradeTileName">
-                            {opt.title} ({opt.rarity})
+                  <div className="upgradeCards" aria-label="Upgrade choices">
+                    {stateRef.current.levelUpOptions.map((opt, idx) => {
+                      const prev = getOfferPreview(stateRef.current, opt)
+                      const rarityColor = getRarityColor(opt.rarity)
+                      return (
+                        <button
+                          key={opt.type + opt.rarity + idx}
+                          type="button"
+                          className="upgradeCard"
+                          style={{
+                            borderColor: `${rarityColor}55`,
+                            boxShadow: `0 0 0 1px rgba(0,0,0,0.35), 0 18px 55px rgba(0,0,0,0.55), 0 0 40px ${rarityColor}22`,
+                          }}
+                          onClick={() => {
+                            const s = stateRef.current
+                            applyOffer(s, opt)
+                            s.level += 1
+                            s.xpCap = computeXpCap(s.level)
+                            s.levelUpActive = false
+                            s.levelUpOptions = []
+                            // Micro "breather" after choices so the board doesn't immediately re-spawn into pressure.
+                            s.spawnTimer = Math.max(s.spawnTimer, 0.75)
+                            // Resume; sim will re-open if more pending levels.
+                            s.paused = false
+                          }}
+                        >
+                          <div className="upgradeCardTop">
+                            <div className="upgradeRarity" style={{ color: rarityColor }}>
+                              {opt.rarity.toUpperCase()}
+                            </div>
+                            <div className="upgradeCardTitle">{opt.title}</div>
                           </div>
-                          <div className="upgradeTileDesc">{opt.description}</div>
-                        </div>
-                      </button>
-                    ))}
+
+                          <div className="upgradeDelta">
+                            <div className="upgradeDeltaLabel">{prev.label}</div>
+                            <div className="upgradeDeltaValues">
+                              <span className="before">{prev.before}</span>
+                              <span className="arrow">→</span>
+                              <span className="after">{prev.after}</span>
+                            </div>
+                            {prev.delta && <div className="upgradeDeltaPill">{prev.delta}</div>}
+                          </div>
+
+                          <div className="upgradeCardDesc">{opt.description}</div>
+
+                          <div className="upgradeCardCta">
+                            <span>Take</span>
+                          </div>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               </div>

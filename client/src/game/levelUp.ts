@@ -87,8 +87,8 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     }
   }
   if (type === 'damage') {
-    const mult = rarity === 'common' ? 1.10 : rarity === 'rare' ? 1.18 : rarity === 'epic' ? 1.30 : 1.45
-    const next = Math.round(s.stats.dps * mult)
+    const add = rarity === 'common' ? 1 : rarity === 'rare' ? 2 : rarity === 'epic' ? 4 : 6
+    const next = Math.round(s.stats.dps + add)
     return {
       type,
       rarity,
@@ -106,18 +106,18 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     }
   }
   if (type === 'bounceFalloff') {
-    const delta = rarity === 'common' ? 0.03 : rarity === 'rare' ? 0.05 : rarity === 'epic' ? 0.08 : 0.12
-    const next = Math.min(0.985, s.stats.bounceFalloff + delta)
+    const delta = rarity === 'common' ? 0.02 : rarity === 'rare' ? 0.04 : rarity === 'epic' ? 0.06 : 0.1
+    const next = s.stats.bounceFalloff + delta
     return {
       type,
       rarity,
       title: 'Bounce Degradation',
-      description: `Reduce bounce degradation to ${next.toFixed(2)} per bounce`,
+      description: `Increase bounce multiplier to ${next.toFixed(2)} per bounce`,
     }
   }
   // dropSlow
-  const mult = rarity === 'common' ? 1.05 : rarity === 'rare' ? 1.1 : rarity === 'epic' ? 1.15 : 1.2
-  const next = Math.min(3.0, s.dropIntervalSec * mult)
+  const add = rarity === 'common' ? 0.1 : rarity === 'rare' ? 0.2 : rarity === 'epic' ? 0.3 : 0.5
+  const next = Math.min(3.0, s.dropIntervalSec + add)
   return {
     type,
     rarity,
@@ -133,8 +133,8 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     return
   }
   if (offer.type === 'damage') {
-    const mult = r === 'common' ? 1.10 : r === 'rare' ? 1.18 : r === 'epic' ? 1.30 : 1.45
-    s.stats.dps = Math.round(s.stats.dps * mult)
+    const add = r === 'common' ? 1 : r === 'rare' ? 2 : r === 'epic' ? 4 : 6
+    s.stats.dps = Math.round(s.stats.dps + add)
     return
   }
   if (offer.type === 'bounces') {
@@ -143,15 +143,64 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     return
   }
   if (offer.type === 'bounceFalloff') {
-    const delta = r === 'common' ? 0.03 : r === 'rare' ? 0.05 : r === 'epic' ? 0.08 : 0.12
-    s.stats.bounceFalloff = Math.min(0.985, s.stats.bounceFalloff + delta)
+    const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
+    s.stats.bounceFalloff = s.stats.bounceFalloff + delta
     return
   }
   // dropSlow
-  const mult = r === 'common' ? 1.05 : r === 'rare' ? 1.1 : r === 'epic' ? 1.15 : 1.2
-  s.dropIntervalSec = Math.min(3.0, s.dropIntervalSec * mult)
+  const add = r === 'common' ? 0.1 : r === 'rare' ? 0.2 : r === 'epic' ? 0.3 : 0.5
+  s.dropIntervalSec = Math.min(3.0, s.dropIntervalSec + add)
   // Keep timer in range so cadence doesn't "jump" badly.
   s.dropTimerSec = Math.min(s.dropTimerSec, s.dropIntervalSec)
+}
+
+export type OfferPreview = {
+  label: string
+  before: string
+  after: string
+  delta?: string
+}
+
+export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview => {
+  const r = offer.rarity
+  if (offer.type === 'life') {
+    const before = `${s.lives}/3`
+    const after = `${Math.min(3, s.lives + 1)}/3`
+    return { label: 'Lives', before, after, delta: '+1' }
+  }
+  if (offer.type === 'damage') {
+    const add = r === 'common' ? 1 : r === 'rare' ? 2 : r === 'epic' ? 4 : 6
+    const beforeV = Math.round(s.stats.dps)
+    const afterV = Math.round(s.stats.dps + add)
+    return { label: 'DPS', before: `${beforeV}`, after: `${afterV}`, delta: `+${afterV - beforeV}` }
+  }
+  if (offer.type === 'bounces') {
+    const add = r === 'rare' ? 1 : r === 'epic' ? 2 : 3
+    const beforeV = s.stats.maxBounces
+    const afterV = Math.min(12, beforeV + add)
+    return { label: 'Bounces', before: `${beforeV}`, after: `${afterV}`, delta: `+${afterV - beforeV}` }
+  }
+  if (offer.type === 'bounceFalloff') {
+    const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
+    const beforeV = s.stats.bounceFalloff
+    const afterV = beforeV + delta
+    return {
+      label: 'Bounce multiplier',
+      before: beforeV.toFixed(2),
+      after: afterV.toFixed(2),
+      delta: `+${(afterV - beforeV).toFixed(2)}`,
+    }
+  }
+  // dropSlow
+  const add = r === 'common' ? 0.1 : r === 'rare' ? 0.2 : r === 'epic' ? 0.3 : 0.5
+  const beforeV = s.dropIntervalSec
+  const afterV = Math.min(3.0, s.dropIntervalSec + add)
+  return {
+    label: 'Drop interval',
+    before: `${beforeV.toFixed(2)}s`,
+    after: `${afterV.toFixed(2)}s`,
+    delta: `+${(afterV - beforeV).toFixed(2)}s`,
+  }
 }
 
 

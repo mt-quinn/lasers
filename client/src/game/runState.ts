@@ -265,7 +265,8 @@ export const createInitialRunState = (): RunState => {
       // Default beam width increased by 50% (width is no longer an upgrade).
       beamWidth: 6.0,
       maxBounces: 1,
-      bounceFalloff: 0.82,
+      // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
+      bounceFalloff: 0.75,
     },
     reticle: { x: 180, y: 220 },
     emitter: {
