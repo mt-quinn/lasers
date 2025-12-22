@@ -541,13 +541,14 @@
 
   .upgradeCards {
     grid-template-columns: 1fr;
-    padding: 0.55rem;
+    padding: 0.48rem;
     gap: 0.55rem;
   }
 
   /* Mobile: shrink the entire chooser so stacked cards don't look absurdly large. */
   .upgradePanel {
-    width: min(420px, 94vw);
+    /* Much narrower on phones: the content doesn't need full-width, and the extra gutter looks odd. */
+    width: clamp(260px, 76vw, 360px);
     max-height: 84vh;
     overflow: auto;
     border-radius: 1.05rem;
