@@ -849,7 +849,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // Compact top-right "pill HUD": radial drop timer + XP bar + XP counter.
+    // HUD module: bottom-right L-shape (single container + single outline).
     const gx = layout.xpGauge.x
     const gy = layout.xpGauge.y
     const gw = layout.xpGauge.w
@@ -858,134 +858,130 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     // Countdown: full -> empty as we approach the next drop.
     const dropRemain = clamp(s.dropTimerSec / Math.max(0.001, s.dropIntervalSec), 0, 1)
 
-    // Module geometry: container wraps a radial timer at the top, the XP bar below, and stats at the bottom.
-    const padIn = 7
-    const moduleW = gw + padIn * 2
-    const radialD = 26
-    const gapY = 10
-    // Give the pill extra breathing room so all elements feel intentional (not cramped).
-    const statsH = 34
-    const moduleH = radialD + gapY + gh + statsH + 24
-    const moduleX = gx - padIn
-    const moduleY = gy - (radialD + gapY) - 14
+    // Geometry: union shape = vertical bar (xp) + horizontal cap (stats), with a dial in the elbow.
+    const barX = gx
+    const barY = gy
+    const barW = gw
+    const barH = gh
+    const cutRight = s.view.width
+    const cutBottom = layout.failY
+    const bottomY = barY + barH
+    // Horizontal leg height: just enough for inline stats with padding.
+    const capH = 36
+    // Wider horizontal leg so DPS/♥ can sit further left with the same left padding.
+    const capW = 184
+    const capX = barX + barW - capW
+    const capY = bottomY - capH
+    const dialD = 38
+    const dialR = dialD / 2
+    const dialCX = barX + barW - dialR - 8
+    const dialCY = bottomY - dialR - 8
+    // Leave a little more breathing room above the dial intrusion.
+    const dialTop = dialCY - dialR - 14
 
-    // Container (rounded pill)
+    const lPath = (outerR: number) => {
+      const r = outerR
+      const vx0 = barX
+      // Extend beyond the right edge so rounding gets clipped into a flat edge.
+      const vx1 = cutRight + r
+      const vy0 = barY
+      // Extend beyond the death line so rounding gets clipped into a flat edge.
+      const vy1 = cutBottom + r
+      const hx0 = capX
+      const hy0 = capY
+      // "Skin bulge" around the dial: round the inner corner using an arc around the dial center.
+      const bulgeR = dialR + 9
+
+      ctx.beginPath()
+      ctx.moveTo(vx1 - r, vy0)
+      ctx.arcTo(vx1, vy0, vx1, vy0 + r, r)
+      ctx.lineTo(vx1, vy1 - r)
+      ctx.arcTo(vx1, vy1, vx1 - r, vy1, r)
+      ctx.lineTo(hx0 + r, vy1)
+      ctx.arcTo(hx0, vy1, hx0, vy1 - r, r)
+      ctx.lineTo(hx0, hy0 + r)
+      ctx.arcTo(hx0, hy0, hx0 + r, hy0, r)
+      // Inner elbow: replace sharp corner with a circular intrusion so the dial feels like it's
+      // pushing out the skin of the HUD, while keeping consistent padding.
+      const dy = hy0 - dialCY
+      const dx = vx0 - dialCX
+      const canBulge = bulgeR * bulgeR > dy * dy && bulgeR * bulgeR > dx * dx
+      if (canBulge) {
+        const xJoin = dialCX - Math.sqrt(Math.max(0, bulgeR * bulgeR - dy * dy))
+        const yJoin = dialCY - Math.sqrt(Math.max(0, bulgeR * bulgeR - dx * dx))
+        // Join from horizontal top edge to arc start.
+        ctx.lineTo(xJoin, hy0)
+        const a0 = Math.atan2(hy0 - dialCY, xJoin - dialCX)
+        const a1 = Math.atan2(yJoin - dialCY, vx0 - dialCX)
+        // Sweep through the upper-left quadrant around the dial.
+        ctx.arc(dialCX, dialCY, bulgeR, a0, a1, true)
+        ctx.lineTo(vx0, yJoin)
+      } else {
+        ctx.lineTo(vx0, hy0)
+      }
+      ctx.lineTo(vx0, vy0 + r)
+      ctx.arcTo(vx0, vy0, vx0 + r, vy0, r)
+      ctx.closePath()
+    }
+
+    // Single container fill + single outline (no overlapping boxes), clipped to:
+    // - right edge of the screen
+    // - bottom edge at the death line
     ctx.save()
     ctx.globalCompositeOperation = 'source-over'
-    const r = 14
-    const bg = ctx.createLinearGradient(0, moduleY, 0, moduleY + moduleH)
+    ctx.beginPath()
+    ctx.rect(0, 0, cutRight, cutBottom)
+    ctx.clip()
+    const outerR = 18
+    const bg = ctx.createLinearGradient(0, barY, 0, bottomY)
     bg.addColorStop(0, 'rgba(12, 10, 28, 0.62)')
-    bg.addColorStop(1, 'rgba(10, 8, 22, 0.50)')
+    bg.addColorStop(1, 'rgba(10, 8, 22, 0.48)')
     ctx.fillStyle = bg
-    roundedRectPath(moduleX, moduleY, moduleW, moduleH, r)
+    lPath(outerR)
     ctx.fill()
     ctx.strokeStyle = 'rgba(255,255,255,0.10)'
     ctx.lineWidth = 1.5
-    roundedRectPath(moduleX, moduleY, moduleW, moduleH, r)
+    lPath(outerR)
     ctx.stroke()
+    ctx.restore()
 
-    // Radial timer (top): full disc that empties counterclockwise.
+    // XP groove + fill (kept above the dial so nothing overlaps).
     {
-      const cx = moduleX + moduleW / 2
-      const cy = moduleY + 16 + radialD / 2
-      const rr = radialD / 2
-
-      // Groove disc
+      const gx2 = barX + 7
+      // More top padding so the XP track doesn't feel jammed against the top of the container.
+      const gy2 = barY + 18
+      const gw2 = barW - 14
+      const gh2 = Math.max(26, dialTop - gy2)
+      const groove = ctx.createLinearGradient(0, gy2, 0, gy2 + gh2)
+      groove.addColorStop(0, 'rgba(0,0,0,0.38)')
+      groove.addColorStop(1, 'rgba(255,255,255,0.05)')
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
-      const disc = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
-      disc.addColorStop(0, 'rgba(0,0,0,0.16)')
-      disc.addColorStop(1, 'rgba(0,0,0,0.28)')
-      ctx.fillStyle = disc
-      ctx.beginPath()
-      ctx.arc(cx, cy, rr, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(255,255,255,0.10)'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-
-      // Fill wedge: start at top, sweep CCW as remaining decreases.
-      ctx.globalCompositeOperation = 'lighter'
-      const start = -Math.PI / 2
-      const end = start - Math.PI * 2 * dropRemain
-      // Mostly flat pink, with only a subtle edge gradient so it feels like a soft lens.
-      const fill = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
-      fill.addColorStop(0, 'rgba(255,120,210,0.52)')
-      fill.addColorStop(0.84, 'rgba(255,120,210,0.52)')
-      fill.addColorStop(1, 'rgba(255,120,210,0.36)')
-      ctx.fillStyle = fill
-      ctx.beginPath()
-      ctx.moveTo(cx, cy)
-      ctx.arc(cx, cy, rr - 1, end, start, false)
-      ctx.closePath()
-      ctx.fill()
-
-      // Subtle highlight cap at the leading edge for motion readability.
-      ctx.globalCompositeOperation = 'screen'
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(cx, cy, rr - 1.2, end, end + 0.24)
-      ctx.stroke()
-
-      // Depth readout in the center of the dial.
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.font = "900 12px 'Oxanium', system-ui, sans-serif"
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillStyle = 'rgba(255,246,213,0.92)'
-      ctx.fillText(`${s.depth}`, cx, cy + 0.5)
-      ctx.restore()
-    }
-
-    // XP bar groove (full width)
-    const trackX = moduleX + padIn
-    const trackY = moduleY + 16 + radialD + gapY
-    const trackW = gw
-    const trackH = gh
-    {
-      const rr = Math.min(10, trackW / 2)
-      const g = ctx.createLinearGradient(0, trackY, 0, trackY + trackH)
-      g.addColorStop(0, 'rgba(0,0,0,0.35)')
-      g.addColorStop(1, 'rgba(255,255,255,0.05)')
-      ctx.fillStyle = g
-      roundedRectPath(trackX, trackY, trackW, trackH, rr)
+      ctx.fillStyle = groove
+      roundedRectPath(gx2, gy2, gw2, gh2, 10)
       ctx.fill()
       ctx.strokeStyle = 'rgba(255,255,255,0.08)'
       ctx.lineWidth = 1
-      roundedRectPath(trackX, trackY, trackW, trackH, rr)
+      roundedRectPath(gx2, gy2, gw2, gh2, 10)
       ctx.stroke()
-    }
 
-    // XP fill (subtle glow)
-    const fillH = trackH * xpFrac
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.fillStyle = 'rgba(255,120,210,0.22)'
-    roundedRectPath(trackX, trackY + (trackH - fillH), trackW, fillH, Math.min(9, trackW / 2))
-    ctx.fill()
-    ctx.fillStyle = 'rgba(255,120,210,0.70)'
-    roundedRectPath(
-      trackX + 1,
-      trackY + (trackH - fillH) + 1,
-      trackW - 2,
-      Math.max(0, fillH - 2),
-      Math.min(8, (trackW - 2) / 2),
-    )
-    ctx.fill()
-    ctx.restore()
+      const fh = gh2 * xpFrac
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.fillStyle = 'rgba(255,120,210,0.22)'
+      roundedRectPath(gx2, gy2 + (gh2 - fh), gw2, fh, 10)
+      ctx.fill()
+      ctx.fillStyle = 'rgba(255,120,210,0.75)'
+      roundedRectPath(gx2 + 1, gy2 + (gh2 - fh) + 1, gw2 - 2, Math.max(0, fh - 2), 9)
+      ctx.fill()
 
-    // XP counter text: centered inside the XP bar.
-    {
-      const label = `${Math.floor(s.xp)}/${s.xpCap}`
-      const tx = trackX + trackW / 2
-      const ty = trackY + trackH / 2
-      ctx.save()
+      // XP counter centered in the groove (so it doesn't collide with the dial).
       ctx.globalCompositeOperation = 'source-over'
-      ctx.font = "800 11px 'Oxanium', system-ui, sans-serif"
+      const label = `${Math.floor(s.xp)}/${s.xpCap}`
+      ctx.font = "950 13px 'Oxanium', system-ui, sans-serif"
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      // Small backing for legibility over the fill.
+      const tx = barX + barW / 2
+      const ty = gy2 + gh2 * 0.55
       const tw = ctx.measureText(label).width
       ctx.fillStyle = 'rgba(0,0,0,0.22)'
       roundedRectPath(tx - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
@@ -999,22 +995,70 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
-    // DPS / Depth / Lives (small, integrated at the bottom of the pill)
+    // Corner dial: depth + drop countdown (disc) (sits in the elbow, no overlap).
     {
-      const sx = moduleX + moduleW / 2
-      const y0 = trackY + trackH + 10
+      const cx = dialCX
+      const cy = dialCY
+      const rr = dialR
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
-      ctx.font = "700 10px 'Oxanium', system-ui, sans-serif"
+      const disc = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
+      disc.addColorStop(0, 'rgba(0,0,0,0.12)')
+      disc.addColorStop(1, 'rgba(0,0,0,0.28)')
+      ctx.fillStyle = disc
+      ctx.beginPath()
+      ctx.arc(cx, cy, rr, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
+      ctx.globalCompositeOperation = 'lighter'
+      const start = -Math.PI / 2
+      const end = start - Math.PI * 2 * dropRemain
+      const fill = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
+      fill.addColorStop(0, 'rgba(255,120,210,0.50)')
+      fill.addColorStop(0.86, 'rgba(255,120,210,0.50)')
+      fill.addColorStop(1, 'rgba(255,120,210,0.32)')
+      ctx.fillStyle = fill
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.arc(cx, cy, rr - 1, end, start, false)
+      ctx.closePath()
+      ctx.fill()
+
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.font = "950 13px 'Oxanium', system-ui, sans-serif"
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillStyle = 'rgba(255,246,213,0.85)'
-      ctx.fillText(`DPS ${Math.round(s.stats.dps)}`, sx, y0)
-      ctx.fillText(`♥ ${s.lives}/3`, sx, y0 + 14)
+      ctx.fillStyle = 'rgba(255,246,213,0.95)'
+      ctx.fillText(`${s.depth}`, cx, cy + 0.5)
       ctx.restore()
     }
 
-    ctx.restore()
+    // Stats text in the horizontal leg (left of dial), inline (not stacked).
+    {
+      const insetL = capX + 10
+      const insetR = dialCX - dialR - 10
+      const tx = (insetL + insetR) / 2
+      const ty = capY + capH / 2 + 0.5
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = 'rgba(255,246,213,0.94)'
+      const left = `DPS ${Math.round(s.stats.dps)}`
+      const right = `♥ ${s.lives}/3`
+      ctx.font = "900 13px 'Oxanium', system-ui, sans-serif"
+      const gap = 14
+      const wL = ctx.measureText(left).width
+      const wR = ctx.measureText(right).width
+      const total = wL + gap + wR
+      const x0 = tx - total / 2
+      ctx.fillText(left, x0 + wL / 2, ty)
+      ctx.fillText(right, x0 + wL + gap + wR / 2, ty)
+      ctx.restore()
+    }
 
     // XP orbs (condense -> fly).
     if (s.xpOrbs.length > 0) {

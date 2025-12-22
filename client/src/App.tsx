@@ -349,8 +349,6 @@ export default function App() {
                             {prev.delta && <div className="upgradeDeltaPill">{prev.delta}</div>}
                           </div>
 
-                          <div className="upgradeCardDesc">{opt.description}</div>
-
                           <div className="upgradeCardCta">
                             <span>Take</span>
                           </div>

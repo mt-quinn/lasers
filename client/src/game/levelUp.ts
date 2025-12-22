@@ -36,8 +36,11 @@ export const computeXpCap = (level: number) => {
 
 const fmt = (v: number, maxDecimals = 2) => {
   // Trim trailing zeros: 1.20 -> 1.2, 0.10 -> 0.1, 2.00 -> 2
-  const s = v.toFixed(maxDecimals)
-  return s.replace(/(?:\.0+|(\.\d+?)0+)$/, '$1')
+  const s0 = v.toFixed(maxDecimals).replace(/(?:\.0+|(\.\d+?)0+)$/, '$1')
+  // Trim leading zero for fractional values: 0.1 -> .1, -0.25 -> -.25
+  if (s0.startsWith('0.')) return s0.slice(1)
+  if (s0.startsWith('-0.')) return `-${s0.slice(2)}`
+  return s0
 }
 
 const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number): T => {
@@ -191,7 +194,7 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
     const beforeV = s.stats.bounceFalloff
     const afterV = beforeV + delta
     return {
-      label: 'Bounce multiplier',
+      label: 'Mult',
       before: fmt(beforeV, 2),
       after: fmt(afterV, 2),
       delta: `+${fmt(afterV - beforeV, 2)}`,
@@ -202,7 +205,7 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
   const beforeV = s.dropIntervalSec
   const afterV = Math.min(3.0, s.dropIntervalSec + add)
   return {
-    label: 'Drop interval',
+    label: 'Drop',
     before: `${fmt(beforeV, 2)}s`,
     after: `${fmt(afterV, 2)}s`,
     delta: `+${fmt(afterV - beforeV, 2)}s`,

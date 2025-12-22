@@ -261,7 +261,7 @@ export const createInitialRunState = (): RunState => {
     stats: {
       // Scale down visible numbers (HP/DPS) without changing time-to-kill:
       // we scale both damage and health by the same factor.
-      dps: 9,
+      dps: 10,
       // Default beam width increased by 50% (width is no longer an upgrade).
       beamWidth: 6.0,
       maxBounces: 1,
