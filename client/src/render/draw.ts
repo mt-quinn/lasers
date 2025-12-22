@@ -565,13 +565,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
             for (let i = 0; i < n; i++) radii[i] = r[i]!
           }
 
-          // Ground plane: make the blob *literally* settle onto a flat base line.
-          // We do this by progressively flattening points that are near the bottom of the shape
-          // onto `floorY`, producing a clear "sitting on a plane" read (no rotation).
-          const floorY = bottom0
-          const floorAmt = (1 - c) * smoothstep((p - 0.22) / 0.55)
-          const floorBand = Math.max(8, fx.cellSize * 0.24)
-
           for (let i = 0; i < pts.length; i++) {
             const t = tParam[i]!
             const ang = angParam[i]!
@@ -581,14 +574,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
             const tx = fx.orbFrom.x + Math.cos(ang) * R
             const ty = fx.orbFrom.y + Math.sin(ang) * R
             const x2 = lerp(bx, tx, c)
-            let y2 = lerp(by, ty, c)
-            if (floorAmt > 0.001) {
-              // Clamp below-floor points up to the plane.
-              if (y2 > floorY) y2 = floorY
-              // Flatten a band of near-floor points down onto the plane (literal flat base).
-              const contact = clamp((y2 - (floorY - floorBand)) / Math.max(1e-6, floorBand), 0, 1)
-              y2 = lerp(y2, floorY, floorAmt * contact)
-            }
+            const y2 = lerp(by, ty, c)
             ptsM.push({ x: x2, y: y2 })
             minX = Math.min(minX, x2)
             minY = Math.min(minY, y2)
@@ -1057,6 +1043,23 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const x0 = tx - total / 2
       ctx.fillText(left, x0 + wL / 2, ty)
       ctx.fillText(right, x0 + wL + gap + wR / 2, ty)
+      ctx.restore()
+    }
+
+    // Best depth readout (only if a local best exists). Updates live when current depth exceeds it.
+    if (s.bestDepthLocal > 0) {
+      const bestLive = Math.max(s.bestDepthLocal, s.depth)
+      const label = `BEST: ${bestLive}`
+      // Position per reference: just above the horizontal leg, tucked near the right HUD module.
+      const x = barX - 10
+      const y = capY - 14
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.font = "950 14px 'Oxanium', system-ui, sans-serif"
+      ctx.textAlign = 'right'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillStyle = 'rgba(255,246,213,0.92)'
+      ctx.fillText(label, x, y)
       ctx.restore()
     }
 

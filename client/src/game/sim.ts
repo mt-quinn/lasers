@@ -266,11 +266,14 @@ export const stepSim = (s: RunState, dt: number) => {
 
       // If out of lives, reset the run.
       if (s.lives <= 0) {
-        const fresh = createInitialRunState()
-        fresh.view = s.view
-        fresh.input = s.input
-        fresh.paused = s.paused
-        Object.assign(s, fresh)
+        // Enter game-over mode. App will present UI + handle optional local score saving.
+        s.gameOver = true
+        s.paused = true
+        s.levelUpActive = false
+        s.levelUpOptions = []
+        s.pendingLevelUps = 0
+        s.xpOrbs = []
+        // Freeze presentation; board can remain as-is behind the overlay.
         return
       }
 

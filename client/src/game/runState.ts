@@ -171,6 +171,10 @@ export type RunState = {
   blocksDestroyed: number
   // Number of global drop steps that have occurred (0 at run start).
   depth: number
+  // Local best depth (top score on this device). Used for HUD "BEST" readout.
+  bestDepthLocal: number
+  // True when the run has ended (out of lives). App will show game-over UI and optionally save score.
+  gameOver: boolean
 
   // Tutorial/first-play helpers.
   tutorialMovedEmitter: boolean
@@ -251,6 +255,8 @@ export const createInitialRunState = (): RunState => {
     timeSec: 0,
     blocksDestroyed: 0,
     depth: 0,
+    bestDepthLocal: 0,
+    gameOver: false,
     tutorialMovedEmitter: false,
     lives: 3,
     respiteSec: 0,

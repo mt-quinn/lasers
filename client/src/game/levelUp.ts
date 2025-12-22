@@ -59,30 +59,43 @@ const rollRarity = (random: () => number, allowed?: Rarity[]): Rarity => {
 }
 
 export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOffer[] => {
-  const types: UpgradeType[] = ['damage', 'bounces', 'bounceFalloff', 'dropSlow']
-  // Offer +1 life only while the player is below max lives.
-  if (s.lives < 3) types.push('life')
-  const picked: UpgradeOffer[] = []
-  const usedTypes = new Set<UpgradeType>()
+  // Universal pool: every upgrade offer lives in one weighted bag (weighted by rarity).
+  // We dedupe by upgrade type by keeping the rarest roll for that type, then keep rolling
+  // until we have 3 distinct types.
 
-  // Ensure 3 distinct upgrade types for clarity.
-  while (picked.length < 3) {
-    const type = types[Math.floor(random() * types.length)]!
-    if (usedTypes.has(type)) continue
-    usedTypes.add(type)
+  const rarityRank = (r: Rarity) => rarityOrder.indexOf(r) // common=0 .. legendary=3
+  const isRarer = (a: Rarity, b: Rarity) => rarityRank(a) > rarityRank(b)
 
-    // Bounces cannot be common.
-    const rarity =
-      type === 'life'
-        ? 'rare'
-        : type === 'bounces'
-        ? rollRarity(random, ['rare', 'epic', 'legendary'])
-        : rollRarity(random)
+  const offerPool: Array<{ type: UpgradeType; rarity: Rarity; weight: number }> = []
+  const push = (type: UpgradeType, rarity: Rarity) => offerPool.push({ type, rarity, weight: rarityWeight[rarity] })
 
-    picked.push(buildOffer(type, rarity, s))
+  // Base upgrade types.
+  for (const r of rarityOrder) push('damage', r)
+  for (const r of rarityOrder) push('bounceFalloff', r)
+  for (const r of rarityOrder) push('dropSlow', r)
+
+  // Bounces has no common tier (first tier is rare).
+  for (const r of ['rare', 'epic', 'legendary'] as const) push('bounces', r)
+
+  // Life is a rare-only offer, only while below max lives.
+  if (s.lives < 3) push('life', 'rare')
+
+  const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
+
+  const chosen = new Map<UpgradeType, UpgradeOffer>()
+  let safety = 0
+  while (chosen.size < 3 && safety++ < 500) {
+    const seed = pickOfferSeed()
+    const next = buildOffer(seed.type, seed.rarity, s)
+    const cur = chosen.get(next.type)
+    if (!cur) {
+      chosen.set(next.type, next)
+      continue
+    }
+    if (isRarer(next.rarity, cur.rarity)) chosen.set(next.type, next)
   }
 
-  return picked
+  return Array.from(chosen.values()).slice(0, 3)
 }
 
 const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffer => {

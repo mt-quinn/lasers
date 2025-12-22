@@ -6,10 +6,22 @@ import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 import { applyOffer, computeXpCap, getOfferPreview, getRarityColor } from './game/levelUp'
 import { getArenaLayout } from './game/layout'
+import {
+  addHighScore,
+  getBestDepth,
+  loadHighScores,
+  loadLastPlayerName,
+  qualifiesTop5,
+  saveHighScores,
+  saveLastPlayerName,
+  type HighScoreEntry,
+} from './game/highScores'
 
 type HudSnapshot = {
   paused: boolean
   pauseBtnBottomPx: number
+  depth: number
+  gameOver: boolean
 }
 
 export default function App() {
@@ -31,12 +43,25 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(() => ({
     paused: false,
     pauseBtnBottomPx: computePauseBtnBottomPx(),
+    depth: 0,
+    gameOver: false,
   }))
+
+  const [highScores, setHighScores] = useState<HighScoreEntry[]>(() => loadHighScores())
+  const [nameDraft, setNameDraft] = useState<string>(() => loadLastPlayerName())
+  const [showNamePrompt, setShowNamePrompt] = useState(false)
+  const [pendingScoreDepth, setPendingScoreDepth] = useState<number | null>(null)
+  const handledGameOverRef = useRef(false)
 
   const setPaused = useCallback((paused: boolean) => {
     stateRef.current.paused = paused
     setHud((h) => ({ ...h, paused }))
   }, [])
+
+  // Keep the sim/draw layer informed of the device-best depth so the HUD "BEST" label can render.
+  useEffect(() => {
+    stateRef.current.bestDepthLocal = getBestDepth(highScores)
+  }, [highScores])
 
   // Pointer input: touch anywhere -> slider position + aim direction.
   useEffect(() => {
@@ -178,6 +203,10 @@ export default function App() {
       if (e.key !== 'Escape') return
       if (e.repeat) return
       e.preventDefault()
+      // While the upgrade chooser is open, do not allow manual unpause.
+      // The only way to resume is to pick an upgrade.
+      if (stateRef.current.levelUpActive) return
+      if (stateRef.current.gameOver) return
       setPaused(!stateRef.current.paused)
     }
     window.addEventListener('keydown', onKeyDown, { passive: false })
@@ -190,8 +219,6 @@ export default function App() {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-
-    const s = stateRef.current
     let last = performance.now()
 
     // Probe element to reliably resolve env(safe-area-inset-bottom) on mobile browsers.
@@ -221,6 +248,7 @@ export default function App() {
       canvas.height = Math.floor(h * dpr)
       canvas.style.width = `${w}px`
       canvas.style.height = `${h}px`
+      const s = stateRef.current
       s.view.dpr = dpr
       s.view.width = w
       s.view.height = h
@@ -244,6 +272,7 @@ export default function App() {
     window.addEventListener('resize', resize)
 
     const tick = (now: number) => {
+      const s = stateRef.current
       // Use variable dt for simulation so damage/visuals update every frame even on
       // 90/120Hz displays (fixed-step would "pause" every other frame).
       const dtSec = Math.min(0.05, (now - last) / 1000)
@@ -259,6 +288,8 @@ export default function App() {
         setHud({
           paused: s.paused,
           pauseBtnBottomPx: computePauseBtnBottomPx(),
+          depth: s.depth,
+          gameOver: s.gameOver,
         })
       }
 
@@ -278,12 +309,55 @@ export default function App() {
   }, [])
 
   const restart = useCallback(() => {
-    stateRef.current = createInitialRunState()
+    // IMPORTANT: keep the same object identity so the RAF loop (and any other refs)
+    // continue to operate on the reset state.
+    const prev = stateRef.current
+    const fresh = createInitialRunState()
+    fresh.view = prev.view
+    fresh.input = prev.input
+    fresh.bestDepthLocal = getBestDepth(highScores)
+    Object.assign(prev, fresh)
+    handledGameOverRef.current = false
     setHud({
       paused: false,
       pauseBtnBottomPx: computePauseBtnBottomPx(),
+      depth: 0,
+      gameOver: false,
     })
-  }, [computePauseBtnBottomPx])
+  }, [computePauseBtnBottomPx, highScores])
+
+  // When a run ends, decide whether we need to prompt for a name (top-5).
+  useEffect(() => {
+    if (!hud.gameOver) {
+      handledGameOverRef.current = false
+      setShowNamePrompt(false)
+      setPendingScoreDepth(null)
+      return
+    }
+    if (handledGameOverRef.current) return
+    handledGameOverRef.current = true
+
+    const depth = hud.depth
+    setPendingScoreDepth(depth)
+    if (qualifiesTop5(highScores, depth)) {
+      setShowNamePrompt(true)
+    }
+  }, [hud.gameOver, hud.depth, highScores])
+
+  const submitHighScore = useCallback(() => {
+    if (pendingScoreDepth == null) return
+    const next = addHighScore(highScores, { name: nameDraft, depth: pendingScoreDepth })
+    setHighScores(next)
+    saveHighScores(next)
+    saveLastPlayerName(nameDraft)
+    setShowNamePrompt(false)
+    // Update local best immediately for the live HUD label on subsequent runs.
+    stateRef.current.bestDepthLocal = getBestDepth(next)
+  }, [highScores, nameDraft, pendingScoreDepth])
+
+  const skipHighScore = useCallback(() => {
+    setShowNamePrompt(false)
+  }, [])
 
   return (
     <div className="lg-viewport">
@@ -297,10 +371,97 @@ export default function App() {
                 type="button"
                 className="arenaPauseBtn"
                 style={{ bottom: `${hud.pauseBtnBottomPx}px` }}
-                onClick={() => setPaused(!hud.paused)}
+                onClick={() => {
+                  if (hud.gameOver) return
+                  setPaused(!hud.paused)
+                }}
               >
                 {hud.paused ? 'Play' : 'Pause'}
               </button>
+            )}
+
+            {/* Pause overlay (shows local leaderboard). */}
+            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && (
+              <div className="pauseOverlay" role="dialog" aria-label="Paused">
+                <div className="pausePanel">
+                  <div className="pauseTitle">Paused</div>
+                  {highScores.length > 0 && (
+                    <div className="pauseScores">
+                      <div className="pauseScoresTitle">Top Depths</div>
+                      <ol className="scoreList">
+                        {highScores.map((e, i) => (
+                          <li key={`${e.ts}-${i}`} className="scoreRow">
+                            <span className="scoreRank">{i + 1}</span>
+                            <span className="scoreName">{e.name}</span>
+                            <span className="scoreValue">{e.depth}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                  <div className="pauseActions">
+                    <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
+                      Resume
+                    </button>
+                    <button type="button" className="btn" onClick={restart}>
+                      Restart
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Game-over overlay + optional name prompt for top-5. */}
+            {hud.gameOver && (
+              <div className="pauseOverlay" role="dialog" aria-label="Game over">
+                <div className="pausePanel">
+                  <div className="pauseTitle">Game Over</div>
+                  <div className="gameOverDepth">Depth: {hud.depth}</div>
+
+                  {showNamePrompt && (
+                    <div className="namePrompt">
+                      <div className="namePromptTitle">New Top 5 — enter your name</div>
+                      <input
+                        className="nameInput"
+                        value={nameDraft}
+                        onChange={(e) => setNameDraft(e.target.value)}
+                        maxLength={16}
+                        placeholder="PLAYER"
+                        autoFocus
+                      />
+                      <div className="pauseActions">
+                        <button type="button" className="btn ghost" onClick={skipHighScore}>
+                          Skip
+                        </button>
+                        <button type="button" className="btn" onClick={submitHighScore}>
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {highScores.length > 0 && (
+                    <div className="pauseScores">
+                      <div className="pauseScoresTitle">Top Depths</div>
+                      <ol className="scoreList">
+                        {highScores.map((e, i) => (
+                          <li key={`${e.ts}-${i}`} className="scoreRow">
+                            <span className="scoreRank">{i + 1}</span>
+                            <span className="scoreName">{e.name}</span>
+                            <span className="scoreValue">{e.depth}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
+                  <div className="pauseActions">
+                    <button type="button" className="btn" onClick={restart}>
+                      Restart
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {stateRef.current.levelUpActive && (
@@ -315,9 +476,10 @@ export default function App() {
                           key={opt.type + opt.rarity + idx}
                           type="button"
                           className="upgradeCard"
+                          data-rarity={opt.rarity}
                           style={{
-                            borderColor: `${rarityColor}55`,
-                            boxShadow: `0 0 0 1px rgba(0,0,0,0.35), 0 18px 55px rgba(0,0,0,0.55), 0 0 40px ${rarityColor}22`,
+                            borderColor: `${rarityColor}66`,
+                            boxShadow: `0 0 0 1px rgba(0,0,0,0.35), 0 18px 55px rgba(0,0,0,0.55), 0 0 42px ${rarityColor}33`,
                           }}
                           onClick={() => {
                             const s = stateRef.current
