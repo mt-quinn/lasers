@@ -1,5 +1,8 @@
 import type { ViewState } from './runState'
 
+export const SLIDER_PAD = 22
+export const MIN_RETICLE_GAP = 18
+
 export type ArenaLayout = {
   railH: number
   bottomPad: number
@@ -37,5 +40,4 @@ export const getArenaLayout = (view: ViewState): ArenaLayout => {
 
   return { railH, bottomPad, railY, failY, emitterY, xpGauge: gauge, xpTarget }
 }
-
 

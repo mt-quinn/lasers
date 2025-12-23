@@ -5,7 +5,7 @@ import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 import { applyOffer, computeXpCap, getOfferPreview, getRarityColor } from './game/levelUp'
-import { getArenaLayout } from './game/layout'
+import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './game/layout'
 import {
   addHighScore,
   getBestDepth,
@@ -16,9 +16,6 @@ import {
   saveLastPlayerName,
   type HighScoreEntry,
 } from './game/highScores'
-
-const SLIDER_PAD = 22
-const MIN_RETICLE_GAP = 18
 
 type HudSnapshot = {
   paused: boolean
