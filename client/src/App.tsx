@@ -17,6 +17,9 @@ import {
   type HighScoreEntry,
 } from './game/highScores'
 
+const SLIDER_PAD = 22
+const MIN_RETICLE_GAP = 18
+
 type HudSnapshot = {
   paused: boolean
   pauseBtnBottomPx: number
@@ -265,13 +268,11 @@ export default function App() {
 
       // Keep controls snapped to the current rail even if the sim is paused.
       const layout = getArenaLayout(s.view)
-      const sliderPad = 22
-      const minReticleGap = 18
-      s.emitter.pos.x = clamp(s.emitter.pos.x, sliderPad, s.view.width - sliderPad)
+      s.emitter.pos.x = clamp(s.emitter.pos.x, SLIDER_PAD, s.view.width - SLIDER_PAD)
       s.emitter.pos.y = layout.emitterY
 
       s.reticle.x = clamp(s.reticle.x, 0, w)
-      s.reticle.y = clamp(s.reticle.y, 0, Math.min(h, layout.emitterY - minReticleGap))
+      s.reticle.y = clamp(s.reticle.y, 0, Math.min(h, layout.emitterY - MIN_RETICLE_GAP))
 
       s.input.moveX = clamp(s.input.moveX, 0, w)
       s.input.moveY = clamp(s.input.moveY, 0, h)
@@ -543,4 +544,3 @@ export default function App() {
     </div>
   )
 }
-
