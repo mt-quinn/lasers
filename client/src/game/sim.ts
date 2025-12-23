@@ -4,7 +4,7 @@ import type { RunState } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing } from './spawn'
 import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR, createInitialRunState } from './runState'
-import { getArenaLayout } from './layout'
+import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './layout'
 import { rollUpgradeOptions } from './levelUp'
 
 const EPS = 1.0
@@ -132,7 +132,6 @@ export const stepSim = (s: RunState, dt: number) => {
   }
 
   // Emitter position (move pointer or keyboard) + aim (aim pointer).
-  const sliderPad = 22
   const emitterY = layout.emitterY
   let targetX = s.emitter.pos.x
 
@@ -145,7 +144,7 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  targetX = clamp(targetX, sliderPad, s.view.width - sliderPad)
+  targetX = clamp(targetX, SLIDER_PAD, s.view.width - SLIDER_PAD)
 
   const prevEmitterX = s.emitter.pos.x
   s.emitter.pos = lerpVec(s.emitter.pos, { x: targetX, y: emitterY }, 0.35)
@@ -155,9 +154,8 @@ export const stepSim = (s: RunState, dt: number) => {
 
   // Keep the reticle in a physically-aimable region (above the emitter) so
   // we can aim *exactly* at it without introducing non-physical clamps.
-  const minReticleGap = 18
-  if (s.reticle.y > emitterY - minReticleGap) {
-    s.reticle.y = emitterY - minReticleGap
+  if (s.reticle.y > emitterY - MIN_RETICLE_GAP) {
+    s.reticle.y = emitterY - MIN_RETICLE_GAP
   }
 
   // Lock-on: aim direction is computed directly from emitter -> reticle every frame,
@@ -690,5 +688,4 @@ export const stepSim = (s: RunState, dt: number) => {
     if (s.weld.dwell === 0) s.weld.blockId = -1
   }
 }
-
 

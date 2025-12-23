@@ -5,7 +5,7 @@ import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 import { applyOffer, computeXpCap, getOfferPreview, getRarityColor } from './game/levelUp'
-import { getArenaLayout } from './game/layout'
+import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './game/layout'
 import {
   addHighScore,
   getBestDepth,
@@ -243,7 +243,14 @@ export default function App() {
       if (!parent) return
       const rect = parent.getBoundingClientRect()
       const w = Math.max(1, rect.width)
-      const h = Math.max(1, rect.height)
+      let h = Math.max(1, rect.height)
+      if (h < 120) {
+        const fallbackH = Math.max(
+          h,
+          window.innerHeight || document.documentElement.clientHeight || 0,
+        )
+        if (fallbackH > h) h = fallbackH
+      }
       canvas.width = Math.floor(w * dpr)
       canvas.height = Math.floor(h * dpr)
       canvas.style.width = `${w}px`
@@ -263,13 +270,27 @@ export default function App() {
         s.view.safeBottom = 0
       }
 
-      // Keep reticle within the arena bounds after resize.
+      // Keep controls snapped to the current rail even if the sim is paused.
+      const layout = getArenaLayout(s.view)
+      s.emitter.pos.x = clamp(s.emitter.pos.x, SLIDER_PAD, s.view.width - SLIDER_PAD)
+      s.emitter.pos.y = layout.emitterY
+
       s.reticle.x = clamp(s.reticle.x, 0, w)
-      s.reticle.y = clamp(s.reticle.y, 0, h)
+      s.reticle.y = clamp(s.reticle.y, 0, Math.min(h, layout.emitterY - MIN_RETICLE_GAP))
+
+      s.input.moveX = clamp(s.input.moveX, 0, w)
+      s.input.moveY = clamp(s.input.moveY, 0, h)
+      s.input.aimX = clamp(s.input.aimX, 0, w)
+      s.input.aimY = clamp(s.input.aimY, 0, h)
     }
 
     resize()
+    requestAnimationFrame(resize)
     window.addEventListener('resize', resize)
+    const onVisibility = () => {
+      if (!document.hidden) resize()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
 
     const tick = (now: number) => {
       const s = stateRef.current
@@ -299,6 +320,7 @@ export default function App() {
     rafRef.current = requestAnimationFrame(tick)
     return () => {
       window.removeEventListener('resize', resize)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       if (safeProbeRef.current) {
         safeProbeRef.current.remove()
@@ -527,5 +549,3 @@ export default function App() {
     </div>
   )
 }
-
-
