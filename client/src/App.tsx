@@ -263,13 +263,28 @@ export default function App() {
         s.view.safeBottom = 0
       }
 
-      // Keep reticle within the arena bounds after resize.
+      // Keep controls snapped to the current rail even if the sim is paused.
+      const layout = getArenaLayout(s.view)
+      const sliderPad = 22
+      const minReticleGap = 18
+      s.emitter.pos.x = clamp(s.emitter.pos.x, sliderPad, s.view.width - sliderPad)
+      s.emitter.pos.y = layout.emitterY
+
       s.reticle.x = clamp(s.reticle.x, 0, w)
-      s.reticle.y = clamp(s.reticle.y, 0, h)
+      s.reticle.y = clamp(s.reticle.y, 0, Math.min(h, layout.emitterY - minReticleGap))
+
+      s.input.moveX = clamp(s.input.moveX, 0, w)
+      s.input.moveY = clamp(s.input.moveY, 0, h)
+      s.input.aimX = clamp(s.input.aimX, 0, w)
+      s.input.aimY = clamp(s.input.aimY, 0, h)
     }
 
     resize()
     window.addEventListener('resize', resize)
+    const onVisibility = () => {
+      if (!document.hidden) resize()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
 
     const tick = (now: number) => {
       const s = stateRef.current
@@ -299,6 +314,7 @@ export default function App() {
     rafRef.current = requestAnimationFrame(tick)
     return () => {
       window.removeEventListener('resize', resize)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       if (safeProbeRef.current) {
         safeProbeRef.current.remove()
@@ -527,5 +543,4 @@ export default function App() {
     </div>
   )
 }
-
 
