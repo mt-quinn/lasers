@@ -243,7 +243,14 @@ export default function App() {
       if (!parent) return
       const rect = parent.getBoundingClientRect()
       const w = Math.max(1, rect.width)
-      const h = Math.max(1, rect.height)
+      let h = Math.max(1, rect.height)
+      if (h < 120) {
+        const fallbackH = Math.max(
+          h,
+          window.innerHeight || document.documentElement.clientHeight || 0,
+        )
+        if (fallbackH > h) h = fallbackH
+      }
       canvas.width = Math.floor(w * dpr)
       canvas.height = Math.floor(h * dpr)
       canvas.style.width = `${w}px`
@@ -278,6 +285,7 @@ export default function App() {
     }
 
     resize()
+    requestAnimationFrame(resize)
     window.addEventListener('resize', resize)
     const onVisibility = () => {
       if (!document.hidden) resize()
