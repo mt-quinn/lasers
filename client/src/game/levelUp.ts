@@ -23,15 +23,14 @@ export const computeXpCap = (level: number) => {
   //
   // Design:
   // - Level 1 costs 5 XP.
-  // - Then +1 XP per level-up through reaching level 15.
-  // - Then +2 XP per level-up until a hard cap of 50 XP.
+  // - Then +1 XP per level-up forever (no cap).
   //
   // Note: `level` is the *current* level; this returns the requirement for the *next* level.
   const l = Math.max(0, Math.floor(level))
 
-  // Levels 0..14 (reaching levels 1..15): 5, 6, 7, ..., 19
-  const cap = l <= 14 ? 5 + l : 19 + 2 * (l - 14)
-  return Math.min(50, Math.max(5, cap))
+  // All levels: 5, 6, 7, ..., increasing by 1 per level
+  const cap = 5 + l
+  return Math.max(5, cap)
 }
 
 const fmt = (v: number, maxDecimals = 2) => {
