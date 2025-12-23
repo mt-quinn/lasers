@@ -259,15 +259,31 @@ export const spawnBlock = (s: RunState) => {
  
   // Difficulty scaling: based on DEPTH (global drop steps), not time.
   //
-  // Target: ~+8 base HP per minute at the *un-upgraded* drop rate.
-  // Baseline drop interval is 1.2s, so drops/minute = 60 / 1.2 = 50.
-  // Therefore HP per drop = 8 / 50 = 0.16.
+  // Difficulty scaling: base HP ramps up faster over time, based on DEPTH (global drops),
+  // mapped to minutes at the *baseline* drop interval.
+  //
+  // Target per-minute base HP increase schedule:
+  // - minute 0..1: +6 base HP
+  // - minute 1..2: +8 base HP
+  // - minute 2..3: +10 base HP
+  // - minute 3..4: +12 base HP
+  // - ...and so on (+2 each minute) forever.
+  //
+  // Baseline drop interval is 1.2s => drops/minute = 60 / 1.2 = 50.
+  // We treat depth/50 as "minutes elapsed" and integrate that piecewise-linear rate.
   //
   // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
   // more slowly in real time (but stays consistent per “lines survived”).
   const baseHp0 = 9
-  const hpPerDepth = 0.16
-  const baseHp = baseHp0 + Math.max(0, s.depth) * hpPerDepth
+  const dropsPerMinBaseline = 50
+  const minutes = Math.max(0, s.depth) / dropsPerMinBaseline
+  const whole = Math.floor(minutes)
+  const frac = minutes - whole
+  // Sum of full minutes: Σ_{i=0..whole-1} (6 + 2i) = 6*whole + whole*(whole-1) = whole^2 + 5*whole
+  const fullInc = whole * whole + 5 * whole
+  const curRate = 6 + 2 * whole
+  const inc = fullInc + frac * curRate
+  const baseHp = baseHp0 + inc
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
   // No cap: HP continues to increase slowly but linearly as time progresses.
   const hpMax = Math.round(baseHp * sizeMult * 1.5)
