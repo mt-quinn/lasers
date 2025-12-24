@@ -25,6 +25,59 @@ type HudSnapshot = {
   gameOver: boolean
 }
 
+// Helper function to compute derived stats for the pause screen
+const computePauseStats = (state: RunState) => {
+  const { stats, dropIntervalSec, lives, depth, blocksDestroyed, timeSec } = state
+  const { dps, maxBounces, bounceFalloff } = stats
+
+  // Drop rate: drops per second
+  const dropRate = 1 / dropIntervalSec
+
+  // Damage per drop: how much damage is dealt during one drop interval
+  const damagePerDrop = dps * dropIntervalSec
+
+  // Total DPS: effective DPS accounting for all bounces and degradation
+  // First bounce: dps * 1.0
+  // Second bounce: dps * bounceFalloff
+  // Third bounce: dps * bounceFalloff^2
+  // Sum = dps * (1 + bounceFalloff + bounceFalloff^2 + ... + bounceFalloff^(maxBounces-1))
+  // This is a geometric series: sum = (1 - r^n) / (1 - r) when r != 1
+  let totalDps = dps
+  if (maxBounces > 1) {
+    if (Math.abs(bounceFalloff - 1.0) < 0.0001) {
+      // If bounceFalloff is ~1.0, each bounce does full damage
+      totalDps = dps * maxBounces
+    } else {
+      // Geometric series sum
+      totalDps = dps * (1 - Math.pow(bounceFalloff, maxBounces)) / (1 - bounceFalloff)
+    }
+  }
+
+  // Last bounce DPS: damage at the final bounce only
+  const lastBounceDps = maxBounces > 1 ? dps * Math.pow(bounceFalloff, maxBounces - 1) : dps
+
+  // Format time as MM:SS
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  return {
+    lives,
+    depth,
+    piecesDestroyed: blocksDestroyed,
+    runTime: formatTime(timeSec),
+    dps: dps.toFixed(1),
+    dropRate: dropRate.toFixed(2),
+    bounces: maxBounces,
+    beamDegradation: (bounceFalloff * 100).toFixed(0) + '%',
+    damagePerDrop: damagePerDrop.toFixed(1),
+    totalDps: totalDps.toFixed(1),
+    lastBounceDps: lastBounceDps.toFixed(1),
+  }
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -400,6 +453,14 @@ export default function App() {
     setShowNamePrompt(false)
   }, [])
 
+  // Memoize pause stats to avoid recalculating on every render
+  const pauseStats = useMemo(() => {
+    if (!hud.paused || stateRef.current.levelUpActive || hud.gameOver) {
+      return null
+    }
+    return computePauseStats(stateRef.current)
+  }, [hud.paused, hud.gameOver, hud.depth, stateRef.current.lives, stateRef.current.blocksDestroyed, stateRef.current.timeSec, stateRef.current.stats, stateRef.current.dropIntervalSec])
+
   return (
     <div className="lg-viewport">
       <div className="lg-shell">
@@ -422,10 +483,62 @@ export default function App() {
             )}
 
             {/* Pause overlay (shows local leaderboard). */}
-            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && (
+            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && pauseStats && (
               <div className="pauseOverlay" role="dialog" aria-label="Paused">
                 <div className="pausePanel">
                   <div className="pauseTitle">Paused</div>
+                  
+                  {/* Stats section */}
+                  <div className="pauseStats">
+                    <div className="pauseStatsTitle">Current Run Stats</div>
+                    <div className="statsGrid">
+                      <div className="statItem">
+                        <span className="statLabel">Lives</span>
+                        <span className="statValue">{pauseStats.lives}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Depth</span>
+                        <span className="statValue">{pauseStats.depth}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Pieces Destroyed</span>
+                        <span className="statValue">{pauseStats.piecesDestroyed}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Run Time</span>
+                        <span className="statValue">{pauseStats.runTime}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">DPS</span>
+                        <span className="statValue">{pauseStats.dps}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Drop Rate</span>
+                        <span className="statValue">{pauseStats.dropRate}/s</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Bounces</span>
+                        <span className="statValue">{pauseStats.bounces}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Beam Degradation</span>
+                        <span className="statValue">{pauseStats.beamDegradation}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Damage per Drop</span>
+                        <span className="statValue">{pauseStats.damagePerDrop}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Total DPS</span>
+                        <span className="statValue">{pauseStats.totalDps}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Last Bounce DPS</span>
+                        <span className="statValue">{pauseStats.lastBounceDps}</span>
+                      </div>
+                    </div>
+                  </div>
+
                   {highScores.length > 0 && (
                     <div className="pauseScores">
                       <div className="pauseScoresTitle">Top Depths</div>

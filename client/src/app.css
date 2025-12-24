@@ -227,6 +227,57 @@
   color: rgba(255, 246, 213, 0.92);
 }
 
+.pauseStats {
+  margin-top: 0.7rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.18);
+  padding: 0.65rem 0.7rem;
+}
+
+.pauseStatsTitle {
+  font-family: 'Oxanium', system-ui, sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  opacity: 0.85;
+  margin-bottom: 0.55rem;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.45rem 0.75rem;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.statItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.statLabel {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statValue {
+  font-weight: 900;
+  font-size: 0.88rem;
+  color: rgba(255, 247, 228, 0.96);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
+
 .gameOverDepth {
   margin-top: 0.35rem;
   font-family: 'Oxanium', system-ui, sans-serif;
@@ -594,6 +645,11 @@
   .hudStats {
     /* Still max two rows, but allow tighter spacing on very narrow screens. */
     column-gap: 0.7rem;
+  }
+  
+  .statsGrid {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
   }
 }
 
