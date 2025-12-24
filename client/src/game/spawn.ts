@@ -267,7 +267,7 @@ export const spawnBlock = (s: RunState) => {
   // - minute 1..2: +8 base HP
   // - minute 2..3: +10 base HP
   // - minute 3..4: +12 base HP
-  // - ...and so on (+2 each minute) forever.
+  // - minute 4+: capped at +12 base HP per minute
   //
   // Baseline drop interval is 1.2s => drops/minute = 60 / 1.2 = 50.
   // We treat depth/50 as "minutes elapsed" and integrate that piecewise-linear rate.
@@ -276,16 +276,32 @@ export const spawnBlock = (s: RunState) => {
   // more slowly in real time (but stays consistent per “lines survived”).
   const baseHp0 = 9
   const dropsPerMinBaseline = 50
+  const initialRate = 6
+  const rateIncrement = 2
+  const maxRate = 12
   const minutes = Math.max(0, s.depth) / dropsPerMinBaseline
   const whole = Math.floor(minutes)
   const frac = minutes - whole
-  // Sum of full minutes: Σ_{i=0..whole-1} (6 + 2i) = 6*whole + whole*(whole-1) = whole^2 + 5*whole
-  const fullInc = whole * whole + 5 * whole
-  const curRate = 6 + 2 * whole
+  // Sum of full minutes using arithmetic progression: Σ_{i=0..whole-1} (initialRate + rateIncrement*i)
+  // = whole*initialRate + rateIncrement*whole*(whole-1)/2
+  // Calculate when cap is reached: initialRate + rateIncrement * capMinute = maxRate
+  const capMinute = (maxRate - initialRate) / rateIncrement
+  let fullInc: number
+  let curRate: number
+  if (whole <= capMinute) {
+    fullInc = whole * initialRate + rateIncrement * whole * (whole - 1) / 2
+    curRate = initialRate + rateIncrement * whole
+  } else {
+    // Sum up to cap minute, then add capped rate for remaining minutes
+    const cappedInc = capMinute * initialRate + rateIncrement * capMinute * (capMinute - 1) / 2
+    const extraMinutes = whole - capMinute
+    fullInc = cappedInc + maxRate * extraMinutes
+    curRate = maxRate
+  }
   const inc = fullInc + frac * curRate
   const baseHp = baseHp0 + inc
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
-  // No cap: HP continues to increase slowly but linearly as time progresses.
+  // HP now has a capped growth rate, preventing runaway difficulty.
   const hpMax = Math.round(baseHp * sizeMult * 1.5)
   // XP per block: always 1 (no scaling by piece size).
   const xpValue = 1
