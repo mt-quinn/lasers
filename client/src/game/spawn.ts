@@ -282,17 +282,18 @@ export const spawnBlock = (s: RunState) => {
   const minutes = Math.max(0, s.depth) / dropsPerMinBaseline
   const whole = Math.floor(minutes)
   const frac = minutes - whole
-  // Sum of full minutes: Σ_{i=0..whole-1} (6 + 2i) = 6*whole + whole*(whole-1) = whole^2 + 5*whole
+  // Sum of full minutes using arithmetic progression: Σ_{i=0..whole-1} (initialRate + rateIncrement*i)
+  // = whole*initialRate + rateIncrement*whole*(whole-1)/2
   // Calculate when cap is reached: initialRate + rateIncrement * capMinute = maxRate
   const capMinute = (maxRate - initialRate) / rateIncrement
   let fullInc: number
   let curRate: number
   if (whole <= capMinute) {
-    fullInc = whole * whole + 5 * whole
+    fullInc = whole * initialRate + rateIncrement * whole * (whole - 1) / 2
     curRate = initialRate + rateIncrement * whole
   } else {
     // Sum up to cap minute, then add capped rate for remaining minutes
-    const cappedInc = capMinute * capMinute + 5 * capMinute
+    const cappedInc = capMinute * initialRate + rateIncrement * capMinute * (capMinute - 1) / 2
     const extraMinutes = whole - capMinute
     fullInc = cappedInc + maxRate * extraMinutes
     curRate = maxRate
