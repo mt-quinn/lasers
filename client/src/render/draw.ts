@@ -1252,7 +1252,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       // (Reticle uses reds; keep this cohesive and more dangerous-looking.)
       // outer glow
       ctx.strokeStyle = `rgba(255,60,60,${0.16 * alpha})`
-      ctx.lineWidth = s.stats.beamWidth * 3.4
+      ctx.lineWidth = s.stats.beamGlowWidth
       ctx.stroke()
 
       // core (restroke same path)

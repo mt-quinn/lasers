@@ -126,6 +126,7 @@ export type BoardFeature = MirrorFeature | PrismFeature | BlackHoleFeature
 export type RunStats = {
   dps: number
   beamWidth: number
+  beamGlowWidth: number
   maxBounces: number
   bounceFalloff: number
 }
@@ -271,8 +272,10 @@ export const createInitialRunState = (): RunState => {
       // Scale down visible numbers (HP/DPS) without changing time-to-kill:
       // we scale both damage and health by the same factor.
       dps: 10,
-      // Default beam width increased by 50% (width is no longer an upgrade).
-      beamWidth: 6.0,
+      // Default beam width doubled (width is no longer an upgrade).
+      beamWidth: 12.0,
+      // Outer glow width (kept at original value for visual balance).
+      beamGlowWidth: 20.4,
       maxBounces: 1,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
       bounceFalloff: 0.75,
