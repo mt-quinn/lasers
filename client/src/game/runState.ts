@@ -204,6 +204,9 @@ export type RunState = {
   // Global "tetris-like" drop pacing.
   dropIntervalSec: number
   dropTimerSec: number
+  // Smooth drop animation: visual offset from 0 to cellSize (40px)
+  dropAnimOffset: number
+  dropAnimDuration: number
 
   stats: RunStats
 
@@ -274,6 +277,8 @@ export const createInitialRunState = (): RunState => {
     // Start with a full interval so the player sees the cadence before the first step.
     dropIntervalSec: 1.2,
     dropTimerSec: 1.2,
+    dropAnimOffset: 0,
+    dropAnimDuration: 0.2, // 200ms animation
     stats: {
       // Scale down visible numbers (HP/DPS) without changing time-to-kill:
       // we scale both damage and health by the same factor.

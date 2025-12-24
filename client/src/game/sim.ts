@@ -163,11 +163,22 @@ export const stepSim = (s: RunState, dt: number) => {
   const aimRaw = sub(s.reticle, s.emitter.pos)
   s.emitter.aimDir = clampAimUpwards(aimRaw)
 
-  // Global drop step.
+  // Global drop step with smooth animation.
   s.dropTimerSec -= dt
+  
+  // Smooth drop animation: continuously update the visual offset
+  if (s.dropAnimOffset > 0) {
+    // Animation in progress - advance the offset smoothly
+    const animSpeed = cellSize / s.dropAnimDuration
+    s.dropAnimOffset = Math.max(0, s.dropAnimOffset - animSpeed * dt)
+  }
+  
+  // When timer hits zero, start the animation by setting offset to full cellSize
   if (s.dropTimerSec <= 0) {
     const overshoot = Math.max(0, -s.dropTimerSec)
     s.dropTimerSec = s.dropIntervalSec - (overshoot % s.dropIntervalSec)
+    
+    // Snap logical positions forward immediately (physics/collision use this)
     s.depth += 1
     for (const b of s.blocks) {
       b.pos.y += b.cellSize
@@ -175,6 +186,9 @@ export const stepSim = (s: RunState, dt: number) => {
     for (const f of s.features) {
       f.pos.y += f.cellSize
     }
+    
+    // Start visual animation by setting offset to cellSize (will count down to 0)
+    s.dropAnimOffset = cellSize
   }
 
   // FX: update sparks + weld glows.

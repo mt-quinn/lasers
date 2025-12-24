@@ -131,10 +131,12 @@ const relativeLuma = (cssRgb: string) => {
 
 const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
   // Use cached inside-the-shape anchor, then apply the "slide up as it becomes visible" rule.
-  const target = { x: b.pos.x + b.hpAnchorLocalPx.x, y: b.pos.y + b.hpAnchorLocalPx.y }
+  // Apply smooth drop animation offset
+  const visualY = b.pos.y - s.dropAnimOffset
+  const target = { x: b.pos.x + b.hpAnchorLocalPx.x, y: visualY + b.hpAnchorLocalPx.y }
 
-  const pieceTop = b.pos.y + b.localAabb.minY
-  const pieceBottom = b.pos.y + b.localAabb.maxY
+  const pieceTop = visualY + b.localAabb.minY
+  const pieceBottom = visualY + b.localAabb.maxY
   const visibleTop = 0
   const visibleBottom = s.view.height
 
@@ -151,8 +153,8 @@ const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
   // Clamp inside the piece's AABB (conservative walls clamp).
   const left = b.pos.x + b.localAabb.minX + pad
   const right = b.pos.x + b.localAabb.maxX - pad
-  const top = Math.max(visibleTop + pad, b.pos.y + b.localAabb.minY + pad)
-  const bottom = b.pos.y + b.localAabb.maxY - pad
+  const top = Math.max(visibleTop + pad, visualY + b.localAabb.minY + pad)
+  const bottom = visualY + b.localAabb.maxY - pad
   return { x: clamp(target.x, left, right), y: clamp(y, top, bottom) }
 }
 
@@ -259,6 +261,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const hpPct = clamp(b.hp / b.hpMax, 0, 1)
       const glow = 0.35 + 0.65 * (1 - hpPct)
 
+      // Apply smooth drop animation offset
+      const visualPos = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset }
+
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
       
@@ -275,7 +280,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.shadowBlur = 18 * glow
       }
 
-      drawRoundedPolyomino(ctx, b.loop, b.pos, b.cellSize, b.cornerRadius)
+      drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
 
       // Solid fill (health gradient is applied as a per-piece color, not as an internal gradient).
       ctx.fillStyle = fillBase
@@ -283,8 +288,8 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
       // Tactile depth: make blocks read as slightly domed/protruding.
       {
-        const ax = b.pos.x + b.localAabb.minX
-        const ay = b.pos.y + b.localAabb.minY
+        const ax = visualPos.x + b.localAabb.minX
+        const ay = visualPos.y + b.localAabb.minY
         const w = b.localAabb.maxX - b.localAabb.minX
         const h = b.localAabb.maxY - b.localAabb.minY
         // Strong but still “face-only” so it reads like a pressed, domed pill.
@@ -647,14 +652,17 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     // Board features: mirrors / prisms / black holes (indestructible, no HP numbers).
     if (s.features.length > 0) {
       for (const f of s.features) {
+        // Apply smooth drop animation offset
+        const visualPos = { x: f.pos.x, y: f.pos.y - s.dropAnimOffset }
+        
         // Skip if fully above the screen (matches the "not shootable until visible" vibe visually too).
-        const maxY = f.pos.y + f.localAabb.maxY
+        const maxY = visualPos.y + f.localAabb.maxY
         if (maxY < 0) continue
 
         if (f.kind === 'mirror') {
           const m = f
-          const ax = m.pos.x + m.localAabb.minX
-          const ay = m.pos.y + m.localAabb.minY
+          const ax = visualPos.x + m.localAabb.minX
+          const ay = visualPos.y + m.localAabb.minY
           const w = m.localAabb.maxX - m.localAabb.minX
           const h = m.localAabb.maxY - m.localAabb.minY
 
@@ -663,7 +671,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           ctx.shadowColor = 'rgba(180,220,255,0.20)'
           ctx.shadowBlur = 14
 
-          drawRoundedPolyomino(ctx, m.loop, m.pos, m.cellSize, m.cornerRadius)
+          drawRoundedPolyomino(ctx, m.loop, visualPos, m.cellSize, m.cornerRadius)
 
           const grad = ctx.createLinearGradient(ax, ay, ax + w, ay + h)
           grad.addColorStop(0, 'rgb(60 75 105)')
@@ -696,7 +704,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           ctx.restore()
 
           // Outline (must redraw path; the sheen loop overwrote the current path).
-          drawRoundedPolyomino(ctx, m.loop, m.pos, m.cellSize, m.cornerRadius)
+          drawRoundedPolyomino(ctx, m.loop, visualPos, m.cellSize, m.cornerRadius)
           ctx.lineWidth = 2
           ctx.strokeStyle = 'rgba(245,250,255,0.35)'
           ctx.stroke()
@@ -707,8 +715,8 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
         if (f.kind === 'prism') {
           const p = f
-          const cx = p.pos.x + p.cellSize * 0.5
-          const cy = p.pos.y + p.cellSize * 0.5
+          const cx = visualPos.x + p.cellSize * 0.5
+          const cy = visualPos.y + p.cellSize * 0.5
           const r = p.r
 
           // Prism visual: prioritize glyph legibility. Use a darker crystal body + a subtle dark
@@ -803,8 +811,8 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
         // black hole
         const bh = f
-        const cx = bh.pos.x + bh.cellSize * 0.5
-        const cy = bh.pos.y + bh.cellSize * 0.5
+        const cx = visualPos.x + bh.cellSize * 0.5
+        const cy = visualPos.y + bh.cellSize * 0.5
         const rCore = bh.rCore
         const rInf = bh.rInfluence
 
