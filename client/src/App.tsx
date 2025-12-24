@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './app.css'
 import { createInitialRunState, type RunState } from './game/runState'
 import { stepSim } from './game/sim'
@@ -23,6 +23,59 @@ type HudSnapshot = {
   pauseBtnBottomPx: number
   depth: number
   gameOver: boolean
+}
+
+// Helper function to compute derived stats for the pause screen
+const computePauseStats = (state: RunState) => {
+  const { stats, dropIntervalSec, lives, depth, blocksDestroyed, timeSec } = state
+  const { dps, maxBounces, bounceFalloff } = stats
+
+  // Drop rate: drops per second
+  const dropRate = 1 / dropIntervalSec
+
+  // Damage per drop: how much damage is dealt during one drop interval
+  const damagePerDrop = dps * dropIntervalSec
+
+  // Total DPS: effective DPS accounting for all bounces and degradation
+  // First bounce: dps * 1.0
+  // Second bounce: dps * bounceFalloff
+  // Third bounce: dps * bounceFalloff^2
+  // Sum = dps * (1 + bounceFalloff + bounceFalloff^2 + ... + bounceFalloff^(maxBounces-1))
+  // This is a geometric series: sum = (1 - r^n) / (1 - r) when r != 1
+  let totalDps = dps
+  if (maxBounces > 1) {
+    if (Math.abs(bounceFalloff - 1.0) < 0.0001) {
+      // If bounceFalloff is ~1.0, each bounce does full damage
+      totalDps = dps * maxBounces
+    } else {
+      // Geometric series sum
+      totalDps = dps * (1 - Math.pow(bounceFalloff, maxBounces)) / (1 - bounceFalloff)
+    }
+  }
+
+  // Last bounce DPS: damage at the final bounce only
+  const lastBounceDps = maxBounces > 1 ? dps * Math.pow(bounceFalloff, maxBounces - 1) : dps
+
+  // Format time as MM:SS
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  return {
+    lives,
+    depth,
+    piecesDestroyed: blocksDestroyed,
+    runTime: formatTime(timeSec),
+    dps: dps.toFixed(1),
+    dropRate: dropRate.toFixed(2),
+    bounces: maxBounces,
+    beamDegradation: (bounceFalloff * 100).toFixed(0) + '%',
+    damagePerDrop: damagePerDrop.toFixed(1),
+    totalDps: totalDps.toFixed(1),
+    lastBounceDps: lastBounceDps.toFixed(1),
+  }
 }
 
 export default function App() {
@@ -422,35 +475,90 @@ export default function App() {
             )}
 
             {/* Pause overlay (shows local leaderboard). */}
-            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && (
-              <div className="pauseOverlay" role="dialog" aria-label="Paused">
-                <div className="pausePanel">
-                  <div className="pauseTitle">Paused</div>
-                  {highScores.length > 0 && (
-                    <div className="pauseScores">
-                      <div className="pauseScoresTitle">Top Depths</div>
-                      <ol className="scoreList">
-                        {highScores.map((e, i) => (
-                          <li key={`${e.ts}-${i}`} className="scoreRow">
-                            <span className="scoreRank">{i + 1}</span>
-                            <span className="scoreName">{e.name}</span>
-                            <span className="scoreValue">{e.depth}</span>
-                          </li>
-                        ))}
-                      </ol>
+            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && (() => {
+              const pauseStats = computePauseStats(stateRef.current)
+              return (
+                <div className="pauseOverlay" role="dialog" aria-label="Paused">
+                  <div className="pausePanel">
+                    <div className="pauseTitle">Paused</div>
+                    
+                    {/* Stats section */}
+                    <div className="pauseStats">
+                      <div className="pauseStatsTitle">Current Run Stats</div>
+                      <div className="statsGrid">
+                        <div className="statItem">
+                          <span className="statLabel">Lives</span>
+                          <span className="statValue">{pauseStats.lives}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Depth</span>
+                          <span className="statValue">{pauseStats.depth}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Pieces Destroyed</span>
+                          <span className="statValue">{pauseStats.piecesDestroyed}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Run Time</span>
+                          <span className="statValue">{pauseStats.runTime}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">DPS</span>
+                          <span className="statValue">{pauseStats.dps}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Drop Rate</span>
+                          <span className="statValue">{pauseStats.dropRate}/s</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Bounces</span>
+                          <span className="statValue">{pauseStats.bounces}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Beam Degradation</span>
+                          <span className="statValue">{pauseStats.beamDegradation}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Damage per Drop</span>
+                          <span className="statValue">{pauseStats.damagePerDrop}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Total DPS</span>
+                          <span className="statValue">{pauseStats.totalDps}</span>
+                        </div>
+                        <div className="statItem">
+                          <span className="statLabel">Last Bounce DPS</span>
+                          <span className="statValue">{pauseStats.lastBounceDps}</span>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                  <div className="pauseActions">
-                    <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
-                      Resume
-                    </button>
-                    <button type="button" className="btn" onClick={restart}>
-                      Restart
-                    </button>
+
+                    {highScores.length > 0 && (
+                      <div className="pauseScores">
+                        <div className="pauseScoresTitle">Top Depths</div>
+                        <ol className="scoreList">
+                          {highScores.map((e, i) => (
+                            <li key={`${e.ts}-${i}`} className="scoreRow">
+                              <span className="scoreRank">{i + 1}</span>
+                              <span className="scoreName">{e.name}</span>
+                              <span className="scoreValue">{e.depth}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+                    <div className="pauseActions">
+                      <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
+                        Resume
+                      </button>
+                      <button type="button" className="btn" onClick={restart}>
+                        Restart
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {/* Game-over overlay + optional name prompt for top-5. */}
             {hud.gameOver && (
