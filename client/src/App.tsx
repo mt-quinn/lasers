@@ -16,6 +16,7 @@ import {
   saveLastPlayerName,
   type HighScoreEntry,
 } from './game/highScores'
+import { clearGameState, loadGameState, saveGameState } from './game/gameState'
 
 type HudSnapshot = {
   paused: boolean
@@ -28,9 +29,15 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
+  const saveBucketRef = useRef<number>(-1)
   const safeProbeRef = useRef<HTMLDivElement | null>(null)
 
-  const stateRef = useRef<RunState>(createInitialRunState())
+  const stateRef = useRef<RunState>(
+    (() => {
+      const saved = loadGameState()
+      return saved || createInitialRunState()
+    })()
+  )
 
   const computePauseBtnBottomPx = useCallback(() => {
     const s = stateRef.current
@@ -43,7 +50,7 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(() => ({
     paused: false,
     pauseBtnBottomPx: computePauseBtnBottomPx(),
-    depth: 0,
+    depth: stateRef.current.depth,
     gameOver: false,
   }))
 
@@ -314,6 +321,16 @@ export default function App() {
         })
       }
 
+      // Auto-save game state every 2 seconds (20 buckets)
+      // Skip saving if game is over to avoid unnecessary localStorage operations
+      const saveBucket = Math.floor(now / 2000)
+      if (saveBucket !== saveBucketRef.current) {
+        saveBucketRef.current = saveBucket
+        if (!s.gameOver) {
+          saveGameState(s)
+        }
+      }
+
       rafRef.current = requestAnimationFrame(tick)
     }
 
@@ -346,6 +363,8 @@ export default function App() {
       depth: 0,
       gameOver: false,
     })
+    // Clear saved state when player explicitly restarts
+    clearGameState()
   }, [computePauseBtnBottomPx, highScores])
 
   // When a run ends, decide whether we need to prompt for a name (top-5).
