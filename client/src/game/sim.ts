@@ -464,7 +464,7 @@ export const stepSim = (s: RunState, dt: number) => {
       // For gold blocks, spawn multiple XP orbs with offsets and delays
       if (b.isGold && b.xpValue >= 5) {
         const orbCount = 5
-        const xpPerOrb = 1 + s.stats.goldXpBonus / 5 // distribute evenly
+        const xpPerOrb = (5 + s.stats.goldXpBonus) / 5 // distribute total XP evenly
         for (let i = 0; i < orbCount; i++) {
           const angle = (i / orbCount) * Math.PI * 2
           const radius = 8
@@ -479,7 +479,7 @@ export const stepSim = (s: RunState, dt: number) => {
             cornerRadius: b.cornerRadius,
             loop: b.loop,
             localAabb: { ...b.localAabb },
-            t: -delay, // negative time to delay spawn
+            t: -delay, // negative time creates delay effect; melt update adds dt each frame
             dur: BLOCK_MELT_DUR,
             orbFrom: { x: orbFrom.x + offsetX, y: orbFrom.y + offsetY },
             orbTo: { ...layout.xpTarget },
