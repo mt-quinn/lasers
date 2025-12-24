@@ -453,6 +453,12 @@ export const stepSim = (s: RunState, dt: number) => {
 
     if (b.hp <= 0) {
       s.blocksDestroyed += 1
+      
+      // Increment golden XP bonus when a golden block is destroyed
+      if (b.isGold) {
+        s.stats.goldXpBonus += 1
+      }
+      
       const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
       const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
       const w = b.localAabb.maxX - b.localAabb.minX
