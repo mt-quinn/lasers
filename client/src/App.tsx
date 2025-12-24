@@ -322,10 +322,13 @@ export default function App() {
       }
 
       // Auto-save game state every 2 seconds (20 buckets)
+      // Skip saving if game is over to avoid unnecessary localStorage operations
       const saveBucket = Math.floor(now / 2000)
       if (saveBucket !== saveBucketRef.current) {
         saveBucketRef.current = saveBucket
-        saveGameState(s)
+        if (!s.gameOver) {
+          saveGameState(s)
+        }
       }
 
       rafRef.current = requestAnimationFrame(tick)

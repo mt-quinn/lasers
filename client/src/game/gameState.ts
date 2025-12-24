@@ -126,10 +126,11 @@ export const loadGameState = (): RunState | null => {
     // Merge saved state into fresh state
     Object.assign(freshState, parsed)
     
-    // Always start unpaused when loading (player expects to continue playing)
-    freshState.paused = false
-    freshState.levelUpActive = false
-    freshState.levelUpOptions = []
+    // If the player was in a level-up screen, keep it paused and preserve the options
+    // Otherwise, resume gameplay
+    if (!freshState.levelUpActive) {
+      freshState.paused = false
+    }
     
     return freshState
   } catch {
