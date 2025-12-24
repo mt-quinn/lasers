@@ -296,12 +296,12 @@ export const spawnBlock = (s: RunState) => {
   // - minute 4+: capped at +12 base HP per minute
   //
   // Baseline drop interval is 1.2s => drops/minute = 60 / 1.2 = 50.
-  // We treat depth/50 as "minutes elapsed" and integrate that piecewise-linear rate.
+  // We treat depth/100 as "minutes elapsed" and integrate that piecewise-linear rate.
   //
   // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
   // more slowly in real time (but stays consistent per “lines survived”).
   const baseHp0 = 9
-  const dropsPerMinBaseline = 50
+  const dropsPerMinBaseline = 100
   const initialRate = 6
   const rateIncrement = 2
   const maxRate = 12
