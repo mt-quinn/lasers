@@ -261,10 +261,19 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
-      const fillBase = healthFill(hpPct)
+      
+      // Gold blocks have a metallic golden shine
+      const fillBase = b.isGold ? '#ffd700' : healthFill(hpPct)
       const lum = relativeLuma(fillBase)
-      ctx.shadowColor = `rgba(255,120,210,${0.14 * glow})`
-      ctx.shadowBlur = 18 * glow
+      
+      if (b.isGold) {
+        // Gold blocks have a golden glow
+        ctx.shadowColor = `rgba(255,215,0,${0.3 * glow})`
+        ctx.shadowBlur = 22 * glow
+      } else {
+        ctx.shadowColor = `rgba(255,120,210,${0.14 * glow})`
+        ctx.shadowBlur = 18 * glow
+      }
 
       drawRoundedPolyomino(ctx, b.loop, b.pos, b.cellSize, b.cornerRadius)
 
@@ -280,10 +289,28 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         const h = b.localAabb.maxY - b.localAabb.minY
         // Strong but still “face-only” so it reads like a pressed, domed pill.
         applyDomedDepth(ax, ay, w, h, 1.0)
+        
+        // Add extra metallic shine for gold blocks
+        if (b.isGold) {
+          ctx.save()
+          ctx.clip()
+          ctx.globalCompositeOperation = 'screen'
+          const shine = ctx.createLinearGradient(ax, ay, ax + w, ay + h * 0.5)
+          shine.addColorStop(0, 'rgba(255,255,200,0.4)')
+          shine.addColorStop(0.5, 'rgba(255,255,200,0.25)')
+          shine.addColorStop(1, 'rgba(255,255,200,0)')
+          ctx.fillStyle = shine
+          ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+          ctx.restore()
+        }
       }
 
       ctx.lineWidth = 2
-      ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
+      if (b.isGold) {
+        ctx.strokeStyle = 'rgba(184,134,11,0.85)'
+      } else {
+        ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
+      }
       ctx.stroke()
       ctx.restore()
     }
