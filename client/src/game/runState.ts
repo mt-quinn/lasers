@@ -55,7 +55,7 @@ export type WeldGlow = {
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
-export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade'
+export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade' | 'goldSpawnChance' | 'goldXpBonus'
 
 export type UpgradeOffer = {
   type: UpgradeType
@@ -75,6 +75,7 @@ export type BlockEntity = {
   hpMax: number
   hp: number
   xpValue: number
+  isGold: boolean
   // local-space loop points in *cell* units (not pixels), closed (last==first)
   loop: Vec2[]
   // local-space AABB in pixels (for quick reject); updated at spawn from shape
@@ -132,6 +133,8 @@ export type RunStats = {
   splitterChance: number
   noWallPenalty: boolean
   extraChoices: number
+  goldSpawnChance: number
+  goldXpBonus: number
 }
 
 export type ViewState = {
@@ -285,6 +288,8 @@ export const createInitialRunState = (): RunState => {
       splitterChance: 0,
       noWallPenalty: false,
       extraChoices: 0,
+      goldSpawnChance: 0.01,
+      goldXpBonus: 0,
     },
     reticle: { x: 180, y: 220 },
     emitter: {

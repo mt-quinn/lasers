@@ -460,20 +460,49 @@ export const stepSim = (s: RunState, dt: number) => {
       // Melt collapses downward into a small blob near the *bottom* of the piece, then releases the XP orb.
       const bottom = b.pos.y + b.localAabb.maxY
       const orbFrom = { x: cx, y: bottom - 6 }
-      s.meltFx.push({
-        id: `melt-${s.nextMeltId++}`,
-        pos: { ...b.pos },
-        cellSize: b.cellSize,
-        cornerRadius: b.cornerRadius,
-        loop: b.loop,
-        localAabb: { ...b.localAabb },
-        t: 0,
-        dur: BLOCK_MELT_DUR,
-        orbFrom,
-        orbTo: { ...layout.xpTarget },
-        value: b.xpValue,
-        seed: Math.random() * 1000,
-      })
+      
+      // For gold blocks, spawn multiple XP orbs with offsets and delays
+      if (b.isGold && b.xpValue >= 5) {
+        const orbCount = 5
+        const xpPerOrb = (5 + s.stats.goldXpBonus) / 5 // distribute total XP evenly
+        for (let i = 0; i < orbCount; i++) {
+          const angle = (i / orbCount) * Math.PI * 2
+          const radius = 8
+          const offsetX = Math.cos(angle) * radius
+          const offsetY = Math.sin(angle) * radius
+          const delay = i * 0.08 // slight animation delay between orbs
+          
+          s.meltFx.push({
+            id: `melt-${s.nextMeltId++}`,
+            pos: { ...b.pos },
+            cellSize: b.cellSize,
+            cornerRadius: b.cornerRadius,
+            loop: b.loop,
+            localAabb: { ...b.localAabb },
+            t: -delay, // negative time creates delay effect; melt update adds dt each frame
+            dur: BLOCK_MELT_DUR,
+            orbFrom: { x: orbFrom.x + offsetX, y: orbFrom.y + offsetY },
+            orbTo: { ...layout.xpTarget },
+            value: xpPerOrb,
+            seed: Math.random() * 1000,
+          })
+        }
+      } else {
+        s.meltFx.push({
+          id: `melt-${s.nextMeltId++}`,
+          pos: { ...b.pos },
+          cellSize: b.cellSize,
+          cornerRadius: b.cornerRadius,
+          loop: b.loop,
+          localAabb: { ...b.localAabb },
+          t: 0,
+          dur: BLOCK_MELT_DUR,
+          orbFrom,
+          orbTo: { ...layout.xpTarget },
+          value: b.xpValue,
+          seed: Math.random() * 1000,
+        })
+      }
 
       // Check if this destroyed block should spawn a splitter (prism)
       if (s.stats.splitterChance > 0 && Math.random() < s.stats.splitterChance) {

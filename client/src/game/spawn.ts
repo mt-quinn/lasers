@@ -329,8 +329,12 @@ export const spawnBlock = (s: RunState) => {
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
   // HP now has a capped growth rate, preventing runaway difficulty.
   const hpMax = Math.round(baseHp * sizeMult * 1.5)
-  // XP per block: always 1 (no scaling by piece size).
-  const xpValue = 1
+  
+  // Gold block spawn chance
+  const isGold = Math.random() < s.stats.goldSpawnChance
+  
+  // XP per block: 1 for normal, 5 + bonus for gold blocks
+  const xpValue = isGold ? 5 + s.stats.goldXpBonus : 1
 
   const loop = buildCellLoop(cells)
   const localAabb = computeLocalAabbPx(cells, cellSize)
@@ -374,6 +378,7 @@ export const spawnBlock = (s: RunState) => {
     hpMax,
     hp: hpMax,
     xpValue,
+    isGold,
     loop,
     localAabb,
     hpAnchorLocalPx,

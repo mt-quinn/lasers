@@ -92,6 +92,12 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
   if (s.stats.maxBounces > 1) push('bounceTrade', 'legendary')
 
+  // Gold block spawn chance: all rarities
+  for (const r of rarityOrder) push('goldSpawnChance', r)
+
+  // Gold block XP bonus: all rarities
+  for (const r of rarityOrder) push('goldXpBonus', r)
+
   const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
@@ -185,6 +191,26 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
       description: `Trade all ${s.stats.maxBounces} bounces for +${dpsGain} DPS`,
     }
   }
+  if (type === 'goldSpawnChance') {
+    const add = rarity === 'common' ? 0.01 : rarity === 'rare' ? 0.02 : rarity === 'epic' ? 0.03 : 0.05
+    const nextPct = Math.round((s.stats.goldSpawnChance + add) * 100)
+    return {
+      type,
+      rarity,
+      title: 'Golden Spawn',
+      description: `${nextPct}% chance to spawn a Golden block`,
+    }
+  }
+  if (type === 'goldXpBonus') {
+    const add = rarity === 'common' ? 1 : rarity === 'rare' ? 2 : rarity === 'epic' ? 3 : 5
+    const next = 5 + s.stats.goldXpBonus + add
+    return {
+      type,
+      rarity,
+      title: 'Golden Reward',
+      description: `Golden blocks give ${next} XP when destroyed`,
+    }
+  }
   // dropSlow
   const add = rarity === 'common' ? 0.1 : rarity === 'rare' ? 0.2 : rarity === 'epic' ? 0.3 : 0.5
   const next = Math.min(3.0, s.dropIntervalSec + add)
@@ -234,6 +260,16 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     const dpsGain = s.stats.maxBounces * 10
     s.stats.dps = Math.round(s.stats.dps + dpsGain)
     s.stats.maxBounces = 1
+    return
+  }
+  if (offer.type === 'goldSpawnChance') {
+    const add = r === 'common' ? 0.01 : r === 'rare' ? 0.02 : r === 'epic' ? 0.03 : 0.05
+    s.stats.goldSpawnChance = s.stats.goldSpawnChance + add
+    return
+  }
+  if (offer.type === 'goldXpBonus') {
+    const add = r === 'common' ? 1 : r === 'rare' ? 2 : r === 'epic' ? 3 : 5
+    s.stats.goldXpBonus = s.stats.goldXpBonus + add
     return
   }
   // dropSlow
@@ -318,6 +354,28 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
       before: `${beforeDps}`,
       after: `${afterDps}`,
       delta: `+${dpsGain}`,
+    }
+  }
+  if (offer.type === 'goldSpawnChance') {
+    const add = r === 'common' ? 0.01 : r === 'rare' ? 0.02 : r === 'epic' ? 0.03 : 0.05
+    const beforePct = Math.round(s.stats.goldSpawnChance * 100)
+    const afterPct = Math.round((s.stats.goldSpawnChance + add) * 100)
+    return {
+      label: 'Gold%',
+      before: `${beforePct}%`,
+      after: `${afterPct}%`,
+      delta: `+${afterPct - beforePct}%`,
+    }
+  }
+  if (offer.type === 'goldXpBonus') {
+    const add = r === 'common' ? 1 : r === 'rare' ? 2 : r === 'epic' ? 3 : 5
+    const beforeV = 5 + s.stats.goldXpBonus
+    const afterV = 5 + s.stats.goldXpBonus + add
+    return {
+      label: 'GoldXP',
+      before: `${beforeV}`,
+      after: `${afterV}`,
+      delta: `+${add}`,
     }
   }
   // dropSlow
