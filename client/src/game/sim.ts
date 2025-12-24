@@ -2,7 +2,7 @@ import { add, clamp, dot, lerpVec, mul, normalize, reflect, sub } from './math'
 import type { Vec2 } from './math'
 import type { RunState } from './runState'
 import { raycastSceneThick } from './raycast'
-import { spawnBoardThing } from './spawn'
+import { spawnBoardThing, spawnPrismAt } from './spawn'
 import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR, createInitialRunState } from './runState'
 import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './layout'
 import { rollUpgradeOptions } from './levelUp'
@@ -474,6 +474,13 @@ export const stepSim = (s: RunState, dt: number) => {
         value: b.xpValue,
         seed: Math.random() * 1000,
       })
+
+      // Check if this destroyed block should spawn a splitter (prism)
+      if (s.stats.splitterChance > 0 && Math.random() < s.stats.splitterChance) {
+        // Spawn prism at the block's position
+        spawnPrismAt(s, b.pos.x, b.pos.y)
+      }
+
       s.blocks = s.blocks.filter((x) => x.id !== b.id)
 
       const nav: any = navigator
@@ -619,10 +626,16 @@ export const stepSim = (s: RunState, dt: number) => {
             continue
           }
           if (stepHit.kind === 'mirror' || stepHit.kind === 'wall') {
-            if (bouncesLeft <= 0) break
+            // Wall bounces: apply penalty unless noWallPenalty upgrade is active
+            const isWall = stepHit.kind === 'wall'
+            const skipPenalty = isWall && s.stats.noWallPenalty
+            
+            if (!skipPenalty && bouncesLeft <= 0) break
             d = normalize(reflect(d, stepHit.normal))
-            intensity *= s.stats.bounceFalloff
-            bouncesLeft -= 1
+            if (!skipPenalty) {
+              intensity *= s.stats.bounceFalloff
+              bouncesLeft -= 1
+            }
             o = add(stepHit.point, mul(d, EPS + beamRadius))
             minT = EPS + beamRadius * 0.75
             continue
@@ -663,10 +676,16 @@ export const stepSim = (s: RunState, dt: number) => {
       }
 
       if (hit.kind === 'mirror' || hit.kind === 'wall') {
-        if (bouncesLeft <= 0) break
+        // Wall bounces: apply penalty unless noWallPenalty upgrade is active
+        const isWall = hit.kind === 'wall'
+        const skipPenalty = isWall && s.stats.noWallPenalty
+        
+        if (!skipPenalty && bouncesLeft <= 0) break
         d = normalize(reflect(d, hit.normal))
-        intensity *= s.stats.bounceFalloff
-        bouncesLeft -= 1
+        if (!skipPenalty) {
+          intensity *= s.stats.bounceFalloff
+          bouncesLeft -= 1
+        }
         o = add(hit.point, mul(d, EPS + beamRadius))
         minT = EPS + beamRadius * 0.75
         continue
