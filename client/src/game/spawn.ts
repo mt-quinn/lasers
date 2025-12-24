@@ -199,6 +199,32 @@ const spawnPrism = (s: RunState) => {
   s.normalBlocksSinceFeature = 0
 }
 
+export const spawnPrismAt = (s: RunState, x: number, y: number) => {
+  const cellSize = 40
+  const r = cellSize * 0.36
+  
+  // Prism exit configurations: pick 2-4 distinct offsets from the allowed set.
+  const allowed: number[] = [0, 15, -15, 45, -45, 90, -90]
+  const count = 2 + Math.floor(Math.random() * 3) // 2..4
+  const exits: number[] = []
+  while (exits.length < count) {
+    const d = allowed[Math.floor(Math.random() * allowed.length)]!
+    if (exits.includes(d)) continue
+    exits.push(d)
+  }
+
+  const prism: PrismFeature = {
+    id: s.nextFeatureId++,
+    kind: 'prism',
+    pos: { x, y },
+    cellSize,
+    r,
+    exitsDeg: exits,
+    localAabb: { minX: 0, minY: 0, maxX: cellSize, maxY: cellSize },
+  }
+  s.features.push(prism)
+}
+
 const spawnBlackHole = (s: RunState) => {
   const cellSize = 40
   const rCore = cellSize * 0.38 // core absorber (slightly smaller than the tile)

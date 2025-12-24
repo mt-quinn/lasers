@@ -79,6 +79,13 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // Life is a rare-only offer, only while below max lives.
   if (s.lives < 3) push('life', 'rare')
 
+  // Splitter chance: epic and legendary only
+  push('splitterChance', 'epic')
+  push('splitterChance', 'legendary')
+
+  // No wall penalty: legendary only
+  if (!s.stats.noWallPenalty) push('noWallPenalty', 'legendary')
+
   const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
@@ -136,6 +143,24 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
       description: `Increase bounce multiplier to ${fmt(next, 2)} per bounce`,
     }
   }
+  if (type === 'splitterChance') {
+    const add = rarity === 'epic' ? 0.01 : 0.03
+    const nextPct = Math.round((s.stats.splitterChance + add) * 100)
+    return {
+      type,
+      rarity,
+      title: 'Splitter Spawn',
+      description: `${nextPct}% chance destroyed pieces become splitters`,
+    }
+  }
+  if (type === 'noWallPenalty') {
+    return {
+      type,
+      rarity: 'legendary',
+      title: 'Boundary Pass',
+      description: 'Wall bounces no longer degrade or count as bounces',
+    }
+  }
   // dropSlow
   const add = rarity === 'common' ? 0.1 : rarity === 'rare' ? 0.2 : rarity === 'epic' ? 0.3 : 0.5
   const next = Math.min(3.0, s.dropIntervalSec + add)
@@ -166,6 +191,15 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
   if (offer.type === 'bounceFalloff') {
     const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
     s.stats.bounceFalloff = s.stats.bounceFalloff + delta
+    return
+  }
+  if (offer.type === 'splitterChance') {
+    const add = r === 'epic' ? 0.01 : 0.03
+    s.stats.splitterChance = s.stats.splitterChance + add
+    return
+  }
+  if (offer.type === 'noWallPenalty') {
+    s.stats.noWallPenalty = true
     return
   }
   // dropSlow
@@ -210,6 +244,25 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
       before: fmt(beforeV, 2),
       after: fmt(afterV, 2),
       delta: `+${fmt(afterV - beforeV, 2)}`,
+    }
+  }
+  if (offer.type === 'splitterChance') {
+    const add = r === 'epic' ? 0.01 : 0.03
+    const beforePct = Math.round(s.stats.splitterChance * 100)
+    const afterPct = Math.round((s.stats.splitterChance + add) * 100)
+    return {
+      label: 'Splitter',
+      before: `${beforePct}%`,
+      after: `${afterPct}%`,
+      delta: `+${afterPct - beforePct}%`,
+    }
+  }
+  if (offer.type === 'noWallPenalty') {
+    return {
+      label: 'Wall',
+      before: 'Penalty',
+      after: 'Free',
+      delta: undefined,
     }
   }
   // dropSlow
