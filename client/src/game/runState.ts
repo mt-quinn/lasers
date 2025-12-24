@@ -55,7 +55,7 @@ export type WeldGlow = {
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
-export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty'
+export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade'
 
 export type UpgradeOffer = {
   type: UpgradeType
@@ -131,6 +131,7 @@ export type RunStats = {
   bounceFalloff: number
   splitterChance: number
   noWallPenalty: boolean
+  extraChoices: number
 }
 
 export type ViewState = {
@@ -283,6 +284,7 @@ export const createInitialRunState = (): RunState => {
       bounceFalloff: 0.75,
       splitterChance: 0,
       noWallPenalty: false,
+      extraChoices: 0,
     },
     reticle: { x: 180, y: 220 },
     emitter: {

@@ -83,14 +83,21 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   push('splitterChance', 'epic')
   push('splitterChance', 'legendary')
 
-  // No wall penalty: legendary only
+  // No wall penalty: legendary only, one-time offer
   if (!s.stats.noWallPenalty) push('noWallPenalty', 'legendary')
+
+  // Extra choice: epic only, one-time offer
+  if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
+
+  // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
+  if (s.stats.maxBounces > 1) push('bounceTrade', 'legendary')
 
   const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
-  while (chosen.size < 3 && safety++ < 500) {
+  const targetChoices = 3 + s.stats.extraChoices
+  while (chosen.size < targetChoices && safety++ < 500) {
     const seed = pickOfferSeed()
     const next = buildOffer(seed.type, seed.rarity, s)
     const cur = chosen.get(next.type)
@@ -101,7 +108,7 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
     if (isRarer(next.rarity, cur.rarity)) chosen.set(next.type, next)
   }
 
-  return Array.from(chosen.values()).slice(0, 3)
+  return Array.from(chosen.values()).slice(0, targetChoices)
 }
 
 const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffer => {
@@ -161,6 +168,23 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
       description: 'Wall bounces no longer degrade or count as bounces',
     }
   }
+  if (type === 'extraChoice') {
+    return {
+      type,
+      rarity: 'epic',
+      title: 'Extra Choice',
+      description: 'Gain +1 upgrade choice on every level-up',
+    }
+  }
+  if (type === 'bounceTrade') {
+    const dpsGain = s.stats.maxBounces * 10
+    return {
+      type,
+      rarity: 'legendary',
+      title: 'Bounce Sacrifice',
+      description: `Trade all ${s.stats.maxBounces} bounces for +${dpsGain} DPS`,
+    }
+  }
   // dropSlow
   const add = rarity === 'common' ? 0.1 : rarity === 'rare' ? 0.2 : rarity === 'epic' ? 0.3 : 0.5
   const next = Math.min(3.0, s.dropIntervalSec + add)
@@ -200,6 +224,16 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
   }
   if (offer.type === 'noWallPenalty') {
     s.stats.noWallPenalty = true
+    return
+  }
+  if (offer.type === 'extraChoice') {
+    s.stats.extraChoices += 1
+    return
+  }
+  if (offer.type === 'bounceTrade') {
+    const dpsGain = s.stats.maxBounces * 10
+    s.stats.dps = Math.round(s.stats.dps + dpsGain)
+    s.stats.maxBounces = 1
     return
   }
   // dropSlow
@@ -263,6 +297,27 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
       before: 'Penalty',
       after: 'Free',
       delta: undefined,
+    }
+  }
+  if (offer.type === 'extraChoice') {
+    const beforeV = 3 + s.stats.extraChoices
+    const afterV = 3 + s.stats.extraChoices + 1
+    return {
+      label: 'Choices',
+      before: `${beforeV}`,
+      after: `${afterV}`,
+      delta: '+1',
+    }
+  }
+  if (offer.type === 'bounceTrade') {
+    const dpsGain = s.stats.maxBounces * 10
+    const beforeDps = Math.round(s.stats.dps)
+    const afterDps = Math.round(s.stats.dps + dpsGain)
+    return {
+      label: 'DPS',
+      before: `${beforeDps}`,
+      after: `${afterDps}`,
+      delta: `+${dpsGain}`,
     }
   }
   // dropSlow
