@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './app.css'
 import { createInitialRunState, type RunState } from './game/runState'
 import { stepSim } from './game/sim'
@@ -453,6 +453,14 @@ export default function App() {
     setShowNamePrompt(false)
   }, [])
 
+  // Memoize pause stats to avoid recalculating on every render
+  const pauseStats = useMemo(() => {
+    if (!hud.paused || stateRef.current.levelUpActive || hud.gameOver) {
+      return null
+    }
+    return computePauseStats(stateRef.current)
+  }, [hud.paused, hud.gameOver, hud.depth, stateRef.current.lives, stateRef.current.blocksDestroyed, stateRef.current.timeSec, stateRef.current.stats, stateRef.current.dropIntervalSec])
+
   return (
     <div className="lg-viewport">
       <div className="lg-shell">
@@ -475,90 +483,87 @@ export default function App() {
             )}
 
             {/* Pause overlay (shows local leaderboard). */}
-            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && (() => {
-              const pauseStats = computePauseStats(stateRef.current)
-              return (
-                <div className="pauseOverlay" role="dialog" aria-label="Paused">
-                  <div className="pausePanel">
-                    <div className="pauseTitle">Paused</div>
-                    
-                    {/* Stats section */}
-                    <div className="pauseStats">
-                      <div className="pauseStatsTitle">Current Run Stats</div>
-                      <div className="statsGrid">
-                        <div className="statItem">
-                          <span className="statLabel">Lives</span>
-                          <span className="statValue">{pauseStats.lives}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Depth</span>
-                          <span className="statValue">{pauseStats.depth}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Pieces Destroyed</span>
-                          <span className="statValue">{pauseStats.piecesDestroyed}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Run Time</span>
-                          <span className="statValue">{pauseStats.runTime}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">DPS</span>
-                          <span className="statValue">{pauseStats.dps}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Drop Rate</span>
-                          <span className="statValue">{pauseStats.dropRate}/s</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Bounces</span>
-                          <span className="statValue">{pauseStats.bounces}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Beam Degradation</span>
-                          <span className="statValue">{pauseStats.beamDegradation}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Damage per Drop</span>
-                          <span className="statValue">{pauseStats.damagePerDrop}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Total DPS</span>
-                          <span className="statValue">{pauseStats.totalDps}</span>
-                        </div>
-                        <div className="statItem">
-                          <span className="statLabel">Last Bounce DPS</span>
-                          <span className="statValue">{pauseStats.lastBounceDps}</span>
-                        </div>
+            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && pauseStats && (
+              <div className="pauseOverlay" role="dialog" aria-label="Paused">
+                <div className="pausePanel">
+                  <div className="pauseTitle">Paused</div>
+                  
+                  {/* Stats section */}
+                  <div className="pauseStats">
+                    <div className="pauseStatsTitle">Current Run Stats</div>
+                    <div className="statsGrid">
+                      <div className="statItem">
+                        <span className="statLabel">Lives</span>
+                        <span className="statValue">{pauseStats.lives}</span>
                       </div>
-                    </div>
-
-                    {highScores.length > 0 && (
-                      <div className="pauseScores">
-                        <div className="pauseScoresTitle">Top Depths</div>
-                        <ol className="scoreList">
-                          {highScores.map((e, i) => (
-                            <li key={`${e.ts}-${i}`} className="scoreRow">
-                              <span className="scoreRank">{i + 1}</span>
-                              <span className="scoreName">{e.name}</span>
-                              <span className="scoreValue">{e.depth}</span>
-                            </li>
-                          ))}
-                        </ol>
+                      <div className="statItem">
+                        <span className="statLabel">Depth</span>
+                        <span className="statValue">{pauseStats.depth}</span>
                       </div>
-                    )}
-                    <div className="pauseActions">
-                      <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
-                        Resume
-                      </button>
-                      <button type="button" className="btn" onClick={restart}>
-                        Restart
-                      </button>
+                      <div className="statItem">
+                        <span className="statLabel">Pieces Destroyed</span>
+                        <span className="statValue">{pauseStats.piecesDestroyed}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Run Time</span>
+                        <span className="statValue">{pauseStats.runTime}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">DPS</span>
+                        <span className="statValue">{pauseStats.dps}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Drop Rate</span>
+                        <span className="statValue">{pauseStats.dropRate}/s</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Bounces</span>
+                        <span className="statValue">{pauseStats.bounces}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Beam Degradation</span>
+                        <span className="statValue">{pauseStats.beamDegradation}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Damage per Drop</span>
+                        <span className="statValue">{pauseStats.damagePerDrop}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Total DPS</span>
+                        <span className="statValue">{pauseStats.totalDps}</span>
+                      </div>
+                      <div className="statItem">
+                        <span className="statLabel">Last Bounce DPS</span>
+                        <span className="statValue">{pauseStats.lastBounceDps}</span>
+                      </div>
                     </div>
                   </div>
+
+                  {highScores.length > 0 && (
+                    <div className="pauseScores">
+                      <div className="pauseScoresTitle">Top Depths</div>
+                      <ol className="scoreList">
+                        {highScores.map((e, i) => (
+                          <li key={`${e.ts}-${i}`} className="scoreRow">
+                            <span className="scoreRank">{i + 1}</span>
+                            <span className="scoreName">{e.name}</span>
+                            <span className="scoreValue">{e.depth}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                  <div className="pauseActions">
+                    <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
+                      Resume
+                    </button>
+                    <button type="button" className="btn" onClick={restart}>
+                      Restart
+                    </button>
+                  </div>
                 </div>
-              )
-            })()}
+              </div>
+            )}
 
             {/* Game-over overlay + optional name prompt for top-5. */}
             {hud.gameOver && (
