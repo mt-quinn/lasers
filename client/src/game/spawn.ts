@@ -267,7 +267,7 @@ export const spawnBlock = (s: RunState) => {
   // - minute 1..2: +8 base HP
   // - minute 2..3: +10 base HP
   // - minute 3..4: +12 base HP
-  // - ...and so on (+2 each minute) forever.
+  // - minute 4+: capped at +12 base HP per minute
   //
   // Baseline drop interval is 1.2s => drops/minute = 60 / 1.2 = 50.
   // We treat depth/50 as "minutes elapsed" and integrate that piecewise-linear rate.
@@ -280,8 +280,20 @@ export const spawnBlock = (s: RunState) => {
   const whole = Math.floor(minutes)
   const frac = minutes - whole
   // Sum of full minutes: Σ_{i=0..whole-1} (6 + 2i) = 6*whole + whole*(whole-1) = whole^2 + 5*whole
-  const fullInc = whole * whole + 5 * whole
-  const curRate = 6 + 2 * whole
+  // Cap is reached at minute 3 (rate 12), so for whole >= 3 we use a different formula
+  const capMinute = 3
+  let fullInc: number
+  let curRate: number
+  if (whole <= capMinute) {
+    fullInc = whole * whole + 5 * whole
+    curRate = 6 + 2 * whole
+  } else {
+    // Sum up to cap minute, then add capped rate for remaining minutes
+    const cappedInc = capMinute * capMinute + 5 * capMinute // = 9 + 15 = 24
+    const extraMinutes = whole - capMinute
+    fullInc = cappedInc + 12 * extraMinutes
+    curRate = 12
+  }
   const inc = fullInc + frac * curRate
   const baseHp = baseHp0 + inc
   const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
