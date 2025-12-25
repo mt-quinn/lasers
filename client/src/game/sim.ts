@@ -120,7 +120,7 @@ export const stepSim = (s: RunState, dt: number) => {
   // Spawn pacing (director-style): a time-based target curve, with pressure guardrails
   // so the game ramps without spiraling into impossible states.
   s.spawnTimer -= dt
-  const spawnEveryEarly = 2.35 + (1.65 - 2.35) * e // 0-60s: 2.35 -> 1.65
+  const spawnEveryEarly = 1.175 + (0.825 - 1.175) * e // 0-60s: 1.175 -> 0.825 (doubled spawn rate)
   const spawnEveryLate = 1.55 + (0.95 - 1.55) * l // 60-360s: 1.55 -> 0.95
   const spawnEveryBase = s.timeSec < 60 ? spawnEveryEarly : spawnEveryLate
 
