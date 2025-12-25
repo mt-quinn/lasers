@@ -1152,7 +1152,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         if (b) {
           ctx.save()
           // Clip glow to the block shape so it reads like the metal is glowing.
-          drawRoundedPolyomino(ctx, b.loop, b.pos, b.cellSize, b.cornerRadius)
+          // Apply drop animation offset to match visual block position
+          const visualPos = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset }
+          drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
           ctx.clip()
           ctx.fillStyle = gradInside
           ctx.beginPath()
