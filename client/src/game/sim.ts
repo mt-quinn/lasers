@@ -327,6 +327,17 @@ export const stepSim = (s: RunState, dt: number) => {
 
   let didDamageBlockThisFrame = false
 
+  // Apply smooth drop animation offset to hitboxes for laser interactions.
+  // Temporarily adjust positions to visual positions so hitboxes animate smoothly.
+  if (s.dropAnimOffset > 0) {
+    for (const b of s.blocks) {
+      b.pos.y -= s.dropAnimOffset
+    }
+    for (const f of s.features) {
+      f.pos.y -= s.dropAnimOffset
+    }
+  }
+
   // Range is effectively infinite (within the screen). Always cast far enough to cross the whole view.
   const maxDist = Math.hypot(s.view.width, s.view.height) * 1.35
   const beamRadius = Math.max(0, s.stats.beamWidth * 0.45)
@@ -754,6 +765,16 @@ export const stepSim = (s: RunState, dt: number) => {
   if (!didDamageBlockThisFrame) {
     s.weld.dwell = Math.max(0, s.weld.dwell - dt * 6.5)
     if (s.weld.dwell === 0) s.weld.blockId = -1
+  }
+
+  // Restore logical positions after laser computation.
+  if (s.dropAnimOffset > 0) {
+    for (const b of s.blocks) {
+      b.pos.y += s.dropAnimOffset
+    }
+    for (const f of s.features) {
+      f.pos.y += s.dropAnimOffset
+    }
   }
 }
 
