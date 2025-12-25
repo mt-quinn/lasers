@@ -25,6 +25,29 @@ const clampAimUpwards = (dir: Vec2) => {
   return normalize({ x, y })
 }
 
+// Helper functions for smooth drop animation hitbox adjustment
+const adjustPositionsForAnimation = (s: RunState) => {
+  if (s.dropAnimOffset > 0) {
+    for (const b of s.blocks) {
+      b.pos.y -= s.dropAnimOffset
+    }
+    for (const f of s.features) {
+      f.pos.y -= s.dropAnimOffset
+    }
+  }
+}
+
+const restoreLogicalPositions = (s: RunState) => {
+  if (s.dropAnimOffset > 0) {
+    for (const b of s.blocks) {
+      b.pos.y += s.dropAnimOffset
+    }
+    for (const f of s.features) {
+      f.pos.y += s.dropAnimOffset
+    }
+  }
+}
+
 export const stepSim = (s: RunState, dt: number) => {
   s.timeSec += dt
 
@@ -163,11 +186,22 @@ export const stepSim = (s: RunState, dt: number) => {
   const aimRaw = sub(s.reticle, s.emitter.pos)
   s.emitter.aimDir = clampAimUpwards(aimRaw)
 
-  // Global drop step.
+  // Global drop step with smooth animation.
   s.dropTimerSec -= dt
+  
+  // Smooth drop animation: continuously update the visual offset
+  if (s.dropAnimOffset > 0) {
+    // Animation in progress - advance the offset smoothly
+    const animSpeed = cellSize / s.dropAnimDuration
+    s.dropAnimOffset = Math.max(0, s.dropAnimOffset - animSpeed * dt)
+  }
+  
+  // When timer hits zero, start the animation by setting offset to full cellSize
   if (s.dropTimerSec <= 0) {
     const overshoot = Math.max(0, -s.dropTimerSec)
     s.dropTimerSec = s.dropIntervalSec - (overshoot % s.dropIntervalSec)
+    
+    // Snap logical positions forward immediately (physics/collision use this)
     s.depth += 1
     for (const b of s.blocks) {
       b.pos.y += b.cellSize
@@ -175,6 +209,9 @@ export const stepSim = (s: RunState, dt: number) => {
     for (const f of s.features) {
       f.pos.y += f.cellSize
     }
+    
+    // Start visual animation by setting offset to cellSize (will count down to 0)
+    s.dropAnimOffset = cellSize
   }
 
   // FX: update sparks + weld glows.
@@ -312,6 +349,10 @@ export const stepSim = (s: RunState, dt: number) => {
   s.laser.hitBlockId = null
 
   let didDamageBlockThisFrame = false
+
+  // Apply smooth drop animation offset to hitboxes for laser interactions.
+  // Temporarily adjust positions to visual positions so hitboxes animate smoothly.
+  adjustPositionsForAnimation(s)
 
   // Range is effectively infinite (within the screen). Always cast far enough to cross the whole view.
   const maxDist = Math.hypot(s.view.width, s.view.height) * 1.35
@@ -741,5 +782,8 @@ export const stepSim = (s: RunState, dt: number) => {
     s.weld.dwell = Math.max(0, s.weld.dwell - dt * 6.5)
     if (s.weld.dwell === 0) s.weld.blockId = -1
   }
+
+  // Restore logical positions after laser computation.
+  restoreLogicalPositions(s)
 }
 

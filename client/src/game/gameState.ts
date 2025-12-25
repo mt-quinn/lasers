@@ -39,6 +39,8 @@ const isValidSavedState = (x: unknown): x is SavedRunState => {
     Number.isFinite(obj.respiteSec) &&
     Number.isFinite(obj.dropIntervalSec) &&
     Number.isFinite(obj.dropTimerSec) &&
+    Number.isFinite(obj.dropAnimOffset) &&
+    Number.isFinite(obj.dropAnimDuration) &&
     typeof obj.stats === 'object' &&
     obj.stats !== null &&
     typeof obj.emitter === 'object' &&
@@ -84,6 +86,8 @@ export const saveGameState = (state: RunState) => {
       respiteSec: state.respiteSec,
       dropIntervalSec: state.dropIntervalSec,
       dropTimerSec: state.dropTimerSec,
+      dropAnimOffset: state.dropAnimOffset,
+      dropAnimDuration: state.dropAnimDuration,
       stats: state.stats,
       emitter: state.emitter,
       xp: state.xp,
