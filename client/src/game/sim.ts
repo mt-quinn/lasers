@@ -25,6 +25,29 @@ const clampAimUpwards = (dir: Vec2) => {
   return normalize({ x, y })
 }
 
+// Helper functions for smooth drop animation hitbox adjustment
+const adjustPositionsForAnimation = (s: RunState) => {
+  if (s.dropAnimOffset > 0) {
+    for (const b of s.blocks) {
+      b.pos.y -= s.dropAnimOffset
+    }
+    for (const f of s.features) {
+      f.pos.y -= s.dropAnimOffset
+    }
+  }
+}
+
+const restoreLogicalPositions = (s: RunState) => {
+  if (s.dropAnimOffset > 0) {
+    for (const b of s.blocks) {
+      b.pos.y += s.dropAnimOffset
+    }
+    for (const f of s.features) {
+      f.pos.y += s.dropAnimOffset
+    }
+  }
+}
+
 export const stepSim = (s: RunState, dt: number) => {
   s.timeSec += dt
 
@@ -329,14 +352,7 @@ export const stepSim = (s: RunState, dt: number) => {
 
   // Apply smooth drop animation offset to hitboxes for laser interactions.
   // Temporarily adjust positions to visual positions so hitboxes animate smoothly.
-  if (s.dropAnimOffset > 0) {
-    for (const b of s.blocks) {
-      b.pos.y -= s.dropAnimOffset
-    }
-    for (const f of s.features) {
-      f.pos.y -= s.dropAnimOffset
-    }
-  }
+  adjustPositionsForAnimation(s)
 
   // Range is effectively infinite (within the screen). Always cast far enough to cross the whole view.
   const maxDist = Math.hypot(s.view.width, s.view.height) * 1.35
@@ -768,13 +784,6 @@ export const stepSim = (s: RunState, dt: number) => {
   }
 
   // Restore logical positions after laser computation.
-  if (s.dropAnimOffset > 0) {
-    for (const b of s.blocks) {
-      b.pos.y += s.dropAnimOffset
-    }
-    for (const f of s.features) {
-      f.pos.y += s.dropAnimOffset
-    }
-  }
+  restoreLogicalPositions(s)
 }
 
