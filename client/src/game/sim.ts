@@ -510,8 +510,8 @@ export const stepSim = (s: RunState, dt: number) => {
       
       // For gold blocks, spawn multiple XP orbs with offsets and delays
       if (b.isGold && b.xpValue >= 5) {
-        const orbCount = 5
-        const xpPerOrb = (5 + s.stats.goldXpBonus) / 5 // distribute total XP evenly
+        const orbCount = b.xpValue
+        const xpPerOrb = b.xpValue / orbCount // distribute total XP evenly
         for (let i = 0; i < orbCount; i++) {
           const angle = (i / orbCount) * Math.PI * 2
           const radius = 8
