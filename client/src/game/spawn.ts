@@ -203,9 +203,9 @@ export const spawnPrismAt = (s: RunState, x: number, y: number) => {
   const cellSize = 40
   const r = cellSize * 0.36
   
-  // Prism exit configurations: pick 2-4 distinct offsets from the allowed set.
+  // Prism exit configurations: pick 2 distinct offsets from the allowed set.
   const allowed: number[] = [0, 15, -15, 45, -45, 90, -90]
-  const count = 2 + Math.floor(Math.random() * 3) // 2..4
+  const count = 2 // Always spawn with 2 outputs
   const exits: number[] = []
   while (exits.length < count) {
     const d = allowed[Math.floor(Math.random() * allowed.length)]!
