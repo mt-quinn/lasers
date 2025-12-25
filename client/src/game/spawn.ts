@@ -300,7 +300,7 @@ export const spawnBlock = (s: RunState) => {
   //
   // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
   // more slowly in real time (but stays consistent per “lines survived”).
-  const baseHp0 = 9
+  const baseHp0 = 14
   const dropsPerMinBaseline = 100
   const initialRate = 6
   const rateIncrement = 2
