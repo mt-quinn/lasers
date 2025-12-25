@@ -175,10 +175,10 @@ const spawnPrism = (s: RunState) => {
   const hPx = cellSize
   const placed = placeAabb(s, wPx, hPx)
 
-  // Prism exit configurations: pick 2-4 distinct offsets from the allowed set.
+  // Prism exit configurations: pick 2 distinct offsets from the allowed set.
   // These are *relative* to the incoming beam direction.
   const allowed: number[] = [0, 15, -15, 45, -45, 90, -90]
-  const count = 2 + Math.floor(Math.random() * 3) // 2..4
+  const count = 2 // Always spawn with 2 outputs
   const exits: number[] = []
   while (exits.length < count) {
     const d = allowed[Math.floor(Math.random() * allowed.length)]!
