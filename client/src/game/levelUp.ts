@@ -70,11 +70,21 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
 
   // Base upgrade types.
   for (const r of rarityOrder) push('damage', r)
-  for (const r of rarityOrder) push('bounceFalloff', r)
-  for (const r of rarityOrder) push('dropSlow', r)
+  
+  // Bounce degradation: only offer if below cap (0.95)
+  if (s.stats.bounceFalloff < 0.95) {
+    for (const r of rarityOrder) push('bounceFalloff', r)
+  }
+  
+  // Drop slow: only offer if below cap (3.0)
+  if (s.dropIntervalSec < 3.0) {
+    for (const r of rarityOrder) push('dropSlow', r)
+  }
 
-  // Bounces has no common tier (first tier is rare).
-  for (const r of ['rare', 'epic', 'legendary'] as const) push('bounces', r)
+  // Bounces has no common tier (first tier is rare), only offer if below cap (12)
+  if (s.stats.maxBounces < 12) {
+    for (const r of ['rare', 'epic', 'legendary'] as const) push('bounces', r)
+  }
 
   // Life is a rare-only offer, only while below max lives.
   if (s.lives < 3) push('life', 'rare')
@@ -142,7 +152,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
   }
   if (type === 'bounceFalloff') {
     const delta = rarity === 'common' ? 0.02 : rarity === 'rare' ? 0.04 : rarity === 'epic' ? 0.06 : 0.1
-    const next = s.stats.bounceFalloff + delta
+    const next = Math.min(0.95, s.stats.bounceFalloff + delta)
     return {
       type,
       rarity,
@@ -214,7 +224,7 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
   }
   if (offer.type === 'bounceFalloff') {
     const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
-    s.stats.bounceFalloff = s.stats.bounceFalloff + delta
+    s.stats.bounceFalloff = Math.min(0.95, s.stats.bounceFalloff + delta)
     return
   }
   if (offer.type === 'splitterChance') {
@@ -272,7 +282,7 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
   if (offer.type === 'bounceFalloff') {
     const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
     const beforeV = s.stats.bounceFalloff
-    const afterV = beforeV + delta
+    const afterV = Math.min(0.95, beforeV + delta)
     return {
       label: 'Mult',
       before: fmt(beforeV, 2),
