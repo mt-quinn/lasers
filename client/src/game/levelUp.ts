@@ -83,11 +83,13 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   if (s.lives < 3) push('life', 'rare')
 
   // Splitter chance: epic and legendary only
-  push('splitterChance', 'epic')
-  push('splitterChance', 'legendary')
+  // TODO: Move to new upgrade type
+  // push('splitterChance', 'epic')
+  // push('splitterChance', 'legendary')
 
   // No wall penalty: legendary only, one-time offer
-  if (!s.stats.noWallPenalty) push('noWallPenalty', 'legendary')
+  // TODO: Move to new upgrade type (Boundary Pass)
+  // if (!s.stats.noWallPenalty) push('noWallPenalty', 'legendary')
 
   // Extra choice: epic only, one-time offer
   if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
@@ -144,24 +146,26 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     }
   }
 
-  if (type === 'splitterChance') {
-    const add = rarity === 'epic' ? 0.01 : 0.03
-    const nextPct = Math.round((s.stats.splitterChance + add) * 100)
-    return {
-      type,
-      rarity,
-      title: 'Splitter Spawn',
-      description: `${nextPct}% chance destroyed pieces become splitters`,
-    }
-  }
-  if (type === 'noWallPenalty') {
-    return {
-      type,
-      rarity: 'legendary',
-      title: 'Boundary Pass',
-      description: 'Wall bounces no longer degrade or count as bounces',
-    }
-  }
+  // TODO: Move to new upgrade type
+  // if (type === 'splitterChance') {
+  //   const add = rarity === 'epic' ? 0.01 : 0.03
+  //   const nextPct = Math.round((s.stats.splitterChance + add) * 100)
+  //   return {
+  //     type,
+  //     rarity,
+  //     title: 'Splitter Spawn',
+  //     description: `${nextPct}% chance destroyed pieces become splitters`,
+  //   }
+  // }
+  // TODO: Move to new upgrade type
+  // if (type === 'noWallPenalty') {
+  //   return {
+  //     type,
+  //     rarity: 'legendary',
+  //     title: 'Boundary Pass',
+  //     description: 'Wall bounces no longer degrade or count as bounces',
+  //   }
+  // }
   if (type === 'extraChoice') {
     return {
       type,
@@ -207,15 +211,17 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     return
   }
 
-  if (offer.type === 'splitterChance') {
-    const add = r === 'epic' ? 0.01 : 0.03
-    s.stats.splitterChance = s.stats.splitterChance + add
-    return
-  }
-  if (offer.type === 'noWallPenalty') {
-    s.stats.noWallPenalty = true
-    return
-  }
+  // TODO: Move to new upgrade type
+  // if (offer.type === 'splitterChance') {
+  //   const add = r === 'epic' ? 0.01 : 0.03
+  //   s.stats.splitterChance = s.stats.splitterChance + add
+  //   return
+  // }
+  // TODO: Move to new upgrade type
+  // if (offer.type === 'noWallPenalty') {
+  //   s.stats.noWallPenalty = true
+  //   return
+  // }
   if (offer.type === 'extraChoice') {
     s.stats.extraChoices += 1
     return
@@ -260,25 +266,27 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
     return { label: 'Bounces', before: `${beforeV}`, after: `${afterV}`, delta: `+${afterV - beforeV}` }
   }
 
-  if (offer.type === 'splitterChance') {
-    const add = r === 'epic' ? 0.01 : 0.03
-    const beforePct = Math.round(s.stats.splitterChance * 100)
-    const afterPct = Math.round((s.stats.splitterChance + add) * 100)
-    return {
-      label: 'Splitter',
-      before: `${beforePct}%`,
-      after: `${afterPct}%`,
-      delta: `+${afterPct - beforePct}%`,
-    }
-  }
-  if (offer.type === 'noWallPenalty') {
-    return {
-      label: 'Wall',
-      before: 'Penalty',
-      after: 'Free',
-      delta: undefined,
-    }
-  }
+  // TODO: Move to new upgrade type
+  // if (offer.type === 'splitterChance') {
+  //   const add = r === 'epic' ? 0.01 : 0.03
+  //   const beforePct = Math.round(s.stats.splitterChance * 100)
+  //   const afterPct = Math.round((s.stats.splitterChance + add) * 100)
+  //   return {
+  //     label: 'Splitter',
+  //     before: `${beforePct}%`,
+  //     after: `${afterPct}%`,
+  //     delta: `+${afterPct - beforePct}%`,
+  //   }
+  // }
+  // TODO: Move to new upgrade type
+  // if (offer.type === 'noWallPenalty') {
+  //   return {
+  //     label: 'Wall',
+  //     before: 'Penalty',
+  //     after: 'Free',
+  //     delta: undefined,
+  //   }
+  // }
   if (offer.type === 'extraChoice') {
     const beforeV = 3 + s.stats.extraChoices
     const afterV = 3 + s.stats.extraChoices + 1
