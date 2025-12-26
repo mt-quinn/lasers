@@ -52,10 +52,6 @@ const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number):
   return items[items.length - 1]!.item
 }
 
-const rollRarity = (random: () => number, allowed?: Rarity[]): Rarity => {
-  const pool = (allowed ?? rarityOrder).map((r) => ({ item: r, weight: rarityWeight[r] }))
-  return pickWeighted(pool, random())
-}
 
 export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOffer[] => {
   // Universal pool: every upgrade offer lives in one weighted bag (weighted by rarity).
@@ -71,18 +67,15 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // Base upgrade types.
   for (const r of rarityOrder) push('damage', r)
   
-  // Bounce degradation: only offer if below cap (0.95)
-  if (s.stats.bounceFalloff < 0.95) {
-    for (const r of rarityOrder) push('bounceFalloff', r)
-  }
+
   
   // Drop slow: only offer if below cap (3.0)
   if (s.dropIntervalSec < 3.0) {
     for (const r of rarityOrder) push('dropSlow', r)
   }
 
-  // Bounces has no common tier (first tier is rare), only offer if below cap (12)
-  if (s.stats.maxBounces < 12) {
+  // Bounces has no common tier (first tier is rare), only offer if below cap (5)
+  if (s.stats.maxBounces < 5) {
     for (const r of ['rare', 'epic', 'legendary'] as const) push('bounces', r)
   }
 
@@ -150,16 +143,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
       description: `Increase maximum bounces by ${add}`,
     }
   }
-  if (type === 'bounceFalloff') {
-    const delta = rarity === 'common' ? 0.02 : rarity === 'rare' ? 0.04 : rarity === 'epic' ? 0.06 : 0.1
-    const next = Math.min(0.95, s.stats.bounceFalloff + delta)
-    return {
-      type,
-      rarity,
-      title: 'Bounce Degradation',
-      description: `Increase bounce multiplier to ${fmt(next, 2)} per bounce`,
-    }
-  }
+
   if (type === 'splitterChance') {
     const add = rarity === 'epic' ? 0.01 : 0.03
     const nextPct = Math.round((s.stats.splitterChance + add) * 100)
@@ -219,14 +203,10 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
   }
   if (offer.type === 'bounces') {
     const add = r === 'rare' ? 1 : r === 'epic' ? 2 : 3
-    s.stats.maxBounces = Math.min(12, s.stats.maxBounces + add)
+    s.stats.maxBounces = Math.min(5, s.stats.maxBounces + add)
     return
   }
-  if (offer.type === 'bounceFalloff') {
-    const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
-    s.stats.bounceFalloff = Math.min(0.95, s.stats.bounceFalloff + delta)
-    return
-  }
+
   if (offer.type === 'splitterChance') {
     const add = r === 'epic' ? 0.01 : 0.03
     s.stats.splitterChance = s.stats.splitterChance + add
@@ -276,20 +256,10 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
   if (offer.type === 'bounces') {
     const add = r === 'rare' ? 1 : r === 'epic' ? 2 : 3
     const beforeV = s.stats.maxBounces
-    const afterV = Math.min(12, beforeV + add)
+    const afterV = Math.min(5, beforeV + add)
     return { label: 'Bounces', before: `${beforeV}`, after: `${afterV}`, delta: `+${afterV - beforeV}` }
   }
-  if (offer.type === 'bounceFalloff') {
-    const delta = r === 'common' ? 0.02 : r === 'rare' ? 0.04 : r === 'epic' ? 0.06 : 0.1
-    const beforeV = s.stats.bounceFalloff
-    const afterV = Math.min(0.95, beforeV + delta)
-    return {
-      label: 'Mult',
-      before: fmt(beforeV, 2),
-      after: fmt(afterV, 2),
-      delta: `+${fmt(afterV - beforeV, 2)}`,
-    }
-  }
+
   if (offer.type === 'splitterChance') {
     const add = r === 'epic' ? 0.01 : 0.03
     const beforePct = Math.round(s.stats.splitterChance * 100)
