@@ -55,7 +55,7 @@ export type WeldGlow = {
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
-export type UpgradeType = 'damage' | 'bounces' | 'bounceFalloff' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade'
+export type UpgradeType = 'damage' | 'bounces' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade'
 
 export type UpgradeOffer = {
   type: UpgradeType
@@ -289,7 +289,7 @@ export const createInitialRunState = (): RunState => {
       beamGlowWidth: 20.4,
       maxBounces: 1,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
-      bounceFalloff: 0.75,
+      bounceFalloff: 0.85,
       splitterChance: 0,
       noWallPenalty: false,
       extraChoices: 0,
