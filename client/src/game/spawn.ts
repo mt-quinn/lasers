@@ -289,11 +289,11 @@ export const spawnBlock = (s: RunState) => {
   // mapped to minutes at the *baseline* drop interval.
   //
   // Target per-minute base HP increase schedule:
-  // - minute 0..1: +6 base HP
-  // - minute 1..2: +8 base HP
-  // - minute 2..3: +10 base HP
-  // - minute 3..4: +12 base HP
-  // - minute 4+: capped at +12 base HP per minute
+  // - minute 0..1: +10 base HP
+  // - minute 1..2: +12 base HP
+  // - minute 2..3: +14 base HP
+  // - minute 3..4: +16 base HP
+  // - minute 4+: capped at +16 base HP per minute
   //
   // We treat depth/100 as "minutes elapsed" and integrate that piecewise-linear rate.
   // This means health transitions happen every 100 drops instead of every 50 drops.
@@ -302,9 +302,9 @@ export const spawnBlock = (s: RunState) => {
   // more slowly in real time (but stays consistent per “lines survived”).
   const baseHp0 = 14
   const dropsPerMinBaseline = 100
-  const initialRate = 6
+  const initialRate = 10
   const rateIncrement = 2
-  const maxRate = 12
+  const maxRate = 16
   const minutes = Math.max(0, s.depth) / dropsPerMinBaseline
   const whole = Math.floor(minutes)
   const frac = minutes - whole
