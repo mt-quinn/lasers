@@ -104,7 +104,10 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
   // If bounce sacrifice is offered, provide 3 choices; otherwise only 2
-  const targetChoices = (shouldOfferBounceSacrifice ? BASE_CHOICES_WITH_BOUNCE_SACRIFICE : BASE_CHOICES_WITHOUT_BOUNCE_SACRIFICE) + s.stats.extraChoices
+  const baseChoices = shouldOfferBounceSacrifice 
+    ? BASE_CHOICES_WITH_BOUNCE_SACRIFICE 
+    : BASE_CHOICES_WITHOUT_BOUNCE_SACRIFICE
+  const targetChoices = baseChoices + s.stats.extraChoices
   while (chosen.size < targetChoices && safety++ < 500) {
     // Stop early if all possible upgrades have been exhausted.
     // This can happen if the player has maxed out most upgrade paths.
