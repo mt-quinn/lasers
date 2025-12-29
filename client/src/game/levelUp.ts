@@ -55,11 +55,8 @@ const pickWeighted = <T,>(items: Array<{ item: T; weight: number }>, r: number):
 
 export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOffer[] => {
   // Universal pool: every upgrade offer lives in one weighted bag (weighted by rarity).
-  // We dedupe by upgrade type by keeping the rarest roll for that type, then keep rolling
-  // until we have 3 distinct types.
-
-  const rarityRank = (r: Rarity) => rarityOrder.indexOf(r) // common=0 .. legendary=3
-  const isRarer = (a: Rarity, b: Rarity) => rarityRank(a) > rarityRank(b)
+  // We roll upgrades from the pool, and after each roll we remove all instances of that
+  // upgrade type from the pool to ensure each upgrade type appears at most once.
 
   const offerPool: Array<{ type: UpgradeType; rarity: Rarity; weight: number }> = []
   const push = (type: UpgradeType, rarity: Rarity) => offerPool.push({ type, rarity, weight: rarityWeight[rarity] })
@@ -97,20 +94,24 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
   if (s.stats.maxBounces > 1) push('bounceTrade', 'legendary')
 
-  const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
-
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
   const targetChoices = 3 + s.stats.extraChoices
   while (chosen.size < targetChoices && safety++ < 500) {
+    if (offerPool.length === 0) break
+    
+    const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
     const seed = pickOfferSeed()
     const next = buildOffer(seed.type, seed.rarity, s)
-    const cur = chosen.get(next.type)
-    if (!cur) {
-      chosen.set(next.type, next)
-      continue
-    }
-    if (isRarer(next.rarity, cur.rarity)) chosen.set(next.type, next)
+    
+    // Add the upgrade and remove all instances of this type from the pool
+    // so it can't be rolled again at a different rarity.
+    chosen.set(next.type, next)
+    
+    // Remove all offers of this type from the pool
+    const remainingOffers = offerPool.filter(o => o.type !== next.type)
+    offerPool.length = 0
+    offerPool.push(...remainingOffers)
   }
 
   return Array.from(chosen.values()).slice(0, targetChoices)
