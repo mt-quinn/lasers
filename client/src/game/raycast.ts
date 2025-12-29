@@ -308,31 +308,35 @@ const raycastSceneWalls = (
   let bestT = Infinity
   let best: SceneHit | null = null
 
-  const consider = (t: number, nx: number, ny: number) => {
+  const consider = (t: number, nx: number, ny: number, wallId: number) => {
     if (t < minT || t > maxDist) return
     if (t >= bestT) return
     const point = add(o, mul(d, t))
     const eps = 1e-3
     if (point.x < -eps || point.x > w + eps || point.y < -eps || point.y > h + eps) return
     bestT = t
-    best = { t, point, normal: normalize({ x: nx, y: ny }), kind: 'wall', id: -1 }
+    best = { t, point, normal: normalize({ x: nx, y: ny }), kind: 'wall', id: wallId }
   }
 
+  // Left wall x=0 (normal +X)
   if (Math.abs(d.x) > 1e-9 && d.x < 0) {
     const t = (0 - o.x) / d.x
-    consider(t, 1, 0)
+    consider(t, 1, 0, -1)
   }
+  // Right wall x=w (normal -X)
   if (Math.abs(d.x) > 1e-9 && d.x > 0) {
     const t = (w - o.x) / d.x
-    consider(t, -1, 0)
+    consider(t, -1, 0, -2)
   }
+  // Top wall y=0 (normal +Y)
   if (Math.abs(d.y) > 1e-9 && d.y < 0) {
     const t = (0 - o.y) / d.y
-    consider(t, 0, 1)
+    consider(t, 0, 1, -3)
   }
+  // Bottom wall y=h (normal -Y) - the back wall behind the emitter
   if (Math.abs(d.y) > 1e-9 && d.y > 0) {
     const t = (h - o.y) / d.y
-    consider(t, 0, -1)
+    consider(t, 0, -1, -4)
   }
 
   return best
@@ -536,7 +540,7 @@ const raycastWalls = (
   let bestT = Infinity
   let best: RayHit | null = null
 
-  const consider = (t: number, nx: number, ny: number) => {
+  const consider = (t: number, nx: number, ny: number, wallId: number) => {
     if (t < minT || t > maxDist) return
     if (t >= bestT) return
     const p = add(o, mul(d, t))
@@ -544,28 +548,28 @@ const raycastWalls = (
     const eps = 1e-3
     if (p.x < -eps || p.x > w + eps || p.y < -eps || p.y > h + eps) return
     bestT = t
-    best = { t, point: p, normal: normalize({ x: nx, y: ny }), blockId: -1 }
+    best = { t, point: p, normal: normalize({ x: nx, y: ny }), blockId: wallId }
   }
 
   // Left wall x=0 (normal +X)
   if (Math.abs(d.x) > 1e-9 && d.x < 0) {
     const t = (0 - o.x) / d.x
-    consider(t, 1, 0)
+    consider(t, 1, 0, -1)
   }
   // Right wall x=w (normal -X)
   if (Math.abs(d.x) > 1e-9 && d.x > 0) {
     const t = (w - o.x) / d.x
-    consider(t, -1, 0)
+    consider(t, -1, 0, -2)
   }
   // Top wall y=0 (normal +Y)
   if (Math.abs(d.y) > 1e-9 && d.y < 0) {
     const t = (0 - o.y) / d.y
-    consider(t, 0, 1)
+    consider(t, 0, 1, -3)
   }
-  // Bottom wall y=h (normal -Y)
+  // Bottom wall y=h (normal -Y) - the back wall behind the emitter
   if (Math.abs(d.y) > 1e-9 && d.y > 0) {
     const t = (h - o.y) / d.y
-    consider(t, 0, -1)
+    consider(t, 0, -1, -4)
   }
 
   return best
