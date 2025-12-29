@@ -9,6 +9,10 @@ const rarityWeight: Record<Rarity, number> = {
   legendary: 1,
 }
 
+const BOUNCE_SACRIFICE_APPEARANCE_RATE = 0.01
+const BASE_CHOICES_WITH_BOUNCE_SACRIFICE = 3
+const BASE_CHOICES_WITHOUT_BOUNCE_SACRIFICE = 2
+
 const rarityColor: Record<Rarity, string> = {
   common: '#d7d7d7',
   rare: '#6ec6ff',
@@ -59,7 +63,7 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // upgrade type from the pool to ensure each upgrade type appears at most once.
 
   // Special handling for Bounce Sacrifice: roll 1% chance before building pool
-  const shouldOfferBounceSacrifice = s.stats.maxBounces > 0 && random() < 0.01
+  const shouldOfferBounceSacrifice = s.stats.maxBounces > 0 && random() < BOUNCE_SACRIFICE_APPEARANCE_RATE
 
   const offerPool: Array<{ type: UpgradeType; rarity: Rarity; weight: number }> = []
   const push = (type: UpgradeType, rarity: Rarity) => offerPool.push({ type, rarity, weight: rarityWeight[rarity] })
@@ -100,7 +104,7 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
   // If bounce sacrifice is offered, provide 3 choices; otherwise only 2
-  const targetChoices = (shouldOfferBounceSacrifice ? 3 : 2) + s.stats.extraChoices
+  const targetChoices = (shouldOfferBounceSacrifice ? BASE_CHOICES_WITH_BOUNCE_SACRIFICE : BASE_CHOICES_WITHOUT_BOUNCE_SACRIFICE) + s.stats.extraChoices
   while (chosen.size < targetChoices && safety++ < 500) {
     // Stop early if all possible upgrades have been exhausted.
     // This can happen if the player has maxed out most upgrade paths.
