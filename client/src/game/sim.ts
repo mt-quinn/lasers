@@ -175,6 +175,15 @@ export const stepSim = (s: RunState, dt: number) => {
     s.tutorialMovedEmitter = true
   }
 
+  // Apply light smoothing to touch reticle movement for precision control.
+  // Use a gentle lerp factor to reduce jumpiness without losing responsiveness.
+  const reticleSmoothFactor = 0.35
+  s.reticle = lerpVec(
+    s.reticle,
+    { x: s.input.reticleTargetX, y: s.input.reticleTargetY },
+    reticleSmoothFactor
+  )
+
   // Keep the reticle in a physically-aimable region (above the emitter) so
   // we can aim *exactly* at it without introducing non-physical clamps.
   if (s.reticle.y > emitterY - MIN_RETICLE_GAP) {
