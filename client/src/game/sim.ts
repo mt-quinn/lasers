@@ -702,6 +702,10 @@ export const stepSim = (s: RunState, dt: number) => {
             continue
           }
           if (stepHit.kind === 'mirror' || stepHit.kind === 'wall') {
+            // Bottom wall (id -4) doesn't reflect - laser terminates
+            const isBottomWall = stepHit.kind === 'wall' && stepHit.id === -4
+            if (isBottomWall) break
+            
             // Wall bounces: apply penalty unless noWallPenalty upgrade is active
             const isWall = stepHit.kind === 'wall'
             const skipPenalty = isWall && s.stats.noWallPenalty
@@ -752,6 +756,10 @@ export const stepSim = (s: RunState, dt: number) => {
       }
 
       if (hit.kind === 'mirror' || hit.kind === 'wall') {
+        // Bottom wall (id -4) doesn't reflect - laser terminates
+        const isBottomWall = hit.kind === 'wall' && hit.id === -4
+        if (isBottomWall) break
+        
         // Wall bounces: apply penalty unless noWallPenalty upgrade is active
         const isWall = hit.kind === 'wall'
         const skipPenalty = isWall && s.stats.noWallPenalty
