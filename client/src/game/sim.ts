@@ -697,7 +697,8 @@ export const stepSim = (s: RunState, dt: number) => {
             d = normalize(reflect(d, stepHit.normal))
             intensity *= s.stats.bounceFalloff
             bouncesLeft -= 1
-            o = add(stepHit.point, mul(d, EPS + beamRadius))
+            // Offset along the normal to ensure we start outside the surface, especially at acute angles
+            o = add(stepHit.point, mul(stepHit.normal, EPS + beamRadius))
             minT = EPS + beamRadius * 0.75
             continue
           }
@@ -715,7 +716,8 @@ export const stepSim = (s: RunState, dt: number) => {
               intensity *= s.stats.bounceFalloff
               bouncesLeft -= 1
             }
-            o = add(stepHit.point, mul(d, EPS + beamRadius))
+            // Offset along the normal to ensure we start outside the surface, especially at acute angles
+            o = add(stepHit.point, mul(stepHit.normal, EPS + beamRadius))
             minT = EPS + beamRadius * 0.75
             continue
           }
@@ -749,7 +751,8 @@ export const stepSim = (s: RunState, dt: number) => {
         d = normalize(reflect(d, hit.normal))
         intensity *= s.stats.bounceFalloff
         bouncesLeft -= 1
-        o = add(hit.point, mul(d, EPS + beamRadius))
+        // Offset along the normal to ensure we start outside the surface, especially at acute angles
+        o = add(hit.point, mul(hit.normal, EPS + beamRadius))
         minT = EPS + beamRadius * 0.75
         continue
       }
@@ -768,7 +771,8 @@ export const stepSim = (s: RunState, dt: number) => {
           intensity *= s.stats.bounceFalloff
           bouncesLeft -= 1
         }
-        o = add(hit.point, mul(d, EPS + beamRadius))
+        // Offset along the normal to ensure we start outside the surface, especially at acute angles
+        o = add(hit.point, mul(hit.normal, EPS + beamRadius))
         minT = EPS + beamRadius * 0.75
         continue
       }
