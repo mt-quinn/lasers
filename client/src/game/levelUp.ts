@@ -98,6 +98,8 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   let safety = 0
   const targetChoices = 3 + s.stats.extraChoices
   while (chosen.size < targetChoices && safety++ < 500) {
+    // Stop early if all possible upgrades have been exhausted.
+    // This can happen if the player has maxed out most upgrade paths.
     if (offerPool.length === 0) break
     
     const pickOfferSeed = () => pickWeighted(offerPool.map((o) => ({ item: o, weight: o.weight })), random())
@@ -108,10 +110,12 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
     // so it can't be rolled again at a different rarity.
     chosen.set(next.type, next)
     
-    // Remove all offers of this type from the pool
-    const remainingOffers = offerPool.filter(o => o.type !== next.type)
-    offerPool.length = 0
-    offerPool.push(...remainingOffers)
+    // Remove all offers of this type from the pool (more efficient than filter + spread)
+    for (let i = offerPool.length - 1; i >= 0; i--) {
+      if (offerPool[i]!.type === next.type) {
+        offerPool.splice(i, 1)
+      }
+    }
   }
 
   return Array.from(chosen.values()).slice(0, targetChoices)
