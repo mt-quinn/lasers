@@ -157,6 +157,10 @@ export type InputState = {
 
   keyLeft: boolean
   keyRight: boolean
+
+  // Target reticle position for smoothing touch input
+  reticleTargetX: number
+  reticleTargetY: number
 }
 
 export type LaserState = {
@@ -263,6 +267,8 @@ export const createInitialRunState = (): RunState => {
       moveY: 0,
       keyLeft: false,
       keyRight: false,
+      reticleTargetX: 180,
+      reticleTargetY: 220,
     },
     timeSec: 0,
     blocksDestroyed: 0,

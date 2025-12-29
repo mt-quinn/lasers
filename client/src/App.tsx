@@ -157,6 +157,8 @@ export default function App() {
           s.input.aimActive = true
           s.input.aimX = local.x
           s.input.aimY = local.y
+          s.input.reticleTargetX = local.x
+          s.input.reticleTargetY = local.y
         } else {
           s.input.movePointerId = e.pointerId
           s.input.moveActive = true
@@ -186,9 +188,11 @@ export default function App() {
         const inside =
           local.x >= 0 && local.x <= local.w && local.y >= 0 && local.y <= local.h
         if (inside) {
-          // Reticle follows mouse while inside; stays where it was when you leave.
+          // Mouse follows instantly for responsive desktop UX
           s.reticle.x = local.x
           s.reticle.y = local.y
+          s.input.reticleTargetX = local.x
+          s.input.reticleTargetY = local.y
         }
       }
 
@@ -196,9 +200,9 @@ export default function App() {
         s.input.aimActive = true
         s.input.aimX = local.x
         s.input.aimY = local.y
-        // Touch/stylus aim updates reticle; reticle remains stationary after release.
-        s.reticle.x = local.x
-        s.reticle.y = local.y
+        // Touch/stylus aim updates target; smoothing applied in sim
+        s.input.reticleTargetX = local.x
+        s.input.reticleTargetY = local.y
       }
       if (s.input.movePointerId === e.pointerId) {
         s.input.moveActive = true
@@ -342,6 +346,8 @@ export default function App() {
       s.input.moveY = clamp(s.input.moveY, 0, h)
       s.input.aimX = clamp(s.input.aimX, 0, w)
       s.input.aimY = clamp(s.input.aimY, 0, h)
+      s.input.reticleTargetX = clamp(s.input.reticleTargetX, 0, w)
+      s.input.reticleTargetY = clamp(s.input.reticleTargetY, 0, Math.min(h, layout.emitterY - MIN_RETICLE_GAP))
     }
 
     resize()

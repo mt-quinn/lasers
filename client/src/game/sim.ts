@@ -13,6 +13,8 @@ const MAX_GLOWS = 24
 const MAX_RAYS = 24
 const MAX_SEGMENTS = 180
 const MAX_CURVE_STEPS = 260
+// Smoothing factor for input controls (emitter and reticle) - higher values = more responsive
+const INPUT_SMOOTH_FACTOR = 0.35
 
 const clampAimUpwards = (dir: Vec2) => {
   // Ensure we're aiming at least somewhat upward.
@@ -170,10 +172,17 @@ export const stepSim = (s: RunState, dt: number) => {
   targetX = clamp(targetX, SLIDER_PAD, s.view.width - SLIDER_PAD)
 
   const prevEmitterX = s.emitter.pos.x
-  s.emitter.pos = lerpVec(s.emitter.pos, { x: targetX, y: emitterY }, 0.35)
+  s.emitter.pos = lerpVec(s.emitter.pos, { x: targetX, y: emitterY }, INPUT_SMOOTH_FACTOR)
   if (!s.tutorialMovedEmitter && Math.abs(s.emitter.pos.x - prevEmitterX) > 0.5) {
     s.tutorialMovedEmitter = true
   }
+
+  // Apply light smoothing to touch reticle movement for precision control.
+  s.reticle = lerpVec(
+    s.reticle,
+    { x: s.input.reticleTargetX, y: s.input.reticleTargetY },
+    INPUT_SMOOTH_FACTOR
+  )
 
   // Keep the reticle in a physically-aimable region (above the emitter) so
   // we can aim *exactly* at it without introducing non-physical clamps.
