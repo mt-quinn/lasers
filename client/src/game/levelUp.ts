@@ -143,20 +143,22 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
   }
   if (type === 'bounces') {
     // Downgrade to least rare version that still meets the cap (5)
+    // Note: This upgrade is only offered when current < cap, so needed is always > 0
     const cap = 5
     const current = s.stats.maxBounces
     const needed = cap - current
     
     // Determine the appropriate rarity based on what's needed
+    // rare: +1, epic: +2, legendary: +3
     let effectiveRarity = rarity
     if (needed <= 1) {
-      // If we only need 1 or less, use rare (+1)
+      // If we only need 1, use rare (+1)
       effectiveRarity = 'rare'
     } else if (needed <= 2) {
-      // If we need 2 or less, use at most epic (+2)
+      // If we need 2, use at most epic (+2)
       if (rarity === 'legendary') effectiveRarity = 'epic'
     }
-    // If needed >= 3, keep legendary
+    // If needed >= 3, keep the original rarity
     
     const add = effectiveRarity === 'rare' ? 1 : effectiveRarity === 'epic' ? 2 : 3
     return {
@@ -206,23 +208,25 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
   }
   // dropSlow
   // Downgrade to least rare version that still meets the cap (3.0)
+  // Note: This upgrade is only offered when current < cap, so needed is always > 0
   const cap = 3.0
   const current = s.dropIntervalSec
   const needed = cap - current
   
   // Determine the appropriate rarity based on what's needed
+  // common: +0.1, rare: +0.2, epic: +0.3, legendary: +0.5
   let effectiveRarity = rarity
   if (needed <= 0.1) {
-    // If we only need 0.1 or less, use common (+0.1)
+    // If we only need 0.1, use common (+0.1)
     effectiveRarity = 'common'
   } else if (needed <= 0.2) {
-    // If we need 0.2 or less, use at most rare (+0.2)
+    // If we need 0.2, use at most rare (+0.2)
     if (rarity === 'epic' || rarity === 'legendary') effectiveRarity = 'rare'
   } else if (needed <= 0.3) {
-    // If we need 0.3 or less, use at most epic (+0.3)
+    // If we need 0.3, use at most epic (+0.3)
     if (rarity === 'legendary') effectiveRarity = 'epic'
   }
-  // If needed >= 0.5, keep legendary
+  // If needed > 0.3, keep the original rarity
   
   const add = effectiveRarity === 'common' ? 0.1 : effectiveRarity === 'rare' ? 0.2 : effectiveRarity === 'epic' ? 0.3 : 0.5
   const next = Math.min(3.0, s.dropIntervalSec + add)
