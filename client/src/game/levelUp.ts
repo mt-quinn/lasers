@@ -92,7 +92,7 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
 
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
-  if (s.stats.maxBounces > 1) push('bounceTrade', 'legendary')
+  if (s.stats.maxBounces > 0) push('bounceTrade', 'legendary')
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
@@ -180,7 +180,7 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
     }
   }
   if (type === 'bounceTrade') {
-    const dpsGain = s.stats.maxBounces * 10
+    const dpsGain = s.stats.maxBounces * 3
     return {
       type,
       rarity: 'legendary',
@@ -232,9 +232,9 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
     return
   }
   if (offer.type === 'bounceTrade') {
-    const dpsGain = s.stats.maxBounces * 10
+    const dpsGain = s.stats.maxBounces * 3
     s.stats.dps = Math.round(s.stats.dps + dpsGain)
-    s.stats.maxBounces = 1
+    s.stats.maxBounces = 0
     return
   }
   // dropSlow
@@ -303,7 +303,7 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
     }
   }
   if (offer.type === 'bounceTrade') {
-    const dpsGain = s.stats.maxBounces * 10
+    const dpsGain = s.stats.maxBounces * 3
     const beforeDps = Math.round(s.stats.dps)
     const afterDps = Math.round(s.stats.dps + dpsGain)
     return {
