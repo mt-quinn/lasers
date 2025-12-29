@@ -582,20 +582,18 @@ export const stepSim = (s: RunState, dt: number) => {
 
     for (let guard = 0; guard < 64 && s.laser.segments.length < MAX_SEGMENTS; guard++) {
       // If we will enter a black hole influence region before the next solid hit, switch into curved integration.
+      // Important: Only check the center ray for influence entry, not the offset rays. This prevents
+      // tangential passes from being incorrectly terminated when offset rays clip the influence circle
+      // but the center ray doesn't actually hit the core.
       let enterT: number | null = null
       if (holeInfos.length > 0) {
-        const perp = normalize({ x: -d.y, y: d.x })
-        const offsets = beamRadius <= 0.01 ? [0] : [0, -beamRadius, beamRadius]
         for (const h of holeInfos) {
           if (h.maxY < 0) continue
-          for (const off of offsets) {
-            const oo = off === 0 ? o : add(o, mul(perp, off))
-            const tEnter = rayCircleEnterT(oo, d, h.c, h.rInf)
-            if (tEnter == null) continue
-            if (tEnter < minT) continue
-            if (tEnter > maxDist) continue
-            if (enterT == null || tEnter < enterT) enterT = tEnter
-          }
+          const tEnter = rayCircleEnterT(o, d, h.c, h.rInf)
+          if (tEnter == null) continue
+          if (tEnter < minT) continue
+          if (tEnter > maxDist) continue
+          if (enterT == null || tEnter < enterT) enterT = tEnter
         }
       }
 
