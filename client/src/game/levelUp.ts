@@ -89,7 +89,7 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // if (!s.stats.noWallPenalty) push('noWallPenalty', 'legendary')
 
   // Extra choice: epic only, one-time offer
-  if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
+  // if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
 
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
   if (s.stats.maxBounces > 1) push('bounceTrade', 'legendary')
@@ -171,14 +171,14 @@ const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffe
   //     description: 'Wall bounces no longer degrade or count as bounces',
   //   }
   // }
-  if (type === 'extraChoice') {
-    return {
-      type,
-      rarity: 'epic',
-      title: 'Extra Choice',
-      description: 'Gain +1 upgrade choice on every level-up',
-    }
-  }
+  // if (type === 'extraChoice') {
+  //   return {
+  //     type,
+  //     rarity: 'epic',
+  //     title: 'Extra Choice',
+  //     description: 'Gain +1 upgrade choice on every level-up',
+  //   }
+  // }
   if (type === 'bounceTrade') {
     const dpsGain = s.stats.maxBounces * 10
     return {
@@ -227,10 +227,10 @@ export const applyOffer = (s: RunState, offer: UpgradeOffer) => {
   //   s.stats.noWallPenalty = true
   //   return
   // }
-  if (offer.type === 'extraChoice') {
-    s.stats.extraChoices += 1
-    return
-  }
+  // if (offer.type === 'extraChoice') {
+  //   s.stats.extraChoices += 1
+  //   return
+  // }
   if (offer.type === 'bounceTrade') {
     const dpsGain = s.stats.maxBounces * 10
     s.stats.dps = Math.round(s.stats.dps + dpsGain)
@@ -292,16 +292,16 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
   //     delta: undefined,
   //   }
   // }
-  if (offer.type === 'extraChoice') {
-    const beforeV = 3 + s.stats.extraChoices
-    const afterV = 3 + s.stats.extraChoices + 1
-    return {
-      label: 'Choices',
-      before: `${beforeV}`,
-      after: `${afterV}`,
-      delta: '+1',
-    }
-  }
+  // if (offer.type === 'extraChoice') {
+  //   const beforeV = 3 + s.stats.extraChoices
+  //   const afterV = 3 + s.stats.extraChoices + 1
+  //   return {
+  //     label: 'Choices',
+  //     before: `${beforeV}`,
+  //     after: `${afterV}`,
+  //     delta: '+1',
+  //   }
+  // }
   if (offer.type === 'bounceTrade') {
     const dpsGain = s.stats.maxBounces * 10
     const beforeDps = Math.round(s.stats.dps)
