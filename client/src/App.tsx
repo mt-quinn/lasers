@@ -125,6 +125,8 @@ export default function App() {
 
   // Pointer input: touch anywhere -> slider position + aim direction.
   useEffect(() => {
+    const RETICLE_FREEZE_THRESHOLD_PX = 5 // pixels of movement to consider it unique input
+
     const getLocal = (e: PointerEvent) => {
       const canvas = canvasRef.current
       if (!canvas) return null
@@ -144,10 +146,23 @@ export default function App() {
       return localY >= layout.failY ? 'move' : 'aim'
     }
 
+    // Check if we need to unfreeze reticle based on unique input
+    const checkAndUnfreezeReticle = (s: RunState, localX: number, localY: number) => {
+      if (s.input.freezeReticleUntilNextInput && !s.levelUpActive) {
+        const dx = Math.abs(localX - s.input.frozenReticleX)
+        const dy = Math.abs(localY - s.input.frozenReticleY)
+        if (dx > RETICLE_FREEZE_THRESHOLD_PX || dy > RETICLE_FREEZE_THRESHOLD_PX) {
+          s.input.freezeReticleUntilNextInput = false
+        }
+      }
+    }
+
     const onPointerDown = (e: PointerEvent) => {
       const s = stateRef.current
       const local = getLocal(e)
       if (!local) return
+
+      checkAndUnfreezeReticle(s, local.x, local.y)
 
       const preferredRole = pickRoleForPointerDown(local.y, s)
 
@@ -157,8 +172,10 @@ export default function App() {
           s.input.aimActive = true
           s.input.aimX = local.x
           s.input.aimY = local.y
-          s.input.reticleTargetX = local.x
-          s.input.reticleTargetY = local.y
+          if (!s.input.freezeReticleUntilNextInput) {
+            s.input.reticleTargetX = local.x
+            s.input.reticleTargetY = local.y
+          }
         } else {
           s.input.movePointerId = e.pointerId
           s.input.moveActive = true
@@ -182,12 +199,14 @@ export default function App() {
       const local = getLocal(e)
       if (!local) return
 
+      checkAndUnfreezeReticle(s, local.x, local.y)
+
       // Desktop UX: while the mouse is inside the play area, aim should track
       // the cursor continuously (no click needed).
       if (e.pointerType === 'mouse') {
         const inside =
           local.x >= 0 && local.x <= local.w && local.y >= 0 && local.y <= local.h
-        if (inside) {
+        if (inside && !s.input.freezeReticleUntilNextInput) {
           // Mouse follows instantly for responsive desktop UX
           s.reticle.x = local.x
           s.reticle.y = local.y
@@ -201,8 +220,10 @@ export default function App() {
         s.input.aimX = local.x
         s.input.aimY = local.y
         // Touch/stylus aim updates target; smoothing applied in sim
-        s.input.reticleTargetX = local.x
-        s.input.reticleTargetY = local.y
+        if (!s.input.freezeReticleUntilNextInput) {
+          s.input.reticleTargetX = local.x
+          s.input.reticleTargetY = local.y
+        }
       }
       if (s.input.movePointerId === e.pointerId) {
         s.input.moveActive = true

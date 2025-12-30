@@ -298,6 +298,10 @@ export const stepSim = (s: RunState, dt: number) => {
     s.paused = true
     s.pendingLevelUps -= 1
     s.levelUpOptions = rollUpgradeOptions(s, Math.random)
+    // Freeze reticle aim until player makes next unique input
+    s.input.freezeReticleUntilNextInput = true
+    s.input.frozenReticleX = s.input.reticleTargetX
+    s.input.frozenReticleY = s.input.reticleTargetY
   }
 
   // Fail line sits just above the bottom rail.
