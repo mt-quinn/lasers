@@ -377,6 +377,8 @@
   width: 100%;
   height: 100%;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Upgrades UI: high-polish three-card chooser. */
