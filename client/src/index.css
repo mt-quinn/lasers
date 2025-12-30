@@ -33,6 +33,8 @@ body {
   overflow: hidden;
   touch-action: none;
   overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
   background:
     radial-gradient(circle at 10% 0%, rgba(130, 90, 255, 0.35), transparent 55%),
     radial-gradient(circle at 90% 100%, rgba(255, 120, 200, 0.25), transparent 55%),
