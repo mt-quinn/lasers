@@ -148,7 +148,7 @@ export default function App() {
 
     // Check if we need to unfreeze reticle based on unique input
     const checkAndUnfreezeReticle = (s: RunState, localX: number, localY: number) => {
-      if (s.input.freezeReticleUntilNextInput) {
+      if (s.input.freezeReticleUntilNextInput && !s.levelUpActive) {
         const dx = Math.abs(localX - s.input.frozenReticleX)
         const dy = Math.abs(localY - s.input.frozenReticleY)
         if (dx > RETICLE_FREEZE_THRESHOLD_PX || dy > RETICLE_FREEZE_THRESHOLD_PX) {
