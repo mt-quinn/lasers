@@ -95,11 +95,12 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
 
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
-  if (s.stats.maxBounces > 0) push('bounceTrade', 'legendary')
+  const shouldCheckBounceSacrifice = s.stats.maxBounces > 0
+  if (shouldCheckBounceSacrifice) push('bounceTrade', 'legendary')
 
-  // Count unique upgrade types in the pool for special bounce sacrifice handling
-  const uniqueTypes = new Set(offerPool.map(o => o.type))
-  const poolHasExactlyThreeTypes = uniqueTypes.size === 3
+  // Count unique upgrade types in the pool for special bounce sacrifice handling.
+  // This is calculated from the initial pool before rolling, capturing what types are available.
+  const poolHasExactlyThreeTypes = shouldCheckBounceSacrifice && new Set(offerPool.map(o => o.type)).size === 3
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
