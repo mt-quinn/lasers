@@ -11,7 +11,6 @@ const rarityWeight: Record<Rarity, number> = {
 
 const BOUNCE_SACRIFICE_APPEARANCE_RATE = 0.01
 const BASE_CHOICES_WITH_BOUNCE_SACRIFICE = 3
-const BASE_CHOICES_WITHOUT_BOUNCE_SACRIFICE = 2
 
 const rarityColor: Record<Rarity, string> = {
   common: '#d7d7d7',
@@ -62,9 +61,6 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // We roll upgrades from the pool, and after each roll we remove all instances of that
   // upgrade type from the pool to ensure each upgrade type appears at most once.
 
-  // Special handling for Bounce Sacrifice: roll 1% chance before building pool
-  const shouldOfferBounceSacrifice = s.stats.maxBounces > 0 && random() < BOUNCE_SACRIFICE_APPEARANCE_RATE
-
   const offerPool: Array<{ type: UpgradeType; rarity: Rarity; weight: number }> = []
   const push = (type: UpgradeType, rarity: Rarity) => offerPool.push({ type, rarity, weight: rarityWeight[rarity] })
 
@@ -98,14 +94,17 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // Extra choice: epic only, one-time offer
   // if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
 
-  // Bounce trade: only add to pool if the 1% roll succeeded
-  if (shouldOfferBounceSacrifice) push('bounceTrade', 'legendary')
+  // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
+  if (s.stats.maxBounces > 0) push('bounceTrade', 'legendary')
+
+  // Count unique upgrade types in the pool
+  const uniqueTypes = new Set(offerPool.map(o => o.type))
+  const poolHasThreeTypes = uniqueTypes.size === 3
+  const poolHasBounceTrade = uniqueTypes.has('bounceTrade')
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
-  // If bounce sacrifice is offered, provide 3 choices; otherwise only 2
-  const baseChoices = shouldOfferBounceSacrifice ? BASE_CHOICES_WITH_BOUNCE_SACRIFICE : BASE_CHOICES_WITHOUT_BOUNCE_SACRIFICE
-  const targetChoices = baseChoices + s.stats.extraChoices
+  const targetChoices = BASE_CHOICES_WITH_BOUNCE_SACRIFICE + s.stats.extraChoices
   while (chosen.size < targetChoices && safety++ < 500) {
     // Stop early if all possible upgrades have been exhausted.
     // This can happen if the player has maxed out most upgrade paths.
@@ -127,7 +126,17 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
     }
   }
 
-  return Array.from(chosen.values()).slice(0, targetChoices)
+  // Special handling for Bounce Sacrifice when pool is limited:
+  // When the pool has exactly 3 upgrade types and one is bounceTrade,
+  // apply a 1% chance for it to actually appear. If it fails the check,
+  // remove it so only 2 upgrades are shown (befitting its legendary rarity).
+  if (poolHasThreeTypes && poolHasBounceTrade && chosen.has('bounceTrade')) {
+    if (random() >= BOUNCE_SACRIFICE_APPEARANCE_RATE) {
+      chosen.delete('bounceTrade')
+    }
+  }
+
+  return Array.from(chosen.values())
 }
 
 const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffer => {
