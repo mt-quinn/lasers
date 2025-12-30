@@ -97,10 +97,9 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
   if (s.stats.maxBounces > 0) push('bounceTrade', 'legendary')
 
-  // Count unique upgrade types in the pool
+  // Count unique upgrade types in the pool for special bounce sacrifice handling
   const uniqueTypes = new Set(offerPool.map(o => o.type))
-  const poolHasThreeTypes = uniqueTypes.size === 3
-  const poolHasBounceTrade = uniqueTypes.has('bounceTrade')
+  const poolHasExactlyThreeTypes = uniqueTypes.size === 3
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
@@ -127,10 +126,10 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   }
 
   // Special handling for Bounce Sacrifice when pool is limited:
-  // When the pool has exactly 3 upgrade types and one is bounceTrade,
+  // When the pool has exactly 3 upgrade types and bounceTrade was chosen,
   // apply a 1% chance for it to actually appear. If it fails the check,
   // remove it so only 2 upgrades are shown (befitting its legendary rarity).
-  if (poolHasThreeTypes && poolHasBounceTrade && chosen.has('bounceTrade')) {
+  if (poolHasExactlyThreeTypes && chosen.has('bounceTrade')) {
     if (random() >= BOUNCE_SACRIFICE_APPEARANCE_RATE) {
       chosen.delete('bounceTrade')
     }
