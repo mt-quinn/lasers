@@ -9,6 +9,9 @@ const rarityWeight: Record<Rarity, number> = {
   legendary: 1,
 }
 
+const BOUNCE_SACRIFICE_APPEARANCE_RATE = 0.01
+const BASE_CHOICES_WITH_BOUNCE_SACRIFICE = 3
+
 const rarityColor: Record<Rarity, string> = {
   common: '#d7d7d7',
   rare: '#6ec6ff',
@@ -92,11 +95,16 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
   // if (s.stats.extraChoices === 0) push('extraChoice', 'epic')
 
   // Bounce trade: legendary only, repeatable (only if player has bounces to trade)
-  if (s.stats.maxBounces > 0) push('bounceTrade', 'legendary')
+  const shouldCheckBounceSacrifice = s.stats.maxBounces > 0
+  if (shouldCheckBounceSacrifice) push('bounceTrade', 'legendary')
+
+  // Count unique upgrade types in the pool for special bounce sacrifice handling.
+  // This is calculated from the initial pool before rolling, capturing what types are available.
+  const poolHasExactlyThreeTypes = shouldCheckBounceSacrifice && new Set(offerPool.map(o => o.type)).size === 3
 
   const chosen = new Map<UpgradeType, UpgradeOffer>()
   let safety = 0
-  const targetChoices = 3 + s.stats.extraChoices
+  const targetChoices = BASE_CHOICES_WITH_BOUNCE_SACRIFICE + s.stats.extraChoices
   while (chosen.size < targetChoices && safety++ < 500) {
     // Stop early if all possible upgrades have been exhausted.
     // This can happen if the player has maxed out most upgrade paths.
@@ -118,7 +126,17 @@ export const rollUpgradeOptions = (s: RunState, random: () => number): UpgradeOf
     }
   }
 
-  return Array.from(chosen.values()).slice(0, targetChoices)
+  // Special handling for Bounce Sacrifice when pool is limited:
+  // When the pool has exactly 3 upgrade types and bounceTrade was chosen,
+  // apply a 1% chance for it to actually appear. If it fails the check,
+  // remove it so only 2 upgrades are shown (befitting its legendary rarity).
+  if (poolHasExactlyThreeTypes && chosen.has('bounceTrade')) {
+    if (random() >= BOUNCE_SACRIFICE_APPEARANCE_RATE) {
+      chosen.delete('bounceTrade')
+    }
+  }
+
+  return Array.from(chosen.values())
 }
 
 const buildOffer = (type: UpgradeType, rarity: Rarity, s: RunState): UpgradeOffer => {
