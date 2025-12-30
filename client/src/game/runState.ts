@@ -161,6 +161,11 @@ export type InputState = {
   // Target reticle position for smoothing touch input
   reticleTargetX: number
   reticleTargetY: number
+
+  // Freeze reticle updates until next unique input after upgrade selection
+  freezeReticleUntilNextInput: boolean
+  frozenReticleX: number
+  frozenReticleY: number
 }
 
 export type LaserState = {
@@ -269,6 +274,9 @@ export const createInitialRunState = (): RunState => {
       keyRight: false,
       reticleTargetX: 180,
       reticleTargetY: 220,
+      freezeReticleUntilNextInput: false,
+      frozenReticleX: 180,
+      frozenReticleY: 220,
     },
     timeSec: 0,
     blocksDestroyed: 0,

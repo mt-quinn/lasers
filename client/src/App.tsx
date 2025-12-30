@@ -149,6 +149,16 @@ export default function App() {
       const local = getLocal(e)
       if (!local) return
 
+      // Check if we need to unfreeze reticle based on unique input
+      if (s.input.freezeReticleUntilNextInput) {
+        const threshold = 5 // pixels of movement to consider it unique input
+        const dx = Math.abs(local.x - s.input.frozenReticleX)
+        const dy = Math.abs(local.y - s.input.frozenReticleY)
+        if (dx > threshold || dy > threshold) {
+          s.input.freezeReticleUntilNextInput = false
+        }
+      }
+
       const preferredRole = pickRoleForPointerDown(local.y, s)
 
       const assign = (role: 'aim' | 'move') => {
@@ -157,8 +167,10 @@ export default function App() {
           s.input.aimActive = true
           s.input.aimX = local.x
           s.input.aimY = local.y
-          s.input.reticleTargetX = local.x
-          s.input.reticleTargetY = local.y
+          if (!s.input.freezeReticleUntilNextInput) {
+            s.input.reticleTargetX = local.x
+            s.input.reticleTargetY = local.y
+          }
         } else {
           s.input.movePointerId = e.pointerId
           s.input.moveActive = true
@@ -182,12 +194,22 @@ export default function App() {
       const local = getLocal(e)
       if (!local) return
 
+      // Check if we need to unfreeze reticle based on unique input
+      if (s.input.freezeReticleUntilNextInput) {
+        const threshold = 5 // pixels of movement to consider it unique input
+        const dx = Math.abs(local.x - s.input.frozenReticleX)
+        const dy = Math.abs(local.y - s.input.frozenReticleY)
+        if (dx > threshold || dy > threshold) {
+          s.input.freezeReticleUntilNextInput = false
+        }
+      }
+
       // Desktop UX: while the mouse is inside the play area, aim should track
       // the cursor continuously (no click needed).
       if (e.pointerType === 'mouse') {
         const inside =
           local.x >= 0 && local.x <= local.w && local.y >= 0 && local.y <= local.h
-        if (inside) {
+        if (inside && !s.input.freezeReticleUntilNextInput) {
           // Mouse follows instantly for responsive desktop UX
           s.reticle.x = local.x
           s.reticle.y = local.y
@@ -201,8 +223,10 @@ export default function App() {
         s.input.aimX = local.x
         s.input.aimY = local.y
         // Touch/stylus aim updates target; smoothing applied in sim
-        s.input.reticleTargetX = local.x
-        s.input.reticleTargetY = local.y
+        if (!s.input.freezeReticleUntilNextInput) {
+          s.input.reticleTargetX = local.x
+          s.input.reticleTargetY = local.y
+        }
       }
       if (s.input.movePointerId === e.pointerId) {
         s.input.moveActive = true
