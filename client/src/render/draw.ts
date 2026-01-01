@@ -1676,6 +1676,44 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.restore()
       }
     }
+
+    // Level-up notification: "Level up! +1dps" in center of screen
+    if (s.levelUpNotificationFx) {
+      const t = s.levelUpNotificationFx.t
+      const displayDur = s.levelUpNotificationFx.displayDur
+      const fadeDur = s.levelUpNotificationFx.fadeDur
+      
+      // Calculate opacity: full during display, fade out during fade period
+      let alpha = 1.0
+      if (t > displayDur) {
+        const fadeProgress = (t - displayDur) / fadeDur
+        alpha = 1.0 - fadeProgress
+      }
+      
+      if (alpha > 0.001) {
+        const cx = s.view.width * 0.5
+        const cy = s.view.height * 0.5
+        
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        
+        // Text
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        
+        // "Level up!" text - large and bold
+        ctx.fillStyle = `rgba(255,220,100,${alpha})`
+        ctx.font = '900 48px Oxanium'
+        ctx.fillText('Level up!', cx, cy - 20)
+        
+        // "+1dps" text - slightly smaller
+        ctx.fillStyle = `rgba(100,255,150,${alpha})`
+        ctx.font = '900 36px Oxanium'
+        ctx.fillText('+1dps', cx, cy + 30)
+        
+        ctx.restore()
+      }
+    }
   })
 }
 

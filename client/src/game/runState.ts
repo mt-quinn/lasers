@@ -209,6 +209,13 @@ export type RunState = {
     livesAfter: number
     cleared: boolean
   }
+  
+  // Level-up notification: shows "Level up! +1dps" text in center of screen
+  levelUpNotificationFx: null | {
+    t: number
+    displayDur: number
+    fadeDur: number
+  }
 
   // Global "tetris-like" drop pacing.
   dropIntervalSec: number
@@ -288,6 +295,7 @@ export const createInitialRunState = (): RunState => {
     lives: 3,
     respiteSec: 0,
     lifeLossFx: null,
+    levelUpNotificationFx: null,
     // Start with a full interval so the player sees the cadence before the first step.
     dropIntervalSec: 1.0,
     dropTimerSec: 1.0,

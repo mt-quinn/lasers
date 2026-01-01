@@ -17,6 +17,7 @@ type SavedRunState = Omit<
   | 'sparkEmitAcc'
   | 'weld'
   | 'lifeLossFx'
+  | 'levelUpNotificationFx'
 >
 
 const isValidSavedState = (x: unknown): x is SavedRunState => {
