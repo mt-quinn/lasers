@@ -301,7 +301,7 @@ export const createInitialRunState = (): RunState => {
       beamWidth: 12.0,
       // Outer glow width (kept at original value for visual balance).
       beamGlowWidth: 20.4,
-      maxBounces: 3,
+      maxBounces: 2,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
       bounceFalloff: 0.85,
       splitterChance: 0,
