@@ -1701,13 +1701,17 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         
-        // "Level up!" text - large and bold
-        ctx.fillStyle = `rgba(255,220,100,${alpha})`
+        // Thin but relatively opaque shadow
+        ctx.shadowColor = `rgba(0,0,0,${0.7 * alpha})`
+        ctx.shadowBlur = 3
+        
+        // "Level up!" text - white with shadow
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`
         ctx.font = '900 48px Oxanium'
         ctx.fillText('Level up!', cx, cy - 20)
         
-        // "+1dps" text - slightly smaller
-        ctx.fillStyle = `rgba(100,255,150,${alpha})`
+        // "+1dps" text - white with shadow
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`
         ctx.font = '900 36px Oxanium'
         ctx.fillText('+1dps', cx, cy + 30)
         
