@@ -131,6 +131,14 @@ export const loadGameState = (): RunState | null => {
     // Merge saved state into fresh state
     Object.assign(freshState, parsed)
     
+    // MIGRATION: Reset dropIntervalSec to 1.0 to fix inconsistent drop rates
+    // Old saved states may contain modified values from the commented-out upgrade system
+    freshState.dropIntervalSec = 1.0
+    // Also ensure dropTimerSec doesn't exceed the interval
+    if (freshState.dropTimerSec > freshState.dropIntervalSec) {
+      freshState.dropTimerSec = freshState.dropIntervalSec
+    }
+    
     // If the player was in a level-up screen, keep it paused and preserve the options
     // Otherwise, resume gameplay
     if (!freshState.levelUpActive) {
