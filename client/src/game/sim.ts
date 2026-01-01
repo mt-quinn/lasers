@@ -3,9 +3,9 @@ import type { Vec2 } from './math'
 import type { RunState } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing, spawnPrismAt } from './spawn'
-import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR, createInitialRunState } from './runState'
+import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './layout'
-import { rollUpgradeOptions } from './levelUp'
+import { computeXpCap, autoApplyLevelUp } from './levelUp'
 
 const EPS = 1.0
 const MAX_SPARKS = 280
@@ -121,13 +121,14 @@ export const stepSim = (s: RunState, dt: number) => {
 
   // Spawn pacing (director-style): a time-based target curve, with pressure guardrails
   // so the game ramps without spiraling into impossible states.
+  // Increased density: ~20% faster spawn rates
   s.spawnTimer -= dt
-  const spawnEveryEarly = 1.175 + (0.825 - 1.175) * e // 0-60s: 1.175 -> 0.825 (doubled spawn rate)
-  const spawnEveryLate = 1.55 + (0.95 - 1.55) * l // 60-360s: 1.55 -> 0.95
+  const spawnEveryEarly = 0.94 + (0.66 - 0.94) * e // 0-60s: 0.94 -> 0.66 (20% faster than before)
+  const spawnEveryLate = 1.24 + (0.76 - 1.24) * l // 60-360s: 1.24 -> 0.76 (20% faster than before)
   const spawnEveryBase = s.timeSec < 60 ? spawnEveryEarly : spawnEveryLate
 
-  const maxBlocksEarly = Math.floor(4 + 2 * e) // 4 -> 6
-  const maxBlocksLate = Math.floor(6 + 5 * l) // 6 -> 11
+  const maxBlocksEarly = Math.floor(5 + 2 * e) // 5 -> 7 (increased from 4->6)
+  const maxBlocksLate = Math.floor(7 + 6 * l) // 7 -> 13 (increased from 6->11)
   const maxBlocksBase = s.timeSec < 60 ? maxBlocksEarly : maxBlocksLate
 
   // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
@@ -288,20 +289,14 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  // Level-up trigger: when XP fills, open the choice menu (pause).
+  // Level-up trigger: when XP fills, automatically apply +1 DPS (no menu).
   if (!s.levelUpActive && s.xp >= s.xpCap) {
     s.xp -= s.xpCap
-    s.pendingLevelUps += 1
-  }
-  if (!s.levelUpActive && s.pendingLevelUps > 0) {
-    s.levelUpActive = true
-    s.paused = true
-    s.pendingLevelUps -= 1
-    s.levelUpOptions = rollUpgradeOptions(s, Math.random)
-    // Freeze reticle aim until player makes next unique input
-    s.input.freezeReticleUntilNextInput = true
-    s.input.frozenReticleX = s.input.reticleTargetX
-    s.input.frozenReticleY = s.input.reticleTargetY
+    s.level += 1
+    s.xpCap = computeXpCap(s.level)
+    autoApplyLevelUp(s)
+    // Micro "breather" after level-up so the board doesn't immediately spawn into pressure.
+    s.spawnTimer = Math.max(s.spawnTimer, 0.75)
   }
 
   // Fail line sits just above the bottom rail.

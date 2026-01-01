@@ -1,17 +1,21 @@
-import type { Rarity, RunState, UpgradeOffer, UpgradeType } from './runState'
+import type { Rarity, RunState, UpgradeOffer } from './runState'
 
-const rarityOrder: Rarity[] = ['common', 'rare', 'epic', 'legendary']
+// ============================================================================
+// UPGRADE SYSTEM COMMENTED OUT - Replaced with automatic +1 DPS per level
+// ============================================================================
+//
+// The original upgrade system has been disabled and replaced with a simple
+// automatic linear progression: +1 DPS per level.
+//
+// Original system included:
+// - Multiple upgrade choices per level (damage, bounces, drop speed, life, etc.)
+// - Rarity-based upgrade tiers (common, rare, epic, legendary)
+// - Complex upgrade rolling and selection UI
+//
+// All of that functionality is now commented out below.
+// ============================================================================
 
-const rarityWeight: Record<Rarity, number> = {
-  common: 80,
-  rare: 15,
-  epic: 4,
-  legendary: 1,
-}
-
-const BOUNCE_SACRIFICE_APPEARANCE_RATE = 0.01
-const BASE_CHOICES_WITH_BOUNCE_SACRIFICE = 3
-
+// Keep rarity colors for potential future use
 const rarityColor: Record<Rarity, string> = {
   common: '#d7d7d7',
   rare: '#6ec6ff',
@@ -35,6 +39,28 @@ export const computeXpCap = (level: number) => {
   const cap = 5 + l
   return Math.max(5, cap)
 }
+
+// Simplified automatic upgrade system: +1 DPS per level
+export const autoApplyLevelUp = (s: RunState) => {
+  s.stats.dps += 1
+}
+
+// ============================================================================
+// ORIGINAL UPGRADE SYSTEM (COMMENTED OUT)
+// ============================================================================
+
+/*
+const rarityOrder: Rarity[] = ['common', 'rare', 'epic', 'legendary']
+
+const rarityWeight: Record<Rarity, number> = {
+  common: 80,
+  rare: 15,
+  epic: 4,
+  legendary: 1,
+}
+
+const BOUNCE_SACRIFICE_APPEARANCE_RATE = 0.01
+const BASE_CHOICES_WITH_BOUNCE_SACRIFICE = 3
 
 const fmt = (v: number, maxDecimals = 2) => {
   // Trim trailing zeros: 1.20 -> 1.2, 0.10 -> 0.1, 2.00 -> 2
@@ -381,5 +407,26 @@ export const getOfferPreview = (s: RunState, offer: UpgradeOffer): OfferPreview 
     delta: `+${fmt(afterV - beforeV, 2)}s`,
   }
 }
+*/
 
+// Stub functions to maintain compatibility with existing code
+export const rollUpgradeOptions = (_s: RunState, _random: () => number): UpgradeOffer[] => {
+  // Return empty array - no upgrade options in the new system
+  return []
+}
 
+export const applyOffer = (_s: RunState, _offer: UpgradeOffer) => {
+  // No-op - upgrades are applied automatically via autoApplyLevelUp
+}
+
+export type OfferPreview = {
+  label: string
+  before: string
+  after: string
+  delta?: string
+}
+
+export const getOfferPreview = (_s: RunState, _offer: UpgradeOffer): OfferPreview => {
+  // Return a dummy preview - not used in the new system
+  return { label: '', before: '', after: '' }
+}
