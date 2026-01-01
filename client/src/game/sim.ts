@@ -89,6 +89,15 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
+  // Level-up notification FX
+  if (s.levelUpNotificationFx) {
+    s.levelUpNotificationFx.t += dt
+    const totalDur = s.levelUpNotificationFx.displayDur + s.levelUpNotificationFx.fadeDur
+    if (s.levelUpNotificationFx.t >= totalDur) {
+      s.levelUpNotificationFx = null
+    }
+  }
+
   const smoothstep = (x: number) => x * x * (3 - 2 * x)
 
   // Difficulty curve: deliberately easy first minute so players can buy upgrades,
@@ -295,6 +304,12 @@ export const stepSim = (s: RunState, dt: number) => {
     s.level += 1
     s.xpCap = computeXpCap(s.level)
     autoApplyLevelUp(s)
+    // Show level-up notification (1s display + 300ms fade)
+    s.levelUpNotificationFx = {
+      t: 0,
+      displayDur: 1.0,
+      fadeDur: 0.3,
+    }
     // Micro "breather" after level-up so the board doesn't immediately spawn into pressure.
     s.spawnTimer = Math.max(s.spawnTimer, 0.75)
   }
