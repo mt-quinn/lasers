@@ -289,8 +289,8 @@ export const createInitialRunState = (): RunState => {
     respiteSec: 0,
     lifeLossFx: null,
     // Start with a full interval so the player sees the cadence before the first step.
-    dropIntervalSec: 1.2,
-    dropTimerSec: 1.2,
+    dropIntervalSec: 1.0,
+    dropTimerSec: 1.0,
     dropAnimOffset: 0,
     dropAnimDuration: 0.2, // 200ms animation
     stats: {
@@ -301,7 +301,7 @@ export const createInitialRunState = (): RunState => {
       beamWidth: 12.0,
       // Outer glow width (kept at original value for visual balance).
       beamGlowWidth: 20.4,
-      maxBounces: 1,
+      maxBounces: 3,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
       bounceFalloff: 0.85,
       splitterChance: 0,

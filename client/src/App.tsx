@@ -4,7 +4,7 @@ import { createInitialRunState, type RunState } from './game/runState'
 import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
-import { applyOffer, computeXpCap, getOfferPreview, getRarityColor } from './game/levelUp'
+// import { computeXpCap, getRarityColor } from './game/levelUp'  // Unused after upgrade system removal
 import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './game/layout'
 import {
   addHighScore,
@@ -645,6 +645,8 @@ export default function App() {
               </div>
             )}
 
+            {/* Upgrade system disabled - automatic +1 DPS per level now */}
+            {/*
             {stateRef.current.levelUpActive && (
               <div className="upgradeOverlay" role="dialog" aria-label="Choose an upgrade">
                 <div className="upgradePanel">
@@ -702,6 +704,7 @@ export default function App() {
                 </div>
               </div>
             )}
+            */}
           </div>
         </main>
       </div>
