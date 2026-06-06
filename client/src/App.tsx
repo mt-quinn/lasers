@@ -351,7 +351,9 @@ export default function App() {
       if (!s.paused && !audioGateRef.current) stepSim(s, dtSec)
 
       // Sample the soundtrack every frame (even while paused) so the visuals
-      // keep breathing, then push the live signals onto the run state.
+      // keep breathing, then push the live signals onto the run state. Also feed
+      // the current board drop rate so the next track is picked to match tempo.
+      musicEngine.setBoardTempo(s.dropIntervalSec)
       musicEngine.sample(now)
       musicEngine.applyTo(s.music)
 

@@ -44,6 +44,9 @@ const OVERDRIVE_DPS_MULT = 1.7
 const OVERDRIVE_BONUS_PIERCES = 3
 const OVERDRIVE_SCORE_MULT = 2
 const OVERDRIVE_BEAM_WIDEN = 1.35 // beam forgiveness multiplier during overdrive
+// How long an armored block keeps flashing its "deflected, no damage" cue after
+// the last wrong-side hit (the renderer fades it out over this window).
+const SHIELD_FLASH_SEC = 0.3
 // Fraction of the beam's DPS a mirror absorbs (as wear) each frame of contact.
 // The rest reflects. Sized with MIRROR_HP so a mirror lasts several seconds of
 // continuous contact — a reliable tool you can still deliberately burn down.
@@ -144,8 +147,6 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  const smoothstep = (x: number) => x * x * (3 - 2 * x)
-
   // Deterministic, learnable difficulty schedule. Difficulty rises only on
   // skill-answerable axes — descent speed and arrival density (plus routing
   // complexity from features) — never block HP. Music is pure juice and no
@@ -153,14 +154,19 @@ export const stepSim = (s: RunState, dt: number) => {
   // means internalizing it. `prog` ramps 0->1 over the first RAMP_SECONDS;
   // `creep` keeps nudging upward forever after so even the best players meet a
   // ceiling eventually (their reaction/routing speed, never an HP wall).
-  const RAMP_SECONDS = 240
-  const prog = smoothstep(clamp(s.timeSec / RAMP_SECONDS, 0, 1))
+  const RAMP_SECONDS = 210
+  // Front-load the curve: `prog` rises fast in the first ~20s (pow < 1) so the
+  // board is already busy and demands routing right away, then eases toward the
+  // steady-state. A flat-early curve (smoothstep) was exactly what made the
+  // opening trivial.
+  const prog = Math.pow(clamp(s.timeSec / RAMP_SECONDS, 0, 1), 0.7)
   const creep = clamp((s.timeSec - RAMP_SECONDS) / 600, 0, 1)
 
   // Movement is tetris-like: blocks step down together on a global timer. The
-  // descent interval is the "gravity": brisk from the start (routing matters by
-  // ~15s) and tightening to a fast floor.
-  s.dropIntervalSec = Math.max(0.2, 0.9 + (0.34 - 0.9) * prog - 0.12 * creep)
+  // descent interval is the "gravity": brisk from the very start so pieces
+  // actually travel down the board (and you must route immediately), tightening
+  // to a fast floor.
+  s.dropIntervalSec = Math.max(0.2, 0.7 + (0.3 - 0.7) * prog - 0.1 * creep)
 
   const layout = getArenaLayout(s.view)
   const cellSize = 40
@@ -185,8 +191,8 @@ export const stepSim = (s: RunState, dt: number) => {
   // Arrival rate and the on-screen cap ramp together: more simultaneous threats
   // to route between as you go deeper.
   s.spawnTimer -= dt
-  const spawnEveryBase = Math.max(0.38, 1.05 + (0.5 - 1.05) * prog - 0.1 * creep) // 1.05s -> 0.5s -> ~0.4s
-  const maxBlocksBase = Math.floor(5 + 9 * prog + 4 * creep) // 5 -> 14 -> ~18
+  const spawnEveryBase = Math.max(0.34, 0.62 + (0.42 - 0.62) * prog - 0.08 * creep) // 0.62s -> 0.42s -> ~0.34s
+  const maxBlocksBase = Math.floor(7 + 8 * prog + 4 * creep) // 7 -> 15 -> ~19
 
   // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
   const dangerY = layout.failY - 2 * cellSize
@@ -295,6 +301,10 @@ export const stepSim = (s: RunState, dt: number) => {
   if (s.weldGlows.length > 0) {
     for (const g of s.weldGlows) g.age += dt
     s.weldGlows = s.weldGlows.filter((g) => g.age < g.life)
+  }
+  // Fade out the armored "deflected" flash after the last wrong-side hit.
+  for (const b of s.blocks) {
+    if (b.shieldFlashSec > 0) b.shieldFlashSec = Math.max(0, b.shieldFlashSec - dt)
   }
 
   // Melt FX: blocks collapse into a molten blob, then release an XP orb that flies away.
@@ -512,20 +522,31 @@ export const stepSim = (s: RunState, dt: number) => {
 
     // Armored: only the glowing weak face takes damage. A hit on a shielded face
     // deals nothing (the beam still pierces past it at the call site), so you must
-    // route the beam onto the weak side. Emit a cool "clink" spark as feedback.
+    // route the beam onto the weak side. Make that obvious: spray cold blue-white
+    // "deflection" sparks that grind off the plate, and flag the block so the
+    // renderer flashes a no-damage cue and pulses the real weak face.
     if (b.kind === 'armored' && (b.vulnNormal.x !== 0 || b.vulnNormal.y !== 0)) {
       const aligned = normal.x * b.vulnNormal.x + normal.y * b.vulnNormal.y
       if (aligned <= 0.45) {
-        s.sparks.push({
-          x: point.x,
-          y: point.y,
-          vx: normal.x * 130 + (Math.random() * 2 - 1) * 45,
-          vy: normal.y * 130 + (Math.random() * 2 - 1) * 45,
-          age: 0,
-          life: 0.08 + Math.random() * 0.1,
-          size: 0.8 + Math.random() * 1.3,
-          heat: 0.45,
-        })
+        b.shieldFlashSec = SHIELD_FLASH_SEC
+        const tx = -normal.y
+        const ty = normal.x
+        for (let i = 0; i < 3; i++) {
+          const along = (Math.random() * 2 - 1) * (150 + Math.random() * 170)
+          const out = 70 + Math.random() * 130
+          s.sparks.push({
+            x: point.x,
+            y: point.y,
+            vx: tx * along + normal.x * out + (Math.random() * 2 - 1) * 30,
+            vy: ty * along + normal.y * out + (Math.random() * 2 - 1) * 30,
+            age: 0,
+            life: 0.1 + Math.random() * 0.14,
+            size: 1.0 + Math.random() * 1.8,
+            heat: 1,
+            cold: true,
+          })
+        }
+        if (s.sparks.length > MAX_SPARKS) s.sparks.splice(0, s.sparks.length - MAX_SPARKS)
         return
       }
     }

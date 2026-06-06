@@ -753,15 +753,29 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.save()
 
         if (b.kind === 'armored') {
-          // Steel plating wash + a bright glowing weak-face marker (the only face
-          // that takes damage — you must route the beam onto it).
+          // Dark riveted steel everywhere EXCEPT one weak face, which glows green
+          // and carries an inward arrow — the only side that takes damage, so you
+          // must route the beam to strike it from that direction.
+          const vn = b.vulnNormal
+          const pulse = 0.5 + 0.5 * Math.sin(tNow * 6)
+          // 1 right after a wrong-side (shielded) hit, fading to 0 over
+          // SHIELD_FLASH_SEC (0.3s). Drives the "deflected, no damage" cue.
+          const flash = Math.min(1, b.shieldFlashSec / 0.3)
+
           drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
           ctx.save()
           ctx.clip()
-          ctx.fillStyle = 'rgba(92,106,132,0.5)'
+          // Darker plating so the green weak face reads instantly against it.
+          ctx.fillStyle = 'rgba(30,37,52,0.7)'
           ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+          // Icy clang wash over the whole plate while a shielded face is struck.
+          if (flash > 0) {
+            ctx.globalCompositeOperation = 'screen'
+            ctx.fillStyle = `rgba(150,205,255,${(0.42 * flash).toFixed(3)})`
+            ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+          }
           ctx.globalCompositeOperation = 'screen'
-          ctx.strokeStyle = 'rgba(205,218,238,0.16)'
+          ctx.strokeStyle = 'rgba(150,166,194,0.12)'
           ctx.lineWidth = 2
           for (let x = -h; x < w + h; x += 12) {
             ctx.beginPath()
@@ -769,15 +783,38 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
             ctx.lineTo(ax + x + h, ay + h)
             ctx.stroke()
           }
+          // Corner rivets reinforce the "bolted armor" read.
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.fillStyle = 'rgba(190,202,224,0.5)'
+          const rv = 2.2
+          const ri = 6
+          for (const [rx, ry] of [
+            [ax + ri, ay + ri],
+            [ax + w - ri, ay + ri],
+            [ax + ri, ay + h - ri],
+            [ax + w - ri, ay + h - ri],
+          ] as const) {
+            ctx.beginPath()
+            ctx.arc(rx, ry, rv, 0, Math.PI * 2)
+            ctx.fill()
+          }
           ctx.restore()
-          const vn = b.vulnNormal
+
+          // Weak face: a thick pulsing green bar with a strong glow, hugging the
+          // vulnerable edge.
+          ctx.save()
           ctx.globalCompositeOperation = 'screen'
-          ctx.strokeStyle = 'rgba(120,255,170,0.95)'
-          ctx.shadowColor = 'rgba(120,255,170,0.85)'
-          ctx.shadowBlur = 10
-          ctx.lineWidth = 4
+          // A wrong-side hit forces the weak face to full brightness + bloom so
+          // the eye is pulled to where damage actually lands.
+          const mark = Math.max(pulse, flash)
+          ctx.strokeStyle = `rgba(120,255,170,${(0.7 + 0.3 * mark).toFixed(3)})`
+          ctx.shadowColor = 'rgba(120,255,170,0.95)'
+          ctx.shadowBlur = 8 + 8 * pulse + 18 * flash
+          ctx.lineWidth = 6 + 6 * flash
           ctx.lineCap = 'round'
-          const inset = 5
+          const inset = 4
+          const cxB = ax + w / 2
+          const cyB = ay + h / 2
           ctx.beginPath()
           if (vn.x < 0) {
             ctx.moveTo(ax + inset, ay + inset)
@@ -793,7 +830,36 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
             ctx.lineTo(ax + w - inset, ay + h - inset)
           }
           ctx.stroke()
+
+          // Inward chevron pointing into the weak face: "strike from here".
+          const ar = Math.min(w, h) * 0.18 + 3
+          ctx.lineWidth = 4 + 4 * flash
+          ctx.lineJoin = 'round'
+          ctx.beginPath()
+          if (vn.x < 0) {
+            const x0 = ax + inset + 3
+            ctx.moveTo(x0, cyB - ar)
+            ctx.lineTo(x0 + ar, cyB)
+            ctx.lineTo(x0, cyB + ar)
+          } else if (vn.x > 0) {
+            const x0 = ax + w - inset - 3
+            ctx.moveTo(x0, cyB - ar)
+            ctx.lineTo(x0 - ar, cyB)
+            ctx.lineTo(x0, cyB + ar)
+          } else if (vn.y < 0) {
+            const y0 = ay + inset + 3
+            ctx.moveTo(cxB - ar, y0)
+            ctx.lineTo(cxB, y0 + ar)
+            ctx.lineTo(cxB + ar, y0)
+          } else {
+            const y0 = ay + h - inset - 3
+            ctx.moveTo(cxB - ar, y0)
+            ctx.lineTo(cxB, y0 - ar)
+            ctx.lineTo(cxB + ar, y0)
+          }
+          ctx.stroke()
           ctx.shadowBlur = 0
+          ctx.restore()
         } else if (b.kind === 'chrome') {
           // Mirror-chrome: silvery sheen so it reads as reflective.
           drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
@@ -1761,11 +1827,18 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       for (const p of s.sparks) {
         const t = clamp(p.age / Math.max(0.0001, p.life), 0, 1)
         const a = (1 - t) * (0.45 + 0.65 * p.heat)
-        // "hot metal" spark: white -> yellow -> hue-tinted tail (rainbow with
-        // the music; pink when off). Core stays white-hot.
-        const c0 = `rgba(255,252,240,${0.95 * a})`
-        const c1 = `rgba(255,210,140,${0.75 * a})`
-        const c2 = heat(hueAt(p.x, p.y), 255, 120, 210, 85, 65, 0.35 * a)
+        // Hot metal spark: white -> yellow -> hue-tinted tail (rainbow with the
+        // music; pink when off). Cold "deflection" sparks (armored shield hit)
+        // instead read icy blue-white so a no-damage hit is unmistakable.
+        const c0 = p.cold
+          ? `rgba(232,244,255,${0.95 * a})`
+          : `rgba(255,252,240,${0.95 * a})`
+        const c1 = p.cold
+          ? `rgba(150,200,255,${0.8 * a})`
+          : `rgba(255,210,140,${0.75 * a})`
+        const c2 = p.cold
+          ? `rgba(90,150,235,${0.5 * a})`
+          : heat(hueAt(p.x, p.y), 255, 120, 210, 85, 65, 0.35 * a)
 
         const tail = 0.018 + 0.022 * p.heat
         // Project the streak endpoints and scale its weight with depth.

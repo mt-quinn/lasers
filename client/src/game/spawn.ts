@@ -80,14 +80,29 @@ const rollFeatureKind = (tSec: number): BoardFeature['kind'] | null => {
   return null
 }
 
-const placeAabb = (s: RunState, wPx: number, hPx: number, avoidCenterHalf = 0) => {
+type PlaceOpts = {
+  // Keep the piece out of the central column (mirrors, which would otherwise
+  // reflect the straight-up beam back down and stall the game).
+  avoidCenterHalf?: number
+  // Keep the piece off one side wall so a routed beam can reach that face.
+  // -1 = hold off the LEFT wall, +1 = hold off the RIGHT wall. Used for armored
+  // blocks whose weak (damageable) side points at that wall.
+  clearWallSide?: -1 | 0 | 1
+  clearWallPx?: number
+}
+
+const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) => {
+  const avoidCenterHalf = opts.avoidCenterHalf ?? 0
+  const clearWallSide = opts.clearWallSide ?? 0
+  const clearWallPx = opts.clearWallPx ?? 0
   const pad = 18
   const gap = 16
-  const xMin = pad
-  const xMax = s.view.width - wPx - pad
+  let xMin = pad
+  let xMax = s.view.width - wPx - pad
+  // Reserve a routing lane between the weak face and its wall.
+  if (clearWallSide < 0) xMin = Math.min(xMax, xMin + clearWallPx)
+  else if (clearWallSide > 0) xMax = Math.max(xMin, xMax - clearWallPx)
 
-  // Optionally keep the piece out of the central column (used for mirrors, which
-  // would otherwise reflect the straight-up beam back down and stall the game).
   const centerX = s.view.width / 2
   const genX = () => {
     if (avoidCenterHalf > 0) {
@@ -104,7 +119,7 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, avoidCenterHalf = 0) =
       }
       // Fallback (piece too wide to dodge the band): fall through to full width.
     }
-    return clamp(Math.random() * (s.view.width - wPx), xMin, xMax)
+    return clamp(xMin + Math.random() * Math.max(0, xMax - xMin), xMin, xMax)
   }
 
   // Spawn fully ABOVE the visible top edge so pieces descend into view (rather
@@ -187,7 +202,7 @@ const spawnMirror = (s: RunState) => {
   const orient: 1 | -1 = Math.random() < 0.5 ? 1 : -1
   // Keep a small launch corridor at center so the muzzle usually has clearance,
   // but mirrors can sit near-center for routing (they deflect, never block).
-  const placed = placeAabb(s, sizePx, sizePx, s.view.width * 0.12)
+  const placed = placeAabb(s, sizePx, sizePx, { avoidCenterHalf: s.view.width * 0.12 })
 
   const mirror: MirrorFeature = {
     id: s.nextFeatureId++,
@@ -285,7 +300,8 @@ export const spawnBlock = (s: RunState) => {
   const cornerRadius = cellSize * 0.5 - 0.6
 
   // Routing-focused kind (scheduled introduction; early game is normal-only).
-  const kind = rollBlockKind(t)
+  // `let` because a piece with no fair armored weak face is demoted to normal.
+  let kind = rollBlockKind(t)
 
   // Shape weighting: simpler early, bigger later. Chrome is always a single cell
   // so its reflective phase is brief — it dies fast and can't wall the muzzle.
@@ -312,11 +328,25 @@ export const spawnBlock = (s: RunState) => {
   const hpMax = Math.max(1, Math.round(HP_PER_CELL * cells.length))
 
   // Armored weak face: a non-bottom side so the straight-up beam can't trivially
-  // reach it — you must bend/route the beam onto it. Weighted toward the sides.
+  // reach it — you must bend/route the beam onto it. The weak face must also be a
+  // *fair* target, i.e. span at least 2 cells: hitting the 1-cell-tall side of a
+  // long horizontal bar (I3/I4) isn't fun, so those only ever expose their wide
+  // top. A piece with no fair face at all (a 1x1) can't be a meaningful armored
+  // block, so it's demoted to a normal block.
   let vulnNormal = { x: 0, y: 0 }
   if (kind === 'armored') {
-    const pick = Math.random()
-    vulnNormal = pick < 0.42 ? { x: -1, y: 0 } : pick < 0.84 ? { x: 1, y: 0 } : { x: 0, y: -1 }
+    const sideFair = bounds.h >= 2 // left/right faces tall enough to aim at
+    const topFair = bounds.w >= 2 // top face wide enough to aim at
+    const r = Math.random()
+    if (sideFair && topFair) {
+      vulnNormal = r < 0.42 ? { x: -1, y: 0 } : r < 0.84 ? { x: 1, y: 0 } : { x: 0, y: -1 }
+    } else if (sideFair) {
+      vulnNormal = r < 0.5 ? { x: -1, y: 0 } : { x: 1, y: 0 }
+    } else if (topFair) {
+      vulnNormal = { x: 0, y: -1 }
+    } else {
+      kind = 'normal'
+    }
   }
 
   // Gold blocks are a normal-kind bonus only (no special-kind gold).
@@ -353,8 +383,15 @@ export const spawnBlock = (s: RunState) => {
   }
   const hpAnchorLocalPx = { x: best.x * cellSize, y: best.y * cellSize }
 
-  // Spawn placement: never overlap any existing block AABB (including other newly-spawned blocks above).
-  const placed = placeAabb(s, wPx, hPx)
+  // Spawn placement: never overlap any existing block AABB (including other
+  // newly-spawned blocks above). Armored pieces with a side-facing weak face are
+  // held off that wall so there's room to route the beam onto it (a left-weak
+  // block never spawns flush against the left wall, etc.).
+  const placeOpts: PlaceOpts =
+    kind === 'armored' && vulnNormal.x !== 0
+      ? { clearWallSide: vulnNormal.x < 0 ? -1 : 1, clearWallPx: cellSize * 1.5 }
+      : {}
+  const placed = placeAabb(s, wPx, hPx, placeOpts)
 
   const block: BlockEntity = {
     id: s.nextBlockId++,
@@ -371,6 +408,7 @@ export const spawnBlock = (s: RunState) => {
     kind,
     vulnNormal,
     dropAnimExtra: 0,
+    shieldFlashSec: 0,
     loop,
     localAabb,
     hpAnchorLocalPx,

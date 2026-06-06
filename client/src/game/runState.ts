@@ -41,6 +41,9 @@ export type SparkParticle = {
   life: number
   size: number
   heat: number // 0..1, used for color/brightness
+  // Cold sparks render icy blue-white instead of hot orange — used for the
+  // "deflected, no damage" spray when the beam hits an armored block's shield.
+  cold?: boolean
 }
 
 export type WeldGlow = {
@@ -93,6 +96,9 @@ export type BlockEntity = {
   // Extra per-block visual drop offset (px) so fast double-steppers ease smoothly
   // instead of snapping. Decays to 0 alongside the global drop animation.
   dropAnimExtra: number
+  // Armored only: counts down after a wrong-side (shielded) beam hit so the
+  // renderer can flash a "deflected, no damage" cue and pulse the weak face.
+  shieldFlashSec: number
   // local-space loop points in *cell* units (not pixels), closed (last==first)
   loop: Vec2[]
   // local-space AABB in pixels (for quick reject); updated at spawn from shape

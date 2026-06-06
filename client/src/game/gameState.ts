@@ -161,6 +161,7 @@ export const loadGameState = (): RunState | null => {
       if (b.kind == null) b.kind = 'normal'
       if (b.vulnNormal == null) b.vulnNormal = { x: 0, y: 0 }
       if (!Number.isFinite(b.dropAnimExtra)) b.dropAnimExtra = 0
+      if (!Number.isFinite(b.shieldFlashSec)) b.shieldFlashSec = 0
     }
     // Also ensure dropTimerSec doesn't exceed the interval
     if (freshState.dropTimerSec > freshState.dropIntervalSec) {

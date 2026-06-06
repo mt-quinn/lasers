@@ -30,21 +30,51 @@ import type { MusicSignals } from '../game/runState'
 const AUDIUS_APP_NAME = 'lasers'
 const AUDIUS_API_BASE = 'https://discoveryprovider.audius.co/v1'
 
-// Soundtrack: the "ABDUCTION" experimental bass / dubstep playlist, played
-// shuffled — a random track on fresh load, then a new random track after each
-// one finishes.
-// https://audius.co/cd91x/playlist/🛸abduction👽-experimental-bass-140-dubstep-more
-const AUDIUS_PLAYLIST_ID = 'MGyv5xm'
+// Tempo-matched soundtrack. Instead of a fixed playlist, each track is chosen to
+// match the board's current drop rate: the field steps on a deterministic
+// metronome (the sim's dropIntervalSec) and we pick a song whose BPM is a clean
+// power-of-two multiple of that step rate. The music is therefore *tied to* the
+// board's movement without ever *driving* difficulty — the descent schedule is
+// fixed and identical every run. See targetBpmFromTempo() for the octave-folding
+// that keeps the BPM rhythmically locked to the board.
+const AUDIUS_GENRE = 'Electronic'
 
-// Fallback if the playlist can't be fetched: "Andrea Bedoya - To Release".
+// One-octave search window. Folding the board's steps-per-minute into [LO, HI]
+// (a 2x span) by halving/doubling guarantees the picked BPM is always an exact
+// power-of-two relation to the steps, and lands in a range the catalog actually
+// has tracks for across the entire difficulty ramp.
+const BPM_WINDOW_LO = 85
+const BPM_WINDOW_HI = 170
+
+// Resilient fallback when a tempo search yields nothing playable (offline, etc.)
+// so music never goes silent: "Andrea Bedoya - To Release".
 // Resolved from https://audius.co/yabedoyag/andrea-bedoya-to-release-
 export const DEFAULT_TRACK_ID = 'NlE37'
 
 const streamUrl = (trackId: string) =>
   `${AUDIUS_API_BASE}/tracks/${trackId}/stream?app_name=${AUDIUS_APP_NAME}`
 
-const playlistTracksUrl = (playlistId: string) =>
-  `${AUDIUS_API_BASE}/playlists/${playlistId}/tracks?app_name=${AUDIUS_APP_NAME}`
+// Full search exposes the BPM/genre filters plus each track's bpm and
+// streamability flags. We omit `query` (filter-only) and sort by popularity so
+// the soundtrack skews toward recognizable, well-produced tracks.
+const trackSearchUrl = (bpmMin: number, bpmMax: number) =>
+  `${AUDIUS_API_BASE}/full/tracks/search?app_name=${AUDIUS_APP_NAME}` +
+  `&genre=${encodeURIComponent(AUDIUS_GENRE)}` +
+  `&bpm_min=${bpmMin}&bpm_max=${bpmMax}` +
+  `&sort_method=popular&limit=50`
+
+// Minimal shape of an Audius track object from the full search endpoint.
+interface AudiusTrack {
+  id?: string
+  bpm?: number
+  duration?: number
+  genre?: string
+  is_streamable?: boolean
+  is_available?: boolean
+  is_delete?: boolean
+  is_stream_gated?: boolean
+  title?: string
+}
 
 type EngineSignals = Omit<MusicSignals, 'intensity'>
 
@@ -74,14 +104,15 @@ class MusicEngine {
 
   private trackId = DEFAULT_TRACK_ID
 
-  // Shuffled-playlist state. The track ids are fetched once; `shuffleOrder` is a
-  // shuffled permutation we walk with `shuffleIdx`. When we run off the end we
-  // reshuffle and start over, so the whole playlist loops with a fresh shuffle.
-  // `pickedInitial` guards so we only choose the starting track on first play.
-  private playlistIds: string[] = []
-  private shuffleOrder: string[] = []
-  private shuffleIdx = 0
-  private pickedInitial = false
+  // Tempo-matched selection state. `boardDropIntervalSec` is fed every frame
+  // from the sim (App.tsx) so each pick reflects the *current* drop rate.
+  // `recentTrackIds` prevents repeating songs back-to-back, `picking` guards
+  // against overlapping async picks, and `currentBpm` is the BPM of the playing
+  // track (debug / telemetry).
+  private boardDropIntervalSec = 0.9
+  private recentTrackIds: string[] = []
+  private picking = false
+  private currentBpm = 0
 
   // Stream failover state. The Audius discovery provider load-balances the
   // /stream endpoint across community content nodes, some of which are
@@ -166,65 +197,98 @@ class MusicEngine {
 
   private onAudioEnded = () => {
     if (!this.wantPlaying) return
-    void this.advanceTrack()
+    void this.pickAndPlayNext()
   }
 
-  // Fetch the playlist's track ids once. On first success, also choose the
-  // random starting track. Safe to call repeatedly; it no-ops once loaded and
-  // retries (on a later play/track-end) if a previous fetch failed.
-  private async ensurePlaylist(): Promise<void> {
-    if (this.playlistIds.length === 0) {
+  // Tell the engine the board's current step interval (seconds/row). Cheap —
+  // called every frame from the game loop — and read at the next track pick to
+  // choose a BPM that matches how fast the field is descending right now.
+  setBoardTempo(dropIntervalSec: number) {
+    if (Number.isFinite(dropIntervalSec) && dropIntervalSec > 0) {
+      this.boardDropIntervalSec = dropIntervalSec
+    }
+  }
+
+  getCurrentBpm() {
+    return this.currentBpm
+  }
+
+  // Fold the board's steps-per-minute into the one-octave window by halving /
+  // doubling. The result is always a clean power-of-two relation to the step
+  // rate (the beat lands on every step, every other step, two steps per beat,
+  // …) so the track stays locked to the board anywhere on the ramp.
+  private targetBpmFromTempo(): number {
+    const interval = Math.min(3, Math.max(0.15, this.boardDropIntervalSec))
+    let bpm = 60 / interval
+    while (bpm >= BPM_WINDOW_HI) bpm /= 2
+    while (bpm < BPM_WINDOW_LO) bpm *= 2
+    return bpm
+  }
+
+  private static isPlayable(t: AudiusTrack): boolean {
+    return (
+      typeof t.id === 'string' &&
+      t.is_streamable !== false &&
+      t.is_available !== false &&
+      t.is_delete !== true &&
+      t.is_stream_gated !== true &&
+      typeof t.duration === 'number' &&
+      t.duration >= 45 &&
+      t.duration <= 900
+    )
+  }
+
+  private async searchTracks(bpmMin: number, bpmMax: number): Promise<AudiusTrack[]> {
+    const bust = Date.now().toString(36)
+    const res = await fetch(`${trackSearchUrl(bpmMin, bpmMax)}&_=${bust}`, { mode: 'cors' })
+    if (!res.ok) return []
+    const json = (await res.json()) as { data?: AudiusTrack[] }
+    return Array.isArray(json.data) ? json.data : []
+  }
+
+  // Find playable tracks near `centerBpm`, widening the ± band until we have a
+  // healthy pool (the "ranges to make sure we find something"). Keeps the
+  // largest pool found across the attempted widths.
+  private async poolForBpm(centerBpm: number): Promise<AudiusTrack[]> {
+    let best: AudiusTrack[] = []
+    for (const band of [6, 14, 28]) {
+      const lo = Math.max(40, Math.round(centerBpm - band))
+      const hi = Math.round(centerBpm + band)
+      let playable: AudiusTrack[]
       try {
-        const bust = Date.now().toString(36)
-        const res = await fetch(`${playlistTracksUrl(AUDIUS_PLAYLIST_ID)}&_=${bust}`, { mode: 'cors' })
-        if (res.ok) {
-          const json = (await res.json()) as { data?: Array<{ id?: unknown }> }
-          const ids = Array.isArray(json.data)
-            ? json.data
-                .map((t) => (typeof t?.id === 'string' ? t.id : null))
-                .filter((x): x is string => !!x)
-            : []
-          if (ids.length > 0) this.playlistIds = ids
-        }
+        playable = (await this.searchTracks(lo, hi)).filter(MusicEngine.isPlayable)
       } catch {
-        // Keep the DEFAULT_TRACK_ID fallback; we'll retry later.
+        playable = []
       }
+      if (playable.length > best.length) best = playable
+      if (best.length >= 6) break
     }
-    if (!this.pickedInitial && this.playlistIds.length > 0) {
-      this.reshuffle()
-      this.shuffleIdx = 0
-      this.trackId = this.shuffleOrder[0]!
-      this.pickedInitial = true
+    return best
+  }
+
+  // Choose the next track to match the board's current tempo. Leaves trackId
+  // unchanged (keeping the resilient fallback) if the network or catalog yields
+  // nothing playable, so music never goes silent.
+  private async pickTrackForTempo(): Promise<void> {
+    if (this.picking) return
+    this.picking = true
+    try {
+      const pool = await this.poolForBpm(this.targetBpmFromTempo())
+      if (pool.length === 0) return
+      const fresh = pool.filter((t) => !this.recentTrackIds.includes(t.id!))
+      const choices = fresh.length > 0 ? fresh : pool
+      const pick = choices[Math.floor(Math.random() * choices.length)]!
+      this.trackId = pick.id!
+      this.currentBpm = typeof pick.bpm === 'number' ? pick.bpm : 0
+      this.recentTrackIds.push(pick.id!)
+      if (this.recentTrackIds.length > 8) this.recentTrackIds.shift()
+    } finally {
+      this.picking = false
     }
   }
 
-  // Build a fresh shuffled order (Fisher–Yates). When there's a current track,
-  // avoid putting it first so a reshuffle never plays the same song twice in a
-  // row across the loop boundary.
-  private reshuffle(): void {
-    const order = [...this.playlistIds]
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[order[i], order[j]] = [order[j]!, order[i]!]
-    }
-    if (order.length > 1 && order[0] === this.trackId) {
-      ;[order[0], order[1]] = [order[1]!, order[0]!]
-    }
-    this.shuffleOrder = order
-  }
-
-  private async advanceTrack(): Promise<void> {
-    await this.ensurePlaylist()
-    if (this.shuffleOrder.length > 0) {
-      this.shuffleIdx += 1
-      // Off the end of the shuffle → loop the playlist with a new shuffle.
-      if (this.shuffleIdx >= this.shuffleOrder.length) {
-        this.reshuffle()
-        this.shuffleIdx = 0
-      }
-      this.trackId = this.shuffleOrder[this.shuffleIdx]!
-    }
-    // With an empty playlist this simply replays the current fallback track.
+  private async pickAndPlayNext(): Promise<void> {
+    await this.pickTrackForTempo()
     void this.loadAndPlay()
   }
 
@@ -340,11 +404,11 @@ class MusicEngine {
     if (!this.wantPlaying) return
     const audio = this.audio
     if (!audio) return
-    // No source yet, or the current source errored out: pick the (random)
-    // playlist track and resolve a node. ensurePlaylist sets the starting track
-    // on first play; on later resumes it's a no-op so we keep the same song.
+    // No source yet, or the current source errored out: pick a tempo-matched
+    // track and resolve a node. This only runs when we actually need a new song
+    // (first play / after an error), so a plain resume keeps the current track.
     if (!audio.src || audio.error) {
-      await this.ensurePlaylist()
+      await this.pickTrackForTempo()
       // Bail if music was turned off or the element changed while we fetched.
       if (this.audio !== audio || !this.wantPlaying) return
       void this.loadAndPlay()
