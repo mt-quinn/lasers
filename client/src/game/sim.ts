@@ -156,6 +156,11 @@ export const stepSim = (s: RunState, dt: number) => {
   // `creep` keeps nudging upward forever after so even the best players meet a
   // ceiling eventually (their reaction/routing speed, never an HP wall).
   const RAMP_SECONDS = 210
+  // Global pace multiplier on the two time-based speed levers (descent metronome
+  // + spawn interval). >1 slows the game uniformly at every point in the ramp:
+  // 1.15 = ~15% slower overall. Tune this single knob to dial overall difficulty
+  // pace without reshaping the curve.
+  const GAME_PACE_SCALE = 1.15
   // Front-load the curve: `prog` rises fast in the first ~20s (pow < 1) so the
   // board is already busy and demands routing right away, then eases toward the
   // steady-state. A flat-early curve (smoothstep) was exactly what made the
@@ -167,7 +172,7 @@ export const stepSim = (s: RunState, dt: number) => {
   // descent interval is the "gravity": brisk from the very start so pieces
   // actually travel down the board (and you must route immediately), tightening
   // to a fast floor.
-  s.dropIntervalSec = Math.max(0.2, 0.7 + (0.3 - 0.7) * prog - 0.1 * creep)
+  s.dropIntervalSec = Math.max(0.2, 0.7 + (0.3 - 0.7) * prog - 0.1 * creep) * GAME_PACE_SCALE
 
   const layout = getArenaLayout(s.view)
   const cellSize = 40
@@ -192,7 +197,8 @@ export const stepSim = (s: RunState, dt: number) => {
   // Arrival rate and the on-screen cap ramp together: more simultaneous threats
   // to route between as you go deeper.
   s.spawnTimer -= dt
-  const spawnEveryBase = Math.max(0.34, 0.62 + (0.42 - 0.62) * prog - 0.08 * creep) // 0.62s -> 0.42s -> ~0.34s
+  const spawnEveryBase =
+    Math.max(0.34, 0.62 + (0.42 - 0.62) * prog - 0.08 * creep) * GAME_PACE_SCALE // ~0.71s -> 0.48s -> ~0.39s after 15% slowdown
   const maxBlocksBase = Math.floor(7 + 8 * prog + 4 * creep) // 7 -> 15 -> ~19
 
   // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
