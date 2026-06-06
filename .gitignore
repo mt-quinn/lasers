@@ -31,4 +31,7 @@ coverage/
 # Reference material should not be committed
 REFERENCE GAME/
 
+# Separate nested project / scratch checkout
+cubic-cleanup/
+
 
