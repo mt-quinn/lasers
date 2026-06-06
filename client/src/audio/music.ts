@@ -147,6 +147,7 @@ class MusicEngine {
 
   private onAudioHealthy = () => {
     this.loadAttempt = 0
+    this.notifyNeedsUnlock()
   }
 
   private onAudioError = () => {
@@ -254,14 +255,66 @@ class MusicEngine {
         this.retryTimer = null
       }
       this.audio?.pause()
+      this.notifyNeedsUnlock()
       return
     }
     // Resume / (re)start inside whatever gesture toggled this on.
     void this.start()
+    this.notifyNeedsUnlock()
   }
 
   isWantPlaying() {
     return this.wantPlaying
+  }
+
+  // ---- "Audio needs unlock" subscription --------------------------------
+  //
+  // On mobile (iOS Safari especially) the player's first interaction is a
+  // tap-and-drag to steer the beam, and WebKit refuses to resume an
+  // AudioContext from inside a drag gesture. So even though we *want* music
+  // playing, it can stay silent until the player does a plain tap somewhere.
+  // The UI subscribes to this and shows a "Tap to resume" prompt (whose click
+  // IS a valid activation gesture) whenever audio is wanted but not running.
+  private needsUnlockListeners = new Set<(v: boolean) => void>()
+  private lastNeedsUnlock: boolean | null = null
+
+  private computeNeedsUnlock(): boolean {
+    if (!this.wantPlaying) return false
+    const ctx = this.ctx
+    // No graph yet, or the context isn't actually running → needs a gesture.
+    if (!ctx || ctx.state !== 'running') return true
+    const audio = this.audio
+    if (!audio) return true
+    return audio.paused || audio.ended || !!audio.error
+  }
+
+  private notifyNeedsUnlock() {
+    const v = this.computeNeedsUnlock()
+    if (v === this.lastNeedsUnlock) return
+    this.lastNeedsUnlock = v
+    for (const l of this.needsUnlockListeners) {
+      try {
+        l(v)
+      } catch {
+        // A bad subscriber must not break the others.
+      }
+    }
+  }
+
+  getAudioNeedsUnlock(): boolean {
+    return this.computeNeedsUnlock()
+  }
+
+  subscribeAudioNeedsUnlock(listener: (v: boolean) => void): () => void {
+    this.needsUnlockListeners.add(listener)
+    try {
+      listener(this.computeNeedsUnlock())
+    } catch {
+      // Same guarantee as notifyNeedsUnlock().
+    }
+    return () => {
+      this.needsUnlockListeners.delete(listener)
+    }
   }
 
   // Must be called from inside a user gesture the first time (autoplay).
@@ -324,6 +377,9 @@ class MusicEngine {
       this.source = source
       this.analyser = analyser
       this.freq = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount))
+      // Surface suspended↔running transitions so the "tap to resume" prompt
+      // can show/hide itself as the OS moves the context around.
+      ctx.addEventListener('statechange', () => this.notifyNeedsUnlock())
     } catch {
       // Analyser unavailable; audio (if any) still plays, signals stay zero.
     }
@@ -415,6 +471,11 @@ class MusicEngine {
 
     const s = this.signals
     s.playing = playing
+
+    // Cheap per-frame check so the "tap to resume" prompt tracks async audio
+    // state transitions (autoplay block, iOS session loss) without wiring every
+    // possible event; broadcasts only when the boolean actually flips.
+    this.notifyNeedsUnlock()
 
     // Decay the beat flash regardless of playback so it never sticks on.
     s.beat = Math.max(0, s.beat - dt / 0.16)

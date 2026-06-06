@@ -532,6 +532,76 @@
   user-select: none;
 }
 
+/* Mobile "Tap to resume music" prompt — full-area tap target so any touch
+   counts as an activation gesture that can unlock the AudioContext. */
+.audioUnlock {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 16%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  animation: audioUnlockIn 0.3s ease both;
+}
+
+.audioUnlockCard {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 1.05rem;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(20, 16, 40, 0.92), rgba(12, 9, 26, 0.92));
+  border: 1px solid rgba(120, 226, 255, 0.7);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 18px rgba(110, 210, 255, 0.45),
+    0 14px 30px rgba(0, 0, 0, 0.5);
+  color: #eafaff;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  animation: audioUnlockPulse 1.8s ease-in-out infinite;
+}
+
+.audioUnlockIcon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+@keyframes audioUnlockIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes audioUnlockPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.35),
+      0 0 18px rgba(110, 210, 255, 0.4),
+      0 14px 30px rgba(0, 0, 0, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.35),
+      0 0 26px rgba(110, 210, 255, 0.7),
+      0 14px 30px rgba(0, 0, 0, 0.5);
+  }
+}
+
 /* Upgrades UI: high-polish three-card chooser. */
 .upgradeOverlay {
   position: absolute;

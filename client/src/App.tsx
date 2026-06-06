@@ -74,6 +74,15 @@ export default function App() {
   }))
 
   const [musicOn, setMusicOn] = useState<boolean>(() => musicEngine.isWantPlaying())
+  // Mobile-only "Tap to resume" prompt: shown when music is wanted but the
+  // AudioContext isn't running (iOS won't unlock audio from a drag gesture).
+  const [audioNeedsUnlock, setAudioNeedsUnlock] = useState<boolean>(() =>
+    musicEngine.getAudioNeedsUnlock(),
+  )
+  const isTouchDevice = useRef<boolean>(
+    typeof window !== 'undefined' &&
+      ('ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0),
+  ).current
   const [highScores, setHighScores] = useState<HighScoreEntry[]>(() => loadHighScores())
   const [nameDraft, setNameDraft] = useState<string>(() => loadLastPlayerName())
   const [showNamePrompt, setShowNamePrompt] = useState(false)
@@ -200,6 +209,9 @@ export default function App() {
   useEffect(() => {
     if (musicAudioRef.current) musicEngine.attach(musicAudioRef.current)
   }, [])
+
+  // Mirror the engine's "needs unlock" signal so we can show the tap prompt.
+  useEffect(() => musicEngine.subscribeAudioNeedsUnlock(setAudioNeedsUnlock), [])
 
   // Start the soundtrack on the first user gesture (autoplay policy requires
   // it). Listeners stay installed so we also recover audio after the tab is
@@ -529,6 +541,28 @@ export default function App() {
                 {!musicOn && <span className="muteSlash" aria-hidden="true" />}
               </button>
             </div>
+
+            {/* Mobile audio-unlock prompt. A drag (the beam control) can't
+                resume audio on iOS; a tap on this overlay is a valid activation
+                gesture. Hidden once audio runs, and suppressed while a menu is
+                up (its buttons already unlock on tap). */}
+            {audioNeedsUnlock && isTouchDevice && !hud.paused && !hud.gameOver && (
+              <button
+                type="button"
+                className="audioUnlock"
+                aria-label="Tap to resume audio"
+                onClick={() => {
+                  musicEngine.setWantPlaying(true)
+                  setMusicOn(true)
+                  void musicEngine.start()
+                }}
+              >
+                <span className="audioUnlockCard">
+                  <span className="audioUnlockIcon" aria-hidden="true">♪</span>
+                  <span className="audioUnlockText">Tap to resume music</span>
+                </span>
+              </button>
+            )}
 
             {/* Pause overlay. */}
             {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && pauseStats && (
