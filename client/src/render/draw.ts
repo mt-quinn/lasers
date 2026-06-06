@@ -2249,9 +2249,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const cy = wp.y
       const wScale = clamp(wp.scale, 0.18, 1.6)
       const grabbed = s.well.grabbed
-      // The lens is "energized" (its active glow is live) whenever it's
-      // parked/steering the beam, not while it's being carried. Held = inert.
-      const active = !grabbed
+      // The lens is always energized — there's no inert "held" damage state
+      // anymore, so the active glow/swirl stays live even while it's being
+      // carried (it reads better and the steering lens never looks "off").
+      const active = true
       // Event-horizon shadow radius. The whole black hole scales off this — and
       // off the perspective depth so it shrinks as it travels up the board.
       const rCore = (16 + (grabbed ? 2 : 0)) * wScale
@@ -2445,18 +2446,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           ctx.stroke()
         }
         ctx.shadowBlur = 0
-      }
-
-      // Held (inert) tell: a dim, dashed neutral ring — clearly a "carried"
-      // handle, deliberately NOT energetic so picking it up never looks active.
-      if (grabbed) {
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.setLineDash([4, 5])
-        ctx.lineWidth = 1.5
-        ctx.strokeStyle = hsl(hue, 22, 82, 0.32)
-        ell(rCore + 5, rCore + 5, 0)
-        ctx.stroke()
-        ctx.setLineDash([])
       }
 
       ctx.restore()
