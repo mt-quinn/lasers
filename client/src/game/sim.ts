@@ -2,7 +2,7 @@ import { add, clamp, mul, normalize, reflect } from './math'
 import type { Vec2 } from './math'
 import type { RunState, MirrorFeature } from './runState'
 import { raycastSceneThick } from './raycast'
-import { spawnBoardThing, spawnPrismAt } from './spawn'
+import { spawnBoardThing, spawnPrismAt, spawnShatterChildren } from './spawn'
 import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
@@ -264,10 +264,11 @@ export const stepSim = (s: RunState, dt: number) => {
 
     // Snap logical positions forward immediately (physics/collision use this).
     // Fast-droppers fall two cells per step (prioritization pressure) and get an
-    // extra cell of visual catch-up so they ease instead of snapping.
+    // extra cell of visual catch-up so they ease instead of snapping. Shatter
+    // pieces descend fast too (they're a fast-class threat that splits on death).
     s.depth += 1
     for (const b of s.blocks) {
-      if (b.kind === 'fast') {
+      if (b.kind === 'fast' || b.kind === 'shatter') {
         b.pos.y += b.cellSize * 2
         b.dropAnimExtra = b.cellSize
       } else {
@@ -521,14 +522,15 @@ export const stepSim = (s: RunState, dt: number) => {
     const b = s.blocks.find((bb) => bb.id === blockId)
     if (!b) return
 
-    // Armored: only the glowing weak face takes damage. A hit on a shielded face
-    // deals nothing (the beam still pierces past it at the call site), so you must
-    // route the beam onto the weak side. Make that obvious: spray cold blue-white
-    // "deflection" sparks that grind off the plate, and flag the block so the
-    // renderer flashes a no-damage cue and pulses the real weak face.
-    if (b.kind === 'armored' && (b.vulnNormal.x !== 0 || b.vulnNormal.y !== 0)) {
-      const aligned = normal.x * b.vulnNormal.x + normal.y * b.vulnNormal.y
-      if (aligned <= 0.45) {
+    // Armored underside: a hit on the bottom face deflects (deals nothing — the
+    // beam still pierces past it at the call site), so the straight-up beam can
+    // never damage it; you must route the beam around to a side or the top. The
+    // bottom face's outward normal points DOWN (+y), so a downward-pointing hit
+    // normal means the beam struck the armored underside. Make that obvious:
+    // spray cold blue-white "deflection" sparks and flag the block so the
+    // renderer flashes a no-damage cue on the armored base.
+    if (b.kind === 'armored') {
+      if (normal.y >= 0.45) {
         b.shieldFlashSec = SHIELD_FLASH_SEC
         const tx = -normal.y
         const ty = normal.x
@@ -714,6 +716,14 @@ export const stepSim = (s: RunState, dt: number) => {
       }
 
       s.blocks = s.blocks.filter((x) => x.id !== b.id)
+
+      // Shatter: the kill scores normally above, but the piece doesn't just
+      // vanish — it breaks into a cluster of slow 1x1 blocks across its footprint
+      // (added after the parent is removed; they enter the scene next frame, so
+      // the same beam pass can't instantly re-clear them).
+      if (b.kind === 'shatter') {
+        spawnShatterChildren(s, b)
+      }
 
       const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }
       if (typeof nav.vibrate === 'function') {

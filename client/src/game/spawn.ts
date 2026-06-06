@@ -59,10 +59,15 @@ const rollBlockKind = (tSec: number): BlockKind => {
   const pFast = clamp((tSec - 30) / 90, 0, 1) * 0.2 // ramps to ~20%
   const pArmored = clamp((tSec - 60) / 120, 0, 1) * 0.16 // ramps to ~16%
   const pChrome = clamp((tSec - 100) / 150, 0, 1) * 0.1 // ramps to ~10%
+  // Shatter is the late-game spice: shows up ~2 min in and stays uncommon. On
+  // death it multiplies into a cluster of slow 1x1s, so it's a deliberate
+  // difficulty spike rather than a constant presence.
+  const pShatter = clamp((tSec - 120) / 150, 0, 1) * 0.1 // ramps to ~10%
   const r = Math.random()
-  if (r < pChrome) return 'chrome'
-  if (r < pChrome + pArmored) return 'armored'
-  if (r < pChrome + pArmored + pFast) return 'fast'
+  if (r < pShatter) return 'shatter'
+  if (r < pShatter + pChrome) return 'chrome'
+  if (r < pShatter + pChrome + pArmored) return 'armored'
+  if (r < pShatter + pChrome + pArmored + pFast) return 'fast'
   return 'normal'
 }
 
@@ -84,24 +89,14 @@ type PlaceOpts = {
   // Keep the piece out of the central column (mirrors, which would otherwise
   // reflect the straight-up beam back down and stall the game).
   avoidCenterHalf?: number
-  // Keep the piece off one side wall so a routed beam can reach that face.
-  // -1 = hold off the LEFT wall, +1 = hold off the RIGHT wall. Used for armored
-  // blocks whose weak (damageable) side points at that wall.
-  clearWallSide?: -1 | 0 | 1
-  clearWallPx?: number
 }
 
 const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) => {
   const avoidCenterHalf = opts.avoidCenterHalf ?? 0
-  const clearWallSide = opts.clearWallSide ?? 0
-  const clearWallPx = opts.clearWallPx ?? 0
   const pad = 18
   const gap = 16
-  let xMin = pad
-  let xMax = s.view.width - wPx - pad
-  // Reserve a routing lane between the weak face and its wall.
-  if (clearWallSide < 0) xMin = Math.min(xMax, xMin + clearWallPx)
-  else if (clearWallSide > 0) xMax = Math.max(xMin, xMax - clearWallPx)
+  const xMin = pad
+  const xMax = s.view.width - wPx - pad
 
   const centerX = s.view.width / 2
   const genX = () => {
@@ -300,8 +295,7 @@ export const spawnBlock = (s: RunState) => {
   const cornerRadius = cellSize * 0.5 - 0.6
 
   // Routing-focused kind (scheduled introduction; early game is normal-only).
-  // `let` because a piece with no fair armored weak face is demoted to normal.
-  let kind = rollBlockKind(t)
+  const kind = rollBlockKind(t)
 
   // Shape weighting: simpler early, bigger later. Chrome is always a single cell
   // so its reflective phase is brief — it dies fast and can't wall the muzzle.
@@ -312,7 +306,15 @@ export const spawnBlock = (s: RunState) => {
         ? SHAPES.filter((sh) => sh.id !== 'Dot')
         : SHAPES
 
-  const shape = kind === 'chrome' ? (SHAPES.find((sh) => sh.id === 'Dot') ?? randOf(pool)) : randOf(pool)
+  // Shatter must be multi-cell so it actually fragments into a cluster (a 1x1
+  // would just become a single block), so never let it roll the Dot.
+  const shatterPool = pool.filter((sh) => sh.id !== 'Dot')
+  const shape =
+    kind === 'chrome'
+      ? (SHAPES.find((sh) => sh.id === 'Dot') ?? randOf(pool))
+      : kind === 'shatter'
+        ? randOf(shatterPool.length > 0 ? shatterPool : pool)
+        : randOf(pool)
   const cells = normalizeCellsToOrigin(shape.cells)
   const bounds = shapeCellBounds(cells)
   const wPx = bounds.w * cellSize
@@ -327,27 +329,10 @@ export const spawnBlock = (s: RunState) => {
   const HP_PER_CELL = 8
   const hpMax = Math.max(1, Math.round(HP_PER_CELL * cells.length))
 
-  // Armored weak face: a non-bottom side so the straight-up beam can't trivially
-  // reach it — you must bend/route the beam onto it. The weak face must also be a
-  // *fair* target, i.e. span at least 2 cells: hitting the 1-cell-tall side of a
-  // long horizontal bar (I3/I4) isn't fun, so those only ever expose their wide
-  // top. A piece with no fair face at all (a 1x1) can't be a meaningful armored
-  // block, so it's demoted to a normal block.
-  let vulnNormal = { x: 0, y: 0 }
-  if (kind === 'armored') {
-    const sideFair = bounds.h >= 2 // left/right faces tall enough to aim at
-    const topFair = bounds.w >= 2 // top face wide enough to aim at
-    const r = Math.random()
-    if (sideFair && topFair) {
-      vulnNormal = r < 0.42 ? { x: -1, y: 0 } : r < 0.84 ? { x: 1, y: 0 } : { x: 0, y: -1 }
-    } else if (sideFair) {
-      vulnNormal = r < 0.5 ? { x: -1, y: 0 } : { x: 1, y: 0 }
-    } else if (topFair) {
-      vulnNormal = { x: 0, y: -1 }
-    } else {
-      kind = 'normal'
-    }
-  }
+  // Armored pieces now have an armored UNDERSIDE: the straight-up beam deflects
+  // off the bottom, but the sides and top all take damage, so the puzzle is just
+  // "route the beam around to any other face." No per-block weak-face data or
+  // wall-clearance placement is needed anymore — they can spawn anywhere.
 
   // Gold blocks are a normal-kind bonus only (no special-kind gold).
   const isGold = kind === 'normal' && Math.random() < s.stats.goldSpawnChance
@@ -384,14 +369,8 @@ export const spawnBlock = (s: RunState) => {
   const hpAnchorLocalPx = { x: best.x * cellSize, y: best.y * cellSize }
 
   // Spawn placement: never overlap any existing block AABB (including other
-  // newly-spawned blocks above). Armored pieces with a side-facing weak face are
-  // held off that wall so there's room to route the beam onto it (a left-weak
-  // block never spawns flush against the left wall, etc.).
-  const placeOpts: PlaceOpts =
-    kind === 'armored' && vulnNormal.x !== 0
-      ? { clearWallSide: vulnNormal.x < 0 ? -1 : 1, clearWallPx: cellSize * 1.5 }
-      : {}
-  const placed = placeAabb(s, wPx, hPx, placeOpts)
+  // newly-spawned blocks above). No kind-specific placement constraints remain.
+  const placed = placeAabb(s, wPx, hPx)
 
   const block: BlockEntity = {
     id: s.nextBlockId++,
@@ -406,7 +385,6 @@ export const spawnBlock = (s: RunState) => {
     xpValue,
     isGold,
     kind,
-    vulnNormal,
     dropAnimExtra: 0,
     shieldFlashSec: 0,
     loop,
@@ -417,6 +395,43 @@ export const spawnBlock = (s: RunState) => {
   s.blocks.push(block)
   s.blocksSpawned += 1
   s.normalBlocksSinceFeature = Math.min(3, s.normalBlocksSinceFeature + 1)
+}
+
+// Shatter payload: when a shatter piece dies it breaks into one full-HP 1x1
+// "normal" block per cell of its footprint, materialized in place (same grid
+// cells the parent occupied at the moment of death) so the threat multiplies
+// right where you let it get to. Children descend at the normal slow rate.
+export const spawnShatterChildren = (s: RunState, parent: BlockEntity) => {
+  const cs = parent.cellSize
+  const cornerRadius = parent.cornerRadius
+  const childCells = [{ x: 0, y: 0 }]
+  const loop = buildCellLoop(childCells)
+  const localAabb = computeLocalAabbPx(childCells, cs)
+  // Center of the single cell — always inside the shape.
+  const hpAnchorLocalPx = { x: 0.5 * cs, y: 0.5 * cs }
+  const HP_PER_CELL = 8
+
+  for (const c of parent.cells) {
+    const child: BlockEntity = {
+      id: s.nextBlockId++,
+      cells: childCells.map((cc) => ({ ...cc })),
+      cellSize: cs,
+      cornerRadius,
+      pos: { x: parent.pos.x + c.x * cs, y: parent.pos.y + c.y * cs },
+      vel: { x: 0, y: 0 },
+      hpMax: HP_PER_CELL,
+      hp: HP_PER_CELL,
+      xpValue: 1,
+      isGold: false,
+      kind: 'normal',
+      dropAnimExtra: 0,
+      shieldFlashSec: 0,
+      loop: loop.map((p) => ({ ...p })),
+      localAabb: { ...localAabb },
+      hpAnchorLocalPx: { ...hpAnchorLocalPx },
+    }
+    s.blocks.push(child)
+  }
 }
 
 

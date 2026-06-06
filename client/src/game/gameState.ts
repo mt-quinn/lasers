@@ -158,10 +158,11 @@ export const loadGameState = (): RunState | null => {
     freshState.stats.dps = 20
     freshState.stats.maxPierces = 1
     if (!Number.isFinite(freshState.stats.pierceFalloff)) freshState.stats.pierceFalloff = 0.8
-    // MIGRATION: ensure routing-kind fields exist on any merged blocks.
+    // MIGRATION: ensure routing-kind fields exist on any merged blocks. (The old
+    // per-block `vulnNormal` is gone — armored is now a fixed armored-underside,
+    // so any leftover field on a saved block is simply ignored.)
     for (const b of freshState.blocks) {
       if (b.kind == null) b.kind = 'normal'
-      if (b.vulnNormal == null) b.vulnNormal = { x: 0, y: 0 }
       if (!Number.isFinite(b.dropAnimExtra)) b.dropAnimExtra = 0
       if (!Number.isFinite(b.shieldFlashSec)) b.shieldFlashSec = 0
     }

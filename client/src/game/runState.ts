@@ -71,11 +71,15 @@ export type UpgradeOffer = {
 // you must route the beam, not how long you hold it:
 // - normal: damageable from anywhere; the beam pierces it.
 // - fast: descends two cells per step (prioritization pressure).
-// - armored: only its glowing weak face takes damage; the beam pierces the
-//   shielded faces harmlessly, so you must route the beam onto the weak side.
+// - armored: armored UNDERSIDE — the straight-up beam is deflected harmlessly
+//   off the bottom face, but every other face (sides + top) takes damage, so you
+//   must route the beam around to hit it from a side or above.
 // - chrome: reflects the beam (scrambling your routing) and burns through fast
 //   under sustained contact.
-export type BlockKind = 'normal' | 'fast' | 'armored' | 'chrome'
+// - shatter: a fast descender that, when destroyed, breaks into a cluster of 1x1
+//   slow normal blocks filling its footprint — killing it multiplies the threat
+//   instead of clearing it.
+export type BlockKind = 'normal' | 'fast' | 'armored' | 'chrome' | 'shatter'
 
 export type BlockEntity = {
   id: number
@@ -90,14 +94,11 @@ export type BlockEntity = {
   xpValue: number
   isGold: boolean
   kind: BlockKind
-  // Armored only: outward normal of the weak face (damage applies when the beam's
-  // hit normal points the same way). {0,0} = vulnerable everywhere.
-  vulnNormal: Vec2
   // Extra per-block visual drop offset (px) so fast double-steppers ease smoothly
   // instead of snapping. Decays to 0 alongside the global drop animation.
   dropAnimExtra: number
-  // Armored only: counts down after a wrong-side (shielded) beam hit so the
-  // renderer can flash a "deflected, no damage" cue and pulse the weak face.
+  // Armored only: counts down after a deflected (bottom-face) beam hit so the
+  // renderer can flash a "deflected, no damage" cue on the armored underside.
   shieldFlashSec: number
   // local-space loop points in *cell* units (not pixels), closed (last==first)
   loop: Vec2[]

@@ -764,46 +764,68 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.save()
 
         if (b.kind === 'armored') {
-          // Dark riveted steel everywhere EXCEPT one weak face, which glows green
-          // and carries an inward arrow — the only side that takes damage, so you
-          // must route the beam to strike it from that direction.
-          const vn = b.vulnNormal
-          const pulse = 0.5 + 0.5 * Math.sin(tNow * 6)
-          // 1 right after a wrong-side (shielded) hit, fading to 0 over
-          // SHIELD_FLASH_SEC (0.3s). Drives the "deflected, no damage" cue.
+          // Armored UNDERSIDE: a heavy riveted steel plate hugs the bottom edge
+          // (the only face that deflects the straight-up beam). The rest of the
+          // body keeps its identity color so it reads as damageable — the puzzle
+          // is "route the beam onto any other face." Downward deflector teeth
+          // along the base sell the bounce; a cold clang flashes the plate when
+          // the beam strikes the underside (no-damage feedback).
           const flash = Math.min(1, b.shieldFlashSec / 0.3)
+          const plateH = Math.min(h * 0.5, b.cellSize * 0.82)
+          const plateTop = ay + h - plateH
 
           drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
           ctx.save()
           ctx.clip()
-          // Darker plating so the green weak face reads instantly against it.
-          ctx.fillStyle = 'rgba(30,37,52,0.7)'
-          ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
-          // Icy clang wash over the whole plate while a shielded face is struck.
-          if (flash > 0) {
-            ctx.globalCompositeOperation = 'screen'
-            ctx.fillStyle = `rgba(150,205,255,${(0.42 * flash).toFixed(3)})`
-            ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
-          }
+
+          // Steel plate, clipped to whatever cells live in the bottom band.
+          ctx.globalCompositeOperation = 'source-over'
+          const plate = ctx.createLinearGradient(0, plateTop, 0, ay + h)
+          plate.addColorStop(0, 'rgba(58,68,86,0.86)')
+          plate.addColorStop(0.5, 'rgba(36,44,60,0.94)')
+          plate.addColorStop(1, 'rgba(20,26,38,0.96)')
+          ctx.fillStyle = plate
+          ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
+
+          // Diagonal hatch texture across the plate only.
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(ax - 2, plateTop, w + 4, plateH + 4)
+          ctx.clip()
           ctx.globalCompositeOperation = 'screen'
-          ctx.strokeStyle = 'rgba(150,166,194,0.12)'
+          ctx.strokeStyle = 'rgba(150,166,194,0.14)'
           ctx.lineWidth = 2
-          for (let x = -h; x < w + h; x += 12) {
+          for (let x = -plateH; x < w + plateH; x += 10) {
             ctx.beginPath()
-            ctx.moveTo(ax + x, ay)
-            ctx.lineTo(ax + x + h, ay + h)
+            ctx.moveTo(ax + x, plateTop)
+            ctx.lineTo(ax + x + plateH, plateTop + plateH)
             ctx.stroke()
           }
-          // Corner rivets reinforce the "bolted armor" read.
+          ctx.restore()
+
+          // Bright bevel lip along the top of the plate (the hard armor edge).
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = `rgba(${flash > 0 ? '190,225,255' : '170,188,214'},${(0.5 + 0.4 * flash).toFixed(3)})`
+          ctx.lineWidth = 2 + 2 * flash
+          ctx.beginPath()
+          ctx.moveTo(ax - 2, plateTop + 1)
+          ctx.lineTo(ax + w + 2, plateTop + 1)
+          ctx.stroke()
+
+          // Icy clang wash over the plate while the underside is being struck.
+          if (flash > 0) {
+            ctx.fillStyle = `rgba(150,205,255,${(0.5 * flash).toFixed(3)})`
+            ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
+          }
+
+          // Rivets along the plate's top corners.
           ctx.globalCompositeOperation = 'source-over'
-          ctx.fillStyle = 'rgba(190,202,224,0.5)'
+          ctx.fillStyle = 'rgba(196,208,230,0.55)'
           const rv = 2.2
           const ri = 6
           for (const [rx, ry] of [
-            [ax + ri, ay + ri],
-            [ax + w - ri, ay + ri],
-            [ax + ri, ay + h - ri],
-            [ax + w - ri, ay + h - ri],
+            [ax + ri, plateTop + ri],
+            [ax + w - ri, plateTop + ri],
           ] as const) {
             ctx.beginPath()
             ctx.arc(rx, ry, rv, 0, Math.PI * 2)
@@ -811,64 +833,25 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           }
           ctx.restore()
 
-          // Weak face: a thick pulsing green bar with a strong glow, hugging the
-          // vulnerable edge.
+          // Downward deflector teeth along the base: "the beam bounces off here."
           ctx.save()
           ctx.globalCompositeOperation = 'screen'
-          // A wrong-side hit forces the weak face to full brightness + bloom so
-          // the eye is pulled to where damage actually lands.
-          const mark = Math.max(pulse, flash)
-          ctx.strokeStyle = `rgba(120,255,170,${(0.7 + 0.3 * mark).toFixed(3)})`
-          ctx.shadowColor = 'rgba(120,255,170,0.95)'
-          ctx.shadowBlur = 8 + 8 * pulse + 18 * flash
-          ctx.lineWidth = 6 + 6 * flash
+          ctx.strokeStyle = `rgba(150,205,255,${(0.65 + 0.35 * flash).toFixed(3)})`
+          ctx.shadowColor = 'rgba(150,205,255,0.9)'
+          ctx.shadowBlur = 5 + 14 * flash
+          ctx.lineWidth = 2 + 2 * flash
           ctx.lineCap = 'round'
-          const inset = 4
-          const cxB = ax + w / 2
-          const cyB = ay + h / 2
-          ctx.beginPath()
-          if (vn.x < 0) {
-            ctx.moveTo(ax + inset, ay + inset)
-            ctx.lineTo(ax + inset, ay + h - inset)
-          } else if (vn.x > 0) {
-            ctx.moveTo(ax + w - inset, ay + inset)
-            ctx.lineTo(ax + w - inset, ay + h - inset)
-          } else if (vn.y < 0) {
-            ctx.moveTo(ax + inset, ay + inset)
-            ctx.lineTo(ax + w - inset, ay + inset)
-          } else {
-            ctx.moveTo(ax + inset, ay + h - inset)
-            ctx.lineTo(ax + w - inset, ay + h - inset)
-          }
-          ctx.stroke()
-
-          // Inward chevron pointing into the weak face: "strike from here".
-          const ar = Math.min(w, h) * 0.18 + 3
-          ctx.lineWidth = 4 + 4 * flash
           ctx.lineJoin = 'round'
-          ctx.beginPath()
-          if (vn.x < 0) {
-            const x0 = ax + inset + 3
-            ctx.moveTo(x0, cyB - ar)
-            ctx.lineTo(x0 + ar, cyB)
-            ctx.lineTo(x0, cyB + ar)
-          } else if (vn.x > 0) {
-            const x0 = ax + w - inset - 3
-            ctx.moveTo(x0, cyB - ar)
-            ctx.lineTo(x0 - ar, cyB)
-            ctx.lineTo(x0, cyB + ar)
-          } else if (vn.y < 0) {
-            const y0 = ay + inset + 3
-            ctx.moveTo(cxB - ar, y0)
-            ctx.lineTo(cxB, y0 + ar)
-            ctx.lineTo(cxB + ar, y0)
-          } else {
-            const y0 = ay + h - inset - 3
-            ctx.moveTo(cxB - ar, y0)
-            ctx.lineTo(cxB, y0 - ar)
-            ctx.lineTo(cxB + ar, y0)
+          const tooth = Math.min(b.cellSize * 0.34, 12)
+          const baseY = ay + h - 3
+          const step = tooth * 1.5
+          for (let tx = ax + step * 0.5; tx < ax + w - 2; tx += step) {
+            ctx.beginPath()
+            ctx.moveTo(tx - tooth * 0.5, baseY - tooth * 0.6)
+            ctx.lineTo(tx, baseY)
+            ctx.lineTo(tx + tooth * 0.5, baseY - tooth * 0.6)
+            ctx.stroke()
           }
-          ctx.stroke()
           ctx.shadowBlur = 0
           ctx.restore()
         } else if (b.kind === 'chrome') {
@@ -912,6 +895,51 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
             ctx.stroke()
           }
           ctx.shadowBlur = 0
+        } else if (b.kind === 'shatter') {
+          // Shatter: a hot, fractured cluster that telegraphs "I'll break apart."
+          // Outline each constituent 1x1 cell (the future fragments) in glowing
+          // amber, plus fast down-chevrons since it descends like a fast piece.
+          const flick = 0.7 + 0.3 * Math.sin(tNow * 9 + b.id)
+          drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
+          ctx.save()
+          ctx.clip()
+          // Warm fracture tint so it stands apart from cyan "fast".
+          ctx.globalCompositeOperation = 'screen'
+          ctx.fillStyle = `rgba(255,120,40,${(0.16 + 0.12 * flick).toFixed(3)})`
+          ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+          // Fracture grid: stroke each footprint cell so the split is legible.
+          ctx.strokeStyle = `rgba(255,180,90,${(0.65 + 0.3 * flick).toFixed(3)})`
+          ctx.shadowColor = 'rgba(255,140,60,0.85)'
+          ctx.shadowBlur = 6
+          ctx.lineWidth = 1.6
+          const cs = b.cellSize
+          const inset = 1.5
+          for (const c of b.cells) {
+            const rx = ax + c.x * cs + inset
+            const ry = ay + c.y * cs + inset
+            ctx.strokeRect(rx, ry, cs - inset * 2, cs - inset * 2)
+          }
+          ctx.shadowBlur = 0
+          ctx.restore()
+          // Fast-descent chevrons (amber, to match the shatter palette).
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = 'rgba(255,190,110,0.95)'
+          ctx.shadowColor = 'rgba(255,150,70,0.7)'
+          ctx.shadowBlur = 7
+          ctx.lineWidth = 2.5
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          const sxC = ax + w / 2
+          const schW = Math.min(w, h) * 0.26
+          for (let k = 0; k < 2; k++) {
+            const yy = ay + h * (0.4 + k * 0.24)
+            ctx.beginPath()
+            ctx.moveTo(sxC - schW, yy - schW * 0.55)
+            ctx.lineTo(sxC, yy + schW * 0.55)
+            ctx.lineTo(sxC + schW, yy - schW * 0.55)
+            ctx.stroke()
+          }
+          ctx.shadowBlur = 0
         }
         ctx.restore()
       }
@@ -931,16 +959,13 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         const gh = b.localAabb.maxY - b.localAabb.minY
         const tier = healthTier(hpPct)
 
-        // Erosion direction: hollow grows inward from the damageable face. Normal
-        // pieces (any face) erode from the bottom, the upward beam's impact side;
-        // directional (armored) pieces erode from their weak face so the spent
-        // region visibly eats in from the side you must strike.
-        let vnx = 0
-        let vny = 1
-        if (b.kind === 'armored' && (b.vulnNormal.x !== 0 || b.vulnNormal.y !== 0)) {
-          vnx = b.vulnNormal.x
-          vny = b.vulnNormal.y
-        }
+        // Erosion direction: the hollow grows inward from the damageable side.
+        // Most pieces erode from the bottom (the upward beam's impact side).
+        // Armored pieces have an armored UNDERSIDE, so they erode from the TOP
+        // instead — the body melts down toward the armored base, which is the
+        // last thing standing (a clean read of "the bottom is the tough part").
+        const vnx = 0
+        const vny = b.kind === 'armored' ? -1 : 1
 
         // Outward-padded bbox (overdraw is safe — everything is clipped to the
         // silhouette). Split it into hollow + intact rects along the erosion axis
