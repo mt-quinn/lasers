@@ -198,6 +198,31 @@ const raycastScenePolys = (
   return best
 }
 
+const raycastSceneMirrors = (
+  o: Vec2,
+  dIn: Vec2,
+  mirrors: Array<{ id: number; a: Vec2; b: Vec2; normalOut: Vec2; maxY: number }>,
+  maxDist: number,
+  minT: number,
+  ignoreMirrorId?: number,
+): SceneHit | null => {
+  const d = normalize(dIn)
+  let best: SceneHit | null = null
+  for (const m of mirrors) {
+    if (ignoreMirrorId != null && m.id === ignoreMirrorId) continue
+    if (m.maxY < VISIBLE_CULL_Y) continue
+    const hit = raySegment(o, d, m.a, m.b)
+    if (!hit) continue
+    if (hit.t < minT || hit.t > maxDist) continue
+    if (best && hit.t >= best.t) continue
+    // Two-sided: orient the normal to face the incoming ray so reflection AND the
+    // post-hit offset land on the side the beam actually arrived from.
+    const n = dot(d, m.normalOut) > 0 ? { x: -m.normalOut.x, y: -m.normalOut.y } : m.normalOut
+    best = { t: hit.t, point: hit.p, normal: n, kind: 'mirror', id: m.id }
+  }
+  return best
+}
+
 const raycastSceneCircles = (
   o: Vec2,
   dIn: Vec2,
@@ -359,6 +384,8 @@ export const raycastSceneThick = (
   minT: number = 0,
   bounds?: { w: number; h: number; top?: number },
   ignorePrismId?: number,
+  ignoreBlockId?: number,
+  ignoreMirrorId?: number,
 ): SceneHit | null => {
   const d = normalize(dIn)
   const perp = normalize({ x: -d.y, y: d.x })
@@ -369,12 +396,34 @@ export const raycastSceneThick = (
     poly: Pick<BlockEntity, 'loop' | 'cornerRadius' | 'cellSize' | 'pos'>
     localAabb: BlockEntity['localAabb']
   }> = []
-  for (const b of blocks) polys.push({ kind: 'block', id: b.id, poly: b, localAabb: b.localAabb })
+  // Skip the just-pierced block so a piercing beam doesn't re-hit its far face.
+  for (const b of blocks) {
+    if (ignoreBlockId != null && b.id === ignoreBlockId) continue
+    polys.push({ kind: 'block', id: b.id, poly: b, localAabb: b.localAabb })
+  }
+
+  // Mirrors are diagonal reflective segments (not polys). Precompute each one's
+  // world-space line + outward normal so a vertical beam is always kicked aside.
+  const mirrors: Array<{ id: number; a: Vec2; b: Vec2; normalOut: Vec2; maxY: number }> = []
   for (const f of features) {
-    if (f.kind === 'mirror') {
-      const m = f as MirrorFeature
-      polys.push({ kind: 'mirror', id: m.id, poly: m, localAabb: m.localAabb })
+    if (f.kind !== 'mirror') continue
+    const m = f as MirrorFeature
+    const sz = m.sizePx
+    let a: Vec2
+    let b: Vec2
+    let normalOut: Vec2
+    if (m.orient === 1) {
+      // '\' : top-left -> bottom-right
+      a = { x: m.pos.x, y: m.pos.y }
+      b = { x: m.pos.x + sz, y: m.pos.y + sz }
+      normalOut = normalize({ x: 1, y: -1 })
+    } else {
+      // '/' : bottom-left -> top-right
+      a = { x: m.pos.x, y: m.pos.y + sz }
+      b = { x: m.pos.x + sz, y: m.pos.y }
+      normalOut = normalize({ x: 1, y: 1 })
     }
+    mirrors.push({ id: m.id, a, b, normalOut, maxY: m.pos.y + m.localAabb.maxY })
   }
 
   const circles: Array<{ kind: SceneHit['kind']; id: number; c: Vec2; r: number; maxY: number }> = []
@@ -416,16 +465,18 @@ export const raycastSceneThick = (
     const oo = off === 0 ? o : add(o, mul(perp, off))
     const hitPoly = polys.length ? raycastScenePolys(oo, d, polys, maxDist, minT) : null
     const hitCircle = circles.length ? raycastSceneCircles(oo, d, circles, maxDist, minT, ignorePrismId) : null
+    const hitMirror = mirrors.length ? raycastSceneMirrors(oo, d, mirrors, maxDist, minT, ignoreMirrorId) : null
     const hitWall = bounds ? raycastSceneWalls(oo, d, bounds.w, bounds.h, bounds.top ?? 0, maxDist, minT) : null
 
     let hitObj: SceneHit | null = null
     const a = hitPoly
     const b = hitCircle
     const c = hitAabbCenter
-    // pick the closest among a/b/c
+    // pick the closest among a/b/c/mirror
     hitObj = a
     if (b && (!hitObj || b.t < hitObj.t)) hitObj = b
     if (c && (!hitObj || c.t < hitObj.t)) hitObj = c
+    if (hitMirror && (!hitObj || hitMirror.t < hitObj.t)) hitObj = hitMirror
     const hit = hitObj && hitWall ? (hitObj.t <= hitWall.t ? hitObj : hitWall) : hitObj ?? hitWall
     if (!hit) continue
     if (!best || hit.t < best.t) best = hit

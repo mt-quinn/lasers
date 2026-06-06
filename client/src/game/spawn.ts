@@ -1,5 +1,5 @@
 import { clamp } from './math'
-import type { BlockEntity, BoardFeature, MirrorFeature, PrismFeature, RunState } from './runState'
+import type { BlockEntity, BlockKind, BoardFeature, MirrorFeature, PrismFeature, RunState } from './runState'
 import { buildCellLoop, computeLocalAabbPx } from './outline'
 import { SHAPES } from './shapes'
 import { getArenaLayout } from './layout'
@@ -49,6 +49,21 @@ const collidesAny = (cand: WorldAabb, s: RunState) => {
     if (intersects(cand, featureWorldAabb(f))) return true
   }
   return false
+}
+
+// Routing-focused block variety, introduced on a schedule so the player learns
+// the base verb (pierce) first, then fast-droppers, then armored, then chrome.
+// These add routing/prioritization decisions, never HP-sponge tedium.
+const rollBlockKind = (tSec: number): BlockKind => {
+  if (tSec < 30) return 'normal'
+  const pFast = clamp((tSec - 30) / 90, 0, 1) * 0.2 // ramps to ~20%
+  const pArmored = clamp((tSec - 60) / 120, 0, 1) * 0.16 // ramps to ~16%
+  const pChrome = clamp((tSec - 100) / 150, 0, 1) * 0.1 // ramps to ~10%
+  const r = Math.random()
+  if (r < pChrome) return 'chrome'
+  if (r < pChrome + pArmored) return 'armored'
+  if (r < pChrome + pArmored + pFast) return 'fast'
+  return 'normal'
 }
 
 const rollFeatureKind = (tSec: number): BoardFeature['kind'] | null => {
@@ -159,39 +174,31 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, avoidCenterHalf = 0) =
   return { x: placedX, y: placedY }
 }
 
+// Mirror durability: how much beam contact a deflector survives. High enough to
+// be a reliable routing tool, low enough that you can deliberately burn down one
+// that's in your way.
+const MIRROR_HP = 80
+const MIRROR_SIZE_CELLS = 2
+
 const spawnMirror = (s: RunState) => {
-  const t = s.timeSec
   const cellSize = 40
-  const cornerRadius = cellSize * 0.5 - 0.6
-
-  const pool =
-    t < 25
-      ? SHAPES.filter((sh) => sh.id !== 'Dot' && sh.id !== 'I4')
-      : t < 60
-        ? SHAPES.filter((sh) => sh.id !== 'Dot')
-        : SHAPES.filter((sh) => sh.id !== 'Dot')
-
-  const shape = randOf(pool)
-  const cells = normalizeCellsToOrigin(shape.cells)
-  const bounds = shapeCellBounds(cells)
-  const wPx = bounds.w * cellSize
-  const hPx = bounds.h * cellSize
-
-  const loop = buildCellLoop(cells)
-  const localAabb = computeLocalAabbPx(cells, cellSize)
-  // Keep mirrors out of the central beam column so they never reflect the
-  // straight-up shot back down and freeze the game.
-  const placed = placeAabb(s, wPx, hPx, s.view.width * 0.2)
+  const sizePx = MIRROR_SIZE_CELLS * cellSize
+  // Diagonal-only: a vertical beam is always kicked sideways, never straight back.
+  const orient: 1 | -1 = Math.random() < 0.5 ? 1 : -1
+  // Keep a small launch corridor at center so the muzzle usually has clearance,
+  // but mirrors can sit near-center for routing (they deflect, never block).
+  const placed = placeAabb(s, sizePx, sizePx, s.view.width * 0.12)
 
   const mirror: MirrorFeature = {
     id: s.nextFeatureId++,
     kind: 'mirror',
-    cells,
-    cellSize,
-    cornerRadius,
     pos: { x: placed.x, y: placed.y },
-    loop,
-    localAabb,
+    cellSize,
+    sizePx,
+    orient,
+    hp: MIRROR_HP,
+    hpMax: MIRROR_HP,
+    localAabb: { minX: 0, minY: 0, maxX: sizePx, maxY: sizePx },
   }
   s.features.push(mirror)
   s.normalBlocksSinceFeature = 0
@@ -277,7 +284,11 @@ export const spawnBlock = (s: RunState) => {
   // Use ~cellSize/2, with a tiny epsilon to avoid degenerate geometry.
   const cornerRadius = cellSize * 0.5 - 0.6
 
-  // Shape weighting: simpler early, bigger later.
+  // Routing-focused kind (scheduled introduction; early game is normal-only).
+  const kind = rollBlockKind(t)
+
+  // Shape weighting: simpler early, bigger later. Chrome is always a single cell
+  // so its reflective phase is brief — it dies fast and can't wall the muzzle.
   const pool =
     t < 25
       ? SHAPES.filter((sh) => sh.id !== 'Dot' && sh.id !== 'I4')
@@ -285,62 +296,32 @@ export const spawnBlock = (s: RunState) => {
         ? SHAPES.filter((sh) => sh.id !== 'Dot')
         : SHAPES
 
-  const shape = randOf(pool)
+  const shape = kind === 'chrome' ? (SHAPES.find((sh) => sh.id === 'Dot') ?? randOf(pool)) : randOf(pool)
   const cells = normalizeCellsToOrigin(shape.cells)
   const bounds = shapeCellBounds(cells)
   const wPx = bounds.w * cellSize
   const hPx = bounds.h * cellSize
  
-  // Difficulty scaling: based on DEPTH (global drop steps), not time.
-  //
-  // Difficulty scaling: base HP ramps up faster over time, based on DEPTH (global drops),
-  // mapped to minutes at the *baseline* drop interval.
-  //
-  // Target per-minute base HP increase schedule:
-  // - minute 0..1: +10 base HP
-  // - minute 1..2: +12 base HP
-  // - minute 2..3: +14 base HP
-  // - minute 3..4: +16 base HP
-  // - minute 4+: capped at +16 base HP per minute
-  //
-  // We treat depth/100 as "minutes elapsed" and integrate that piecewise-linear rate.
-  // This means health transitions happen every 100 drops instead of every 50 drops.
-  //
-  // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
-  // more slowly in real time (but stays consistent per “lines survived”).
-  const baseHp0 = 1
-  const dropsPerMinBaseline = 100
-  const initialRate = 10
-  const rateIncrement = 2
-  const maxRate = 16
-  const minutes = Math.max(0, s.depth) / dropsPerMinBaseline
-  const whole = Math.floor(minutes)
-  const frac = minutes - whole
-  // Sum of full minutes using arithmetic progression: Σ_{i=0..whole-1} (initialRate + rateIncrement*i)
-  // = whole*initialRate + rateIncrement*whole*(whole-1)/2
-  // Calculate when cap is reached: initialRate + rateIncrement * capMinute = maxRate
-  const capMinute = (maxRate - initialRate) / rateIncrement
-  let fullInc: number
-  let curRate: number
-  if (whole <= capMinute) {
-    fullInc = whole * initialRate + rateIncrement * whole * (whole - 1) / 2
-    curRate = initialRate + rateIncrement * whole
-  } else {
-    // Sum up to cap minute, then add capped rate for remaining minutes
-    const cappedInc = capMinute * initialRate + rateIncrement * capMinute * (capMinute - 1) / 2
-    const extraMinutes = whole - capMinute
-    fullInc = cappedInc + maxRate * extraMinutes
-    curRate = maxRate
+  // Constant time-to-kill: a block's HP depends ONLY on its size (cell count),
+  // never on depth/time. Player power is fixed, so any HP inflation would create
+  // an eventual unbeatable wall. Difficulty instead comes from descent speed,
+  // arrival density, and routing complexity — all answerable by skill. A focused
+  // beam clears ~HP_PER_CELL per cell, so a 1-cell melts fast and a big piece
+  // needs you to dwell (or pierce) a touch longer.
+  const HP_PER_CELL = 8
+  const hpMax = Math.max(1, Math.round(HP_PER_CELL * cells.length))
+
+  // Armored weak face: a non-bottom side so the straight-up beam can't trivially
+  // reach it — you must bend/route the beam onto it. Weighted toward the sides.
+  let vulnNormal = { x: 0, y: 0 }
+  if (kind === 'armored') {
+    const pick = Math.random()
+    vulnNormal = pick < 0.42 ? { x: -1, y: 0 } : pick < 0.84 ? { x: 1, y: 0 } : { x: 0, y: -1 }
   }
-  const inc = fullInc + frac * curRate
-  const baseHp = baseHp0 + inc
-  const sizeMult = 0.7 + 0.22 * Math.sqrt(shape.cells.length)
-  // HP now has a capped growth rate, preventing runaway difficulty.
-  const hpMax = Math.round(baseHp * sizeMult * 1.5)
-  
-  // Gold block spawn chance
-  const isGold = Math.random() < s.stats.goldSpawnChance
-  
+
+  // Gold blocks are a normal-kind bonus only (no special-kind gold).
+  const isGold = kind === 'normal' && Math.random() < s.stats.goldSpawnChance
+
   // XP per block: 1 for normal, 5 + bonus for gold blocks
   const xpValue = isGold ? 5 + s.stats.goldXpBonus : 1
 
@@ -387,6 +368,9 @@ export const spawnBlock = (s: RunState) => {
     hp: hpMax,
     xpValue,
     isGold,
+    kind,
+    vulnNormal,
+    dropAnimExtra: 0,
     loop,
     localAabb,
     hpAnchorLocalPx,

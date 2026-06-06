@@ -3,7 +3,6 @@ import type { RunState } from '../game/runState'
 import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
 import { getArenaLayout } from '../game/layout'
-import { COMBO_WINDOW_SEC } from '../game/sim'
 import { makeProjection } from './projection'
 import { renderLens } from './lensGL'
 // (getRarityColor will be used by the level-up menu overlay; keep renderer lean for now.)
@@ -202,7 +201,7 @@ const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
   // The number rides its natural on-piece anchor the whole way down (the old
   // "slide up so it stays under the top edge" behavior is unnecessary now that
   // the perspective shaft shows pieces flying in from far above).
-  const visualY = b.pos.y - s.dropAnimOffset
+  const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
   return { x: b.pos.x + b.hpAnchorLocalPx.x, y: visualY + b.hpAnchorLocalPx.y }
 }
 
@@ -580,7 +579,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     {
       let danger = 0
       for (const b of s.blocks) {
-        const by = b.pos.y - s.dropAnimOffset + b.localAabb.maxY
+        const by = b.pos.y - s.dropAnimOffset - b.dropAnimExtra + b.localAabb.maxY
         danger = Math.max(danger, 1 - clamp((failY - by) / 160, 0, 1))
       }
       const fa = project(0, failY)
@@ -627,8 +626,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const hpPct = clamp(b.hp / b.hpMax, 0, 1)
       const glow = 0.35 + 0.65 * (1 - hpPct)
 
-      // Apply smooth drop animation offset
-      const visualPos = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset }
+      // Apply smooth drop animation offset (plus the per-block extra so fast
+      // double-steppers ease instead of snapping).
+      const visualPos = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset - b.dropAnimExtra }
 
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
@@ -742,6 +742,102 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
       }
       ctx.stroke()
+
+      // Routing-kind overlays so the player can read fast / armored / chrome at a
+      // glance (drawn over the standard body, inside the same perspective xform).
+      if (!b.isGold && b.kind !== 'normal') {
+        const ax = visualPos.x + b.localAabb.minX
+        const ay = visualPos.y + b.localAabb.minY
+        const w = b.localAabb.maxX - b.localAabb.minX
+        const h = b.localAabb.maxY - b.localAabb.minY
+        ctx.save()
+
+        if (b.kind === 'armored') {
+          // Steel plating wash + a bright glowing weak-face marker (the only face
+          // that takes damage — you must route the beam onto it).
+          drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
+          ctx.save()
+          ctx.clip()
+          ctx.fillStyle = 'rgba(92,106,132,0.5)'
+          ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = 'rgba(205,218,238,0.16)'
+          ctx.lineWidth = 2
+          for (let x = -h; x < w + h; x += 12) {
+            ctx.beginPath()
+            ctx.moveTo(ax + x, ay)
+            ctx.lineTo(ax + x + h, ay + h)
+            ctx.stroke()
+          }
+          ctx.restore()
+          const vn = b.vulnNormal
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = 'rgba(120,255,170,0.95)'
+          ctx.shadowColor = 'rgba(120,255,170,0.85)'
+          ctx.shadowBlur = 10
+          ctx.lineWidth = 4
+          ctx.lineCap = 'round'
+          const inset = 5
+          ctx.beginPath()
+          if (vn.x < 0) {
+            ctx.moveTo(ax + inset, ay + inset)
+            ctx.lineTo(ax + inset, ay + h - inset)
+          } else if (vn.x > 0) {
+            ctx.moveTo(ax + w - inset, ay + inset)
+            ctx.lineTo(ax + w - inset, ay + h - inset)
+          } else if (vn.y < 0) {
+            ctx.moveTo(ax + inset, ay + inset)
+            ctx.lineTo(ax + w - inset, ay + inset)
+          } else {
+            ctx.moveTo(ax + inset, ay + h - inset)
+            ctx.lineTo(ax + w - inset, ay + h - inset)
+          }
+          ctx.stroke()
+          ctx.shadowBlur = 0
+        } else if (b.kind === 'chrome') {
+          // Mirror-chrome: silvery sheen so it reads as reflective.
+          drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
+          ctx.save()
+          ctx.clip()
+          const cg = ctx.createLinearGradient(ax, ay, ax + w, ay + h)
+          cg.addColorStop(0, 'rgba(200,215,235,0.55)')
+          cg.addColorStop(0.5, 'rgba(245,250,255,0.78)')
+          cg.addColorStop(1, 'rgba(158,178,205,0.55)')
+          ctx.fillStyle = cg
+          ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+          ctx.lineWidth = 2
+          for (let x = -h; x < w + h; x += 9) {
+            ctx.beginPath()
+            ctx.moveTo(ax + x, ay)
+            ctx.lineTo(ax + x + h, ay + h)
+            ctx.stroke()
+          }
+          ctx.restore()
+        } else if (b.kind === 'fast') {
+          // Cyan down-chevrons: reads as "falling fast".
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = 'rgba(120,240,255,0.95)'
+          ctx.shadowColor = 'rgba(120,240,255,0.7)'
+          ctx.shadowBlur = 8
+          ctx.lineWidth = 3
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          const cxC = ax + w / 2
+          const chW = Math.min(w, h) * 0.3
+          for (let k = 0; k < 2; k++) {
+            const yy = ay + h * (0.36 + k * 0.26)
+            ctx.beginPath()
+            ctx.moveTo(cxC - chW, yy - chW * 0.55)
+            ctx.lineTo(cxC, yy + chW * 0.55)
+            ctx.lineTo(cxC + chW, yy - chW * 0.55)
+            ctx.stroke()
+          }
+          ctx.shadowBlur = 0
+        }
+        ctx.restore()
+      }
       ctx.restore()
     }
 
@@ -1080,7 +1176,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // Board features: mirrors / prisms / black holes (indestructible, no HP numbers).
+    // Board features: mirrors (destructible diagonal deflectors) / prisms / black holes.
     if (s.features.length > 0) {
       for (const f of s.features) {
         // Apply smooth drop animation offset
@@ -1100,53 +1196,77 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
         if (f.kind === 'mirror') {
           const m = f
-          const ax = visualPos.x + m.localAabb.minX
-          const ay = visualPos.y + m.localAabb.minY
-          const w = m.localAabb.maxX - m.localAabb.minX
-          const h = m.localAabb.maxY - m.localAabb.minY
+          const sz = m.sizePx
+          // The reflective surface is the diagonal of the bounding square. '\\'
+          // (orient 1) kicks a vertical beam left; '/' (orient -1) kicks it right.
+          let x0: number
+          let y0: number
+          let x1: number
+          let y1: number
+          if (m.orient === 1) {
+            x0 = visualPos.x
+            y0 = visualPos.y
+            x1 = visualPos.x + sz
+            y1 = visualPos.y + sz
+          } else {
+            x0 = visualPos.x
+            y0 = visualPos.y + sz
+            x1 = visualPos.x + sz
+            y1 = visualPos.y
+          }
+          const wear = clamp(1 - m.hp / Math.max(1, m.hpMax), 0, 1)
 
           ctx.save()
           ctx.globalCompositeOperation = 'source-over'
-          ctx.shadowColor = 'rgba(180,220,255,0.20)'
-          ctx.shadowBlur = 14
+          ctx.lineCap = 'round'
 
-          drawRoundedPolyomino(ctx, m.loop, visualPos, m.cellSize, m.cornerRadius)
-
-          const grad = ctx.createLinearGradient(ax, ay, ax + w, ay + h)
-          grad.addColorStop(0, 'rgb(60 75 105)')
-          grad.addColorStop(0.45, 'rgb(145 170 210)')
-          grad.addColorStop(1, 'rgb(55 65 90)')
-          ctx.fillStyle = grad
-          ctx.fill()
-
-          // Tactile depth on mirrors too (face-only).
-          applyDomedDepth(ax, ay, w, h, 0.78)
-
-          // Important: confine the shadow glow to the *fill* only.
-          // Leaving shadowBlur on will make the outline/top edge read as a thick horizontal glare band.
-          ctx.shadowBlur = 0
-          ctx.shadowColor = 'rgba(0,0,0,0)'
-
-          // Specular diagonal sheen lines.
-          ctx.save()
-          ctx.clip()
-          ctx.globalCompositeOperation = 'screen'
-          ctx.strokeStyle = 'rgba(255,255,255,0.18)'
-          ctx.lineWidth = 3
-          const step = 16
-          for (let x = -h; x < w + h; x += step) {
-            ctx.beginPath()
-            ctx.moveTo(ax + x, ay)
-            ctx.lineTo(ax + x + h, ay + h)
-            ctx.stroke()
-          }
-          ctx.restore()
-
-          // Outline (must redraw path; the sheen loop overwrote the current path).
-          drawRoundedPolyomino(ctx, m.loop, visualPos, m.cellSize, m.cornerRadius)
-          ctx.lineWidth = 2
-          ctx.strokeStyle = 'rgba(245,250,255,0.35)'
+          // Glowing chrome bar along the diagonal.
+          ctx.shadowColor = 'rgba(170,215,255,0.55)'
+          ctx.shadowBlur = 16
+          const grad = ctx.createLinearGradient(x0, y0, x1, y1)
+          grad.addColorStop(0, 'rgba(120,150,195,0.95)')
+          grad.addColorStop(0.5, 'rgba(225,240,255,0.98)')
+          grad.addColorStop(1, 'rgba(120,150,195,0.95)')
+          ctx.strokeStyle = grad
+          ctx.lineWidth = 12
+          ctx.globalAlpha = 0.9 - 0.45 * wear
+          ctx.beginPath()
+          ctx.moveTo(x0, y0)
+          ctx.lineTo(x1, y1)
           ctx.stroke()
+
+          // Bright specular core.
+          ctx.shadowBlur = 0
+          ctx.globalAlpha = 0.95 - 0.5 * wear
+          ctx.strokeStyle = 'rgba(255,255,255,0.92)'
+          ctx.lineWidth = 3.2
+          ctx.beginPath()
+          ctx.moveTo(x0, y0)
+          ctx.lineTo(x1, y1)
+          ctx.stroke()
+
+          // Wear cracks: dark perpendicular ticks that deepen as it nears burn-through.
+          if (wear > 0.2) {
+            ctx.globalAlpha = clamp(wear, 0, 1)
+            ctx.strokeStyle = 'rgba(20,10,16,0.55)'
+            ctx.lineWidth = 1.4
+            const dxL = x1 - x0
+            const dyL = y1 - y0
+            const nLen = Math.hypot(dxL, dyL) || 1
+            const px = -dyL / nLen
+            const py = dxL / nLen
+            const ticks = 3
+            for (let i = 1; i <= ticks; i++) {
+              const ff = i / (ticks + 1)
+              const mx = x0 + dxL * ff
+              const my = y0 + dyL * ff
+              const tl = 5 * wear
+              ctx.beginPath()
+              ctx.moveTo(mx - px * tl, my - py * tl)
+              ctx.lineTo(mx + px * tl, my + py * tl)
+              ctx.stroke()
+            }
+          }
 
           ctx.restore()
           ctx.restore() // feature perspective transform
@@ -1318,9 +1438,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     const gy = layout.xpGauge.y
     const gw = layout.xpGauge.w
     const gh = layout.xpGauge.h
-    // Combo meter: the vertical bar shows how much of the combo window remains
-    // (drains linearly to empty over the full window, refills on each kill).
-    const comboFrac = clamp(s.comboTimerSec / COMBO_WINDOW_SEC, 0, 1)
+    // Heat meter: the vertical bar charges as you chain kills and, when full,
+    // fires Overdrive (a beam surge); during the surge it drains back to empty.
+    const heatFrac = clamp(s.heat, 0, 1)
+    const overdriveOn = s.overdriveSec > 0
     const comboMult = s.combo > 0 ? 1 + 0.1 * (s.combo - 1) : 1
     // The corner dial ring now reflects the crescendo (big-play surge).
     const crescendoArc = clamp(s.crescendo, 0, 1)
@@ -1432,15 +1553,17 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       roundedRectPath(gx2, gy2, gw2, gh2, 10)
       ctx.stroke()
 
-      const fh = gh2 * comboFrac
+      const fh = gh2 * heatFrac
       ctx.globalCompositeOperation = 'lighter'
-      // Bar fill drifts through the same rainbow hue as the laser beam while
-      // music plays (pink when off).
-      ctx.fillStyle =
-        mi > 0 ? hsl(mHue, 88, 60, 0.22 + mEnergy * 0.08) : `rgba(255,120,210,${(0.22 + mEnergy * 0.08).toFixed(3)})`
+      // Heat fill: a warm "charge" that brightens as it fills; in Overdrive it
+      // flips to a pulsing white-gold.
+      const odPulse = overdriveOn ? 0.7 + 0.3 * Math.sin(s.timeSec * 18) : 1
+      const heatHue = overdriveOn ? 45 : 28
+      const heatA = (overdriveOn ? 0.55 : 0.2 + 0.25 * heatFrac) * odPulse
+      ctx.fillStyle = hsl(heatHue, 95, 58, heatA)
       roundedRectPath(gx2, gy2 + (gh2 - fh), gw2, fh, 10)
       ctx.fill()
-      ctx.fillStyle = mi > 0 ? hsl(mHue, 92, 70, 0.78) : 'rgba(255,120,210,0.75)'
+      ctx.fillStyle = hsl(heatHue, 98, overdriveOn ? 90 : 62 + 16 * heatFrac, 0.82 * odPulse)
       roundedRectPath(gx2 + 1, gy2 + (gh2 - fh) + 1, gw2 - 2, Math.max(0, fh - 2), 9)
       ctx.fill()
 
@@ -1788,6 +1911,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.closePath()
     }
 
+    // Overdrive: the beam fattens and flips to a white-gold while the surge is up.
+    const overdrive = s.overdriveSec > 0
+    const odWidth = overdrive ? 1.45 : 1
     for (let li = 0; li < stitched.length; li++) {
       const line = stitched[li]!
       const alpha = clamp(line.intensity, 0, 1)
@@ -1807,26 +1933,38 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       // Laser palette: red by default, but the beam drifts through the rainbow
       // hue with the music. Motion is smooth (sustained energy), never beat-keyed,
       // so the width only breathes a few percent. The hot core stays bright.
-      const beamSwell = 1 + mPulse * 0.16 + mBass * 0.1
-      const glowAlpha = Math.min(0.5, 0.16 * alpha * (1 + mPulse * 0.6))
-      const coreAlpha = Math.min(1, 0.78 * alpha)
+      const beamSwell = (1 + mPulse * 0.16 + mBass * 0.1) * odWidth
+      const glowAlpha = Math.min(0.7, (0.16 + (overdrive ? 0.16 : 0)) * alpha * (1 + mPulse * 0.6))
+      const coreAlpha = Math.min(1, (0.78 + (overdrive ? 0.15 : 0)) * alpha)
 
       // Outer glow ribbon.
       const glowHalf = sc.map((z) => s.stats.beamGlowWidth * beamSwell * 0.5 * z)
-      ctx.fillStyle = mi > 0 ? hsl(mHue, 95, 62, glowAlpha) : `rgba(255,60,60,${glowAlpha.toFixed(3)})`
+      ctx.fillStyle = overdrive
+        ? hsl(45, 100, 60, glowAlpha)
+        : mi > 0
+          ? hsl(mHue, 95, 62, glowAlpha)
+          : `rgba(255,60,60,${glowAlpha.toFixed(3)})`
       buildRibbon(scr, glowHalf)
       ctx.fill()
 
       // Core ribbon (restroke same path) — kept bright (high lightness).
-      const coreHalf = sc.map((z) => s.stats.beamWidth * 0.5 * z)
-      ctx.fillStyle = mi > 0 ? hsl(mHue, 90, 72, coreAlpha) : `rgba(255,90,90,${coreAlpha.toFixed(3)})`
+      const coreHalf = sc.map((z) => s.stats.beamWidth * 0.5 * odWidth * z)
+      ctx.fillStyle = overdrive
+        ? hsl(48, 100, 82, coreAlpha)
+        : mi > 0
+          ? hsl(mHue, 90, 72, coreAlpha)
+          : `rgba(255,90,90,${coreAlpha.toFixed(3)})`
       buildRibbon(scr, coreHalf)
       ctx.fill()
 
       // Hot white spine — a thin near-white inner ribbon so the beam reads as a
       // superheated filament rather than a flat tube.
-      const spineHalf = sc.map((z) => s.stats.beamWidth * 0.22 * z)
-      ctx.fillStyle = mi > 0 ? hsl(mHue, 100, 93, Math.min(1, 0.62 * alpha)) : `rgba(255,210,210,${(0.62 * alpha).toFixed(3)})`
+      const spineHalf = sc.map((z) => s.stats.beamWidth * 0.22 * odWidth * z)
+      ctx.fillStyle = overdrive
+        ? `rgba(255,252,240,${Math.min(1, 0.8 * alpha).toFixed(3)})`
+        : mi > 0
+          ? hsl(mHue, 100, 93, Math.min(1, 0.62 * alpha))
+          : `rgba(255,210,210,${(0.62 * alpha).toFixed(3)})`
       buildRibbon(scr, spineHalf)
       ctx.fill()
 
@@ -1905,9 +2043,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
-    // Gravity-well puck: the player's single control surface. Reuses the
-    // black-hole visual (dark core + neon accretion ring), tinted by the music
-    // hue and amplified by the crescendo. Drawn in SCREEN space at the puck.
+    // Gravity-well puck: the player's single control surface — a gravitational
+    // LENS that bends the beam around it. Dark core + real lensing of the board
+    // behind it + a neon energy ring, tinted by the music hue and amplified by
+    // the crescendo. Drawn in SCREEN space at the puck.
     if (s.well.placed) {
       // The well lives in world space; project it and scale its size with depth
       // so it belongs to the perspective playfield.
@@ -1916,10 +2055,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const cy = wp.y
       const wScale = clamp(wp.scale, 0.18, 1.6)
       const grabbed = s.well.grabbed
-      // The hole is "armed" (its damage visual is live) whenever it *can* deal
-      // damage — i.e. it's free/parked, not held. Held = inert. (Whether it's
-      // currently touching a block is tracked separately in s.well.damaging.)
-      const damaging = !grabbed
+      // The lens is "energized" (its active glow is live) whenever it's
+      // parked/steering the beam, not while it's being carried. Held = inert.
+      const active = !grabbed
       // Event-horizon shadow radius. The whole black hole scales off this — and
       // off the perspective depth so it shrinks as it travels up the board.
       const rCore = (16 + (grabbed ? 2 : 0)) * wScale
@@ -2063,9 +2201,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       // Organic flicker so the active state seethes instead of pulsing cleanly.
       const flick = clamp(0.62 + 0.26 * Math.sin(tNowS * 13) + 0.16 * Math.sin(tNowS * 7.3 + 1.7), 0, 1.3)
 
-      // Active "feeding" corona (behind the core): a hot, flickering glow that
-      // only appears while the parked hole is actually consuming blocks.
-      if (damaging) {
+      // Energized corona (behind the core): a hot, flickering glow that appears
+      // while the lens is parked and steering the beam.
+      if (active) {
         ctx.globalCompositeOperation = 'lighter'
         const coronaR = rCore * 2.35
         const corA = (0.16 + 0.22 * surge) * flick
@@ -2090,10 +2228,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ell(rCore, rCore, 0)
       ctx.fill()
 
-      // Active "infalling matter": a swirl of hot streaks spiralling inward and
-      // burning out as they're devoured. This is the thematic damage tell — it
-      // reads as the hole tearing pieces apart, not a clean UI ring.
-      if (damaging) {
+      // Orbiting light: a swirl of hot streaks spiralling around the core — the
+      // beam's energy caught and bent by the lens. Thematic "this is bending
+      // light" tell, not a clean UI ring.
+      if (active) {
         ctx.globalCompositeOperation = 'lighter'
         ctx.lineCap = 'round'
         ctx.shadowColor = hsl(hue, 100, 60, 0.85)
@@ -2219,20 +2357,20 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         }
         ctx.font = '800 13px Oxanium'
         ctx.fillStyle = hsl(hue, 95, 82, 0.92 * alpha)
-        ctx.fillText(`BEAM LEVEL ${s.level}`, 2, -16)
+        ctx.fillText('HEAT MAXED', 2, -16)
         try {
           ctx.letterSpacing = '0px'
         } catch {
           /* noop */
         }
 
-        // Main: "+1 DPS" — white-hot core with a hue bloom.
+        // Main: "OVERDRIVE" — white-hot core with a hue bloom.
         ctx.textBaseline = 'middle'
-        ctx.font = '900 34px Oxanium'
+        ctx.font = '900 30px Oxanium'
         ctx.shadowColor = hsl(hue, 100, 62, 0.95 * alpha)
         ctx.shadowBlur = 18
         ctx.fillStyle = `rgba(255,250,240,${alpha})`
-        ctx.fillText('+1 DPS', 0, 12)
+        ctx.fillText('OVERDRIVE', 0, 12)
 
         // Neon underline that grows with the entry pop.
         ctx.shadowBlur = 10

@@ -1,12 +1,11 @@
 import { add, clamp, mul, normalize, reflect } from './math'
 import type { Vec2 } from './math'
-import type { RunState } from './runState'
+import type { RunState, MirrorFeature } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing, spawnPrismAt } from './spawn'
 import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
-import { computeXpCap, autoApplyLevelUp } from './levelUp'
 
 const EPS = 1.0
 const MAX_SPARKS = 280
@@ -15,6 +14,9 @@ const MAX_RAYS = 24
 const MAX_SEGMENTS = 180
 // Max small steps spent integrating the beam inside the well's curving field.
 const MAX_CURVE_STEPS = 260
+// Below this beam intensity a piercing ray stops: it would do negligible damage
+// and only draws faint hairlines through the rest of the board.
+const MIN_PIERCE_INTENSITY = 0.05
 
 // Gravity-well beam field (screen space). The well bends the beam by *proximity*
 // like the original board black holes: the beam curves around it within the
@@ -31,14 +33,21 @@ const WELL_CAPTURE_DOT = 0.55
 
 // Score-attack tuning.
 export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to keep the combo
-// Beat-synced descent: floor between beat steps (fast tracks can't avalanche).
-const MIN_STEP_SEC = 0.3
-// With music, drop the board every Nth detected beat (every beat was far too
-// fast). 2 = half speed, 4 = quarter speed. (Tunable.)
-const BEAT_STEP_DIVISOR = 4
-// If beats stall (a silent passage), still nudge the board after this long so the
-// run keeps forward pressure even mid-track.
-const BEAT_DROPOUT_SEC = 3.0
+
+// Heat / Overdrive: the skill-expressed, self-resetting beam amplifier. Heat
+// builds from chained kills and decays when idle; topping out fires a short
+// Overdrive surge (more damage, more pierces, double score) that then drains it.
+const HEAT_PER_KILL = 0.06 // base heat per kill (scaled up by combo + piece value)
+const HEAT_DECAY = 0.11 // heat lost per second when not killing / not in overdrive
+const OVERDRIVE_DURATION = 5.0 // seconds of surge once heat tops out
+const OVERDRIVE_DPS_MULT = 1.7
+const OVERDRIVE_BONUS_PIERCES = 3
+const OVERDRIVE_SCORE_MULT = 2
+const OVERDRIVE_BEAM_WIDEN = 1.35 // beam forgiveness multiplier during overdrive
+// Fraction of the beam's DPS a mirror absorbs (as wear) each frame of contact.
+// The rest reflects. Sized with MIRROR_HP so a mirror lasts several seconds of
+// continuous contact — a reliable tool you can still deliberately burn down.
+const MIRROR_DAMAGE_FRAC = 0.35
 
 // Gravity-well puck. Physics run in WORLD space so the hole lives inside the
 // perspective playfield: it renders smaller with depth and bounces off the
@@ -50,10 +59,6 @@ const WELL_FRICTION = 0.45
 const WELL_RESTITUTION = 0.86
 // Below this speed (world px/s) a free puck snaps to rest.
 const WELL_SLEEP_SPEED = 6
-// World-space contact radius for the parked hole's "consume" damage. Matches
-// the rendered black core (which is this size at the near plane) so contact
-// reads true to the visual at every depth.
-const WELL_DAMAGE_R = 17
 
 // Integrate the free-flying well puck: coast with friction, bounce off the world
 // playfield walls, settle when slow. While grabbed, App drives its position
@@ -102,10 +107,13 @@ const updateWellPuck = (s: RunState, dt: number) => {
 
 // Helper functions for smooth drop animation hitbox adjustment
 const adjustPositionsForAnimation = (s: RunState) => {
+  // Blocks include their per-block extra (fast double-steppers) so the beam hits
+  // exactly where the block is drawn.
+  for (const b of s.blocks) {
+    const off = s.dropAnimOffset + b.dropAnimExtra
+    if (off > 0) b.pos.y -= off
+  }
   if (s.dropAnimOffset > 0) {
-    for (const b of s.blocks) {
-      b.pos.y -= s.dropAnimOffset
-    }
     for (const f of s.features) {
       f.pos.y -= s.dropAnimOffset
     }
@@ -113,10 +121,11 @@ const adjustPositionsForAnimation = (s: RunState) => {
 }
 
 const restoreLogicalPositions = (s: RunState) => {
+  for (const b of s.blocks) {
+    const off = s.dropAnimOffset + b.dropAnimExtra
+    if (off > 0) b.pos.y += off
+  }
   if (s.dropAnimOffset > 0) {
-    for (const b of s.blocks) {
-      b.pos.y += s.dropAnimOffset
-    }
     for (const f of s.features) {
       f.pos.y += s.dropAnimOffset
     }
@@ -137,26 +146,32 @@ export const stepSim = (s: RunState, dt: number) => {
 
   const smoothstep = (x: number) => x * x * (3 - 2 * x)
 
-  // Difficulty curve: deliberately easy first minute so players can buy upgrades,
-  // then ramp over the next ~5 minutes.
-  const earlyT = clamp(s.timeSec / 60, 0, 1)
-  const lateT = clamp((s.timeSec - 60) / 300, 0, 1)
-  const e = smoothstep(earlyT)
-  const l = smoothstep(lateT)
+  // Deterministic, learnable difficulty schedule. Difficulty rises only on
+  // skill-answerable axes — descent speed and arrival density (plus routing
+  // complexity from features) — never block HP. Music is pure juice and no
+  // longer drives the descent, so the ramp is identical every run and mastery
+  // means internalizing it. `prog` ramps 0->1 over the first RAMP_SECONDS;
+  // `creep` keeps nudging upward forever after so even the best players meet a
+  // ceiling eventually (their reaction/routing speed, never an HP wall).
+  const RAMP_SECONDS = 240
+  const prog = smoothstep(clamp(s.timeSec / RAMP_SECONDS, 0, 1))
+  const creep = clamp((s.timeSec - RAMP_SECONDS) / 600, 0, 1)
 
-  // Movement is now tetris-like: blocks step down together on a global timer.
+  // Movement is tetris-like: blocks step down together on a global timer. The
+  // descent interval is the "gravity": brisk from the start (routing matters by
+  // ~15s) and tightening to a fast floor.
+  s.dropIntervalSec = Math.max(0.2, 0.9 + (0.34 - 0.9) * prog - 0.12 * creep)
 
   const layout = getArenaLayout(s.view)
   const cellSize = 40
 
   const xpOrbTarget = (): Vec2 => {
-    // Aim for the *current* top of the filled portion of the XP bar.
+    // Aim for the *current* top of the filled portion of the Heat bar.
     const gx = layout.xpGauge.x
     const gy = layout.xpGauge.y
     const gw = layout.xpGauge.w
     const gh = layout.xpGauge.h
-    const xpFrac = clamp(s.xp / Math.max(1, s.xpCap), 0, 1)
-    const fillH = gh * xpFrac
+    const fillH = gh * clamp(s.heat, 0, 1)
     return { x: gx + gw / 2, y: gy + (gh - fillH) }
   }
 
@@ -165,17 +180,13 @@ export const stepSim = (s: RunState, dt: number) => {
     s.respiteSec = Math.max(0, s.respiteSec - dt)
   }
 
-  // Spawn pacing (director-style): a time-based target curve, with pressure guardrails
-  // so the game ramps without spiraling into impossible states.
-  // Increased density: ~20% faster spawn rates
+  // Spawn pacing (director-style): a deterministic target curve, with pressure
+  // guardrails so the game ramps without spiraling into impossible states.
+  // Arrival rate and the on-screen cap ramp together: more simultaneous threats
+  // to route between as you go deeper.
   s.spawnTimer -= dt
-  const spawnEveryEarly = 0.94 + (0.66 - 0.94) * e // 0-60s: 0.94 -> 0.66 (20% faster than before)
-  const spawnEveryLate = 1.24 + (0.76 - 1.24) * l // 60-360s: 1.24 -> 0.76 (20% faster than before)
-  const spawnEveryBase = s.timeSec < 60 ? spawnEveryEarly : spawnEveryLate
-
-  const maxBlocksEarly = Math.floor(5 + 2 * e) // 5 -> 7 (increased from 4->6)
-  const maxBlocksLate = Math.floor(7 + 6 * l) // 7 -> 13 (increased from 6->11)
-  const maxBlocksBase = s.timeSec < 60 ? maxBlocksEarly : maxBlocksLate
+  const spawnEveryBase = Math.max(0.38, 1.05 + (0.5 - 1.05) * prog - 0.1 * creep) // 1.05s -> 0.5s -> ~0.4s
+  const maxBlocksBase = Math.floor(5 + 9 * prog + 4 * creep) // 5 -> 14 -> ~18
 
   // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
   const dangerY = layout.failY - 2 * cellSize
@@ -223,42 +234,38 @@ export const stepSim = (s: RunState, dt: number) => {
     s.crescendo = Math.max(0, s.crescendo - dt * 0.9)
   }
 
-  // Field descent: the board steps down one cell per *music beat*, with a
-  // silent-mode metronome (dropIntervalSec) guaranteeing forward pressure when
-  // no beats arrive. Beat steps are rate-limited by MIN_STEP_SEC so fast tracks
-  // can't avalanche the board.
+  // Field descent: the board steps down one cell on a deterministic metronome
+  // (dropIntervalSec, set by the difficulty schedule above). The descent is
+  // intentionally independent of the music so the ramp is identical every run.
   s.sinceStepSec += dt
 
-  // Smooth drop animation: continuously ease the visual offset back to 0.
+  // Smooth drop animation: continuously ease the visual offset back to 0. Fast
+  // blocks carry an extra per-block offset that eases at the same rate.
   if (s.dropAnimOffset > 0) {
     const animSpeed = cellSize / s.dropAnimDuration
     s.dropAnimOffset = Math.max(0, s.dropAnimOffset - animSpeed * dt)
+    for (const b of s.blocks) {
+      if (b.dropAnimExtra > 0) b.dropAnimExtra = Math.max(0, b.dropAnimExtra - animSpeed * dt)
+    }
   }
 
-  const beatFired = s.music.playing && s.music.beatToken !== s.lastBeatToken
-  s.lastBeatToken = s.music.beatToken
-  const fallbackStep = Math.max(MIN_STEP_SEC, s.dropIntervalSec)
-  let stepNow: boolean
-  if (s.music.playing) {
-    // Step only every Nth beat so the descent reads musically without
-    // avalanching; a beat-dropout safety covers silent passages. The fallback
-    // metronome does NOT apply here, or it would quietly override the slower
-    // musical cadence.
-    const descentBeat = beatFired && s.music.beatToken % BEAT_STEP_DIVISOR === 0
-    stepNow =
-      (descentBeat && s.sinceStepSec >= MIN_STEP_SEC) || s.sinceStepSec >= BEAT_DROPOUT_SEC
-  } else {
-    stepNow = s.sinceStepSec >= fallbackStep
-  }
+  const stepNow = s.sinceStepSec >= s.dropIntervalSec
 
   if (stepNow) {
     s.sinceStepSec = 0
     s.dropTimerSec = s.dropIntervalSec
 
     // Snap logical positions forward immediately (physics/collision use this).
+    // Fast-droppers fall two cells per step (prioritization pressure) and get an
+    // extra cell of visual catch-up so they ease instead of snapping.
     s.depth += 1
     for (const b of s.blocks) {
-      b.pos.y += b.cellSize
+      if (b.kind === 'fast') {
+        b.pos.y += b.cellSize * 2
+        b.dropAnimExtra = b.cellSize
+      } else {
+        b.pos.y += b.cellSize
+      }
     }
     for (const f of s.features) {
       f.pos.y += f.cellSize
@@ -267,10 +274,8 @@ export const stepSim = (s: RunState, dt: number) => {
     // Start the visual catch-up animation (offset counts back down to 0).
     s.dropAnimOffset = cellSize
   } else {
-    // Expose time-to-forced-step as the HUD countdown value (a beat can fire
-    // sooner; this is the guaranteed fallback / dropout safety).
-    const guaranteed = s.music.playing ? BEAT_DROPOUT_SEC : fallbackStep
-    s.dropTimerSec = Math.max(0, guaranteed - s.sinceStepSec)
+    // Expose time-to-next-step as the HUD countdown value.
+    s.dropTimerSec = Math.max(0, s.dropIntervalSec - s.sinceStepSec)
   }
 
   // FX: update sparks + weld glows.
@@ -327,8 +332,8 @@ export const stepSim = (s: RunState, dt: number) => {
         }
       } else {
         if (orb.t >= XP_ORB_FLY_DUR) {
-          // Deliver XP at end of flight.
-          s.xp += orb.value
+          // Orbs are pure kill juice now (power is fixed); they just wink out at
+          // the gauge. Heat is added at kill time for responsive feedback.
           delivered.push(orb.id)
         }
       }
@@ -338,20 +343,20 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  // Level-up trigger: when XP fills, automatically apply +1 DPS (no menu).
-  if (!s.levelUpActive && s.xp >= s.xpCap) {
-    s.xp -= s.xpCap
-    s.level += 1
-    s.xpCap = computeXpCap(s.level)
-    autoApplyLevelUp(s)
-    // Show level-up notification (1s display + 300ms fade)
-    s.levelUpNotificationFx = {
-      t: 0,
-      displayDur: 1.0,
-      fadeDur: 0.3,
-    }
-    // Micro "breather" after level-up so the board doesn't immediately spawn into pressure.
-    s.spawnTimer = Math.max(s.spawnTimer, 0.75)
+  // Heat / Overdrive: fills from chained kills (added in dealDamageAtHit), decays
+  // when idle, and on topping out fires a short surge that drains it back down.
+  if (s.overdriveSec > 0) {
+    s.overdriveSec = Math.max(0, s.overdriveSec - dt)
+    // The meter visibly drains across the surge, then resets so it must rebuild.
+    s.heat = s.overdriveSec > 0 ? clamp(s.overdriveSec / OVERDRIVE_DURATION, 0, 1) : 0
+  } else if (s.heat >= 1) {
+    s.heat = 1
+    s.overdriveSec = OVERDRIVE_DURATION
+    // Reuse the center banner FX slot to announce OVERDRIVE.
+    s.levelUpNotificationFx = { t: 0, displayDur: 1.0, fadeDur: 0.35 }
+    s.crescendo = clamp(s.crescendo + 0.5, 0, 1)
+  } else {
+    s.heat = Math.max(0, s.heat - HEAT_DECAY * dt)
   }
 
   // Fail line sits just above the bottom rail. Single life: the first block to
@@ -393,6 +398,9 @@ export const stepSim = (s: RunState, dt: number) => {
   s.laser.hitBlockId = null
 
   let didDamageBlockThisFrame = false
+  // Kills resolved this frame. A single beam pass that pierces/splits through many
+  // blocks racks these up, so multi-kills (the payoff of good routing) score more.
+  let killsThisFrame = 0
 
   // Apply smooth drop animation offset to hitboxes for laser interactions.
   // Temporarily adjust positions to visual positions so hitboxes animate smoothly.
@@ -400,7 +408,8 @@ export const stepSim = (s: RunState, dt: number) => {
 
   // Range is effectively infinite (within the screen). Always cast far enough to cross the whole view.
   const maxDist = Math.hypot(s.view.width, s.view.height) * 1.35
-  const beamRadius = Math.max(0, s.stats.beamWidth * 0.45)
+  const overdrive = s.overdriveSec > 0
+  const beamRadius = Math.max(0, s.stats.beamWidth * 0.45) * (overdrive ? OVERDRIVE_BEAM_WIDEN : 1)
   const rotate = (v: Vec2, rad: number): Vec2 => {
     const c = Math.cos(rad)
     const sn = Math.sin(rad)
@@ -415,6 +424,7 @@ export const stepSim = (s: RunState, dt: number) => {
     d: Vec2
     intensity: number
     bouncesLeft: number
+    piercesLeft: number
     minT: number
     ignorePrismId: number
     viaOptics: boolean
@@ -429,7 +439,7 @@ export const stepSim = (s: RunState, dt: number) => {
     return true
   }
 
-  const emitPrismRays = (prismId: number, hitPoint: Vec2, incoming: Vec2, intensity: number, bouncesLeft: number) => {
+  const emitPrismRays = (prismId: number, hitPoint: Vec2, incoming: Vec2, intensity: number, bouncesLeft: number, piercesLeft: number) => {
     const prism = s.features.find((f) => f.kind === 'prism' && f.id === prismId) as
       | { exitsDeg?: number[] }
       | undefined
@@ -445,6 +455,7 @@ export const stepSim = (s: RunState, dt: number) => {
         d: outDir,
         intensity,
         bouncesLeft,
+        piercesLeft,
         minT: EPS + beamRadius * 0.75,
         ignorePrismId: prismId,
         viaOptics: true,
@@ -459,6 +470,36 @@ export const stepSim = (s: RunState, dt: number) => {
     return true
   }
 
+  // Mirrors reflect the beam but slowly burn through under sustained contact, so
+  // an inconvenient deflector is never a permanent wall. Returns nothing; the
+  // reflection itself is handled at the call site.
+  const damageMirror = (mirrorId: number, intensity: number) => {
+    const m = s.features.find((f) => f.kind === 'mirror' && f.id === mirrorId) as MirrorFeature | undefined
+    if (!m) return
+    const odMult = s.overdriveSec > 0 ? OVERDRIVE_DPS_MULT : 1
+    m.hp -= s.stats.dps * MIRROR_DAMAGE_FRAC * odMult * dt * intensity
+    if (m.hp > 0) return
+    // Burned through: remove it and pop a small cool-white spark burst.
+    s.features = s.features.filter((f) => f.id !== m.id)
+    const cx = m.pos.x + m.sizePx * 0.5
+    const cy = m.pos.y + m.sizePx * 0.5
+    for (let i = 0; i < 12; i++) {
+      const ang = Math.random() * Math.PI * 2
+      const spd = 120 + Math.random() * 220
+      s.sparks.push({
+        x: cx + (Math.random() * 2 - 1) * 4,
+        y: cy + (Math.random() * 2 - 1) * 4,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd,
+        age: 0,
+        life: 0.16 + Math.random() * 0.26,
+        size: 1.0 + Math.random() * 2.2,
+        heat: 1,
+      })
+    }
+    if (s.sparks.length > MAX_SPARKS) s.sparks.splice(0, s.sparks.length - MAX_SPARKS)
+  }
+
   const dealDamageAtHit = (
     blockId: number,
     point: Vec2,
@@ -468,7 +509,29 @@ export const stepSim = (s: RunState, dt: number) => {
   ) => {
     const b = s.blocks.find((bb) => bb.id === blockId)
     if (!b) return
-    b.hp -= s.stats.dps * dt * intensity
+
+    // Armored: only the glowing weak face takes damage. A hit on a shielded face
+    // deals nothing (the beam still pierces past it at the call site), so you must
+    // route the beam onto the weak side. Emit a cool "clink" spark as feedback.
+    if (b.kind === 'armored' && (b.vulnNormal.x !== 0 || b.vulnNormal.y !== 0)) {
+      const aligned = normal.x * b.vulnNormal.x + normal.y * b.vulnNormal.y
+      if (aligned <= 0.45) {
+        s.sparks.push({
+          x: point.x,
+          y: point.y,
+          vx: normal.x * 130 + (Math.random() * 2 - 1) * 45,
+          vy: normal.y * 130 + (Math.random() * 2 - 1) * 45,
+          age: 0,
+          life: 0.08 + Math.random() * 0.1,
+          size: 0.8 + Math.random() * 1.3,
+          heat: 0.45,
+        })
+        return
+      }
+    }
+
+    const overdriveMult = s.overdriveSec > 0 ? OVERDRIVE_DPS_MULT : 1
+    b.hp -= s.stats.dps * overdriveMult * dt * intensity
     didDamageBlockThisFrame = true
     s.laser.hitBlockId = blockId
 
@@ -538,14 +601,33 @@ export const stepSim = (s: RunState, dt: number) => {
       s.combo += 1
       s.comboBest = Math.max(s.comboBest, s.combo)
       s.comboTimerSec = COMBO_WINDOW_SEC
+
+      // Heat builds from chained kills (combo + piece value). It only accrues
+      // outside Overdrive (during the surge the meter is draining).
+      if (s.overdriveSec <= 0) {
+        const heatGain = HEAT_PER_KILL * Math.max(1, b.xpValue) * (1 + 0.05 * s.combo)
+        s.heat = clamp(s.heat + heatGain, 0, 1)
+      }
+
+      // Multi-kill: each additional block killed in the SAME beam pass (this
+      // frame) is worth progressively more — the direct reward for carving a
+      // path that lines up several targets at once.
+      killsThisFrame += 1
+      const multiKillMult = Math.min(3, 1 + 0.4 * (killsThisFrame - 1))
+
       const comboMult = 1 + 0.1 * (s.combo - 1)
       const routeBonus = viaOptics ? 1.75 : 1
+      const overdriveScore = s.overdriveSec > 0 ? OVERDRIVE_SCORE_MULT : 1
       const depthBase = 10 + s.depth * 0.5
-      const gained = Math.round(depthBase * comboMult * routeBonus * Math.max(1, b.xpValue))
+      const gained = Math.round(depthBase * comboMult * routeBonus * overdriveScore * multiKillMult * Math.max(1, b.xpValue))
       s.score += gained
       // Surge the music-reactive layer on satisfying plays (bigger combos /
-      // optic routes push harder). Renderer reads `crescendo`.
-      s.crescendo = clamp(s.crescendo + 0.12 + 0.02 * s.combo + (viaOptics ? 0.15 : 0), 0, 1)
+      // optic routes / multi-kills push harder). Renderer reads `crescendo`.
+      s.crescendo = clamp(
+        s.crescendo + 0.12 + 0.02 * s.combo + (viaOptics ? 0.15 : 0) + 0.12 * (killsThisFrame - 1),
+        0,
+        1,
+      )
 
       // Increment golden XP bonus when a golden block is destroyed
       if (b.isGold) {
@@ -677,6 +759,7 @@ export const stepSim = (s: RunState, dt: number) => {
     d: { x: 0, y: -1 },
     intensity: 1,
     bouncesLeft: s.stats.maxBounces,
+    piercesLeft: s.stats.maxPierces + (overdrive ? OVERDRIVE_BONUS_PIERCES : 0),
     minT: 0,
     ignorePrismId: -1,
     viaOptics: false,
@@ -690,8 +773,15 @@ export const stepSim = (s: RunState, dt: number) => {
     let d = normalize(ray.d)
     let intensity = ray.intensity
     let bouncesLeft = ray.bouncesLeft
+    let piercesLeft = ray.piercesLeft
     let minT = ray.minT
     const ignorePrismId = ray.ignorePrismId
+    // The single block the beam just pierced, skipped on the next cast so it
+    // doesn't immediately re-hit that block's far face. Reset on any reflection.
+    let ignoreBlockId = -1
+    // The mirror the beam just reflected off, skipped on the next cast so the
+    // thick beam doesn't immediately re-clip the same diagonal. Reset on a wall.
+    let ignoreMirrorId = -1
     // A kill on this ray counts as "via optics" if it already passed an optic or
     // reflects off a mirror/wall before connecting (rewards bank/split shots).
     let routedOptics = ray.viaOptics
@@ -710,6 +800,8 @@ export const stepSim = (s: RunState, dt: number) => {
         minT,
         bounds,
         ignorePrismId >= 0 ? ignorePrismId : undefined,
+        ignoreBlockId >= 0 ? ignoreBlockId : undefined,
+        ignoreMirrorId >= 0 ? ignoreMirrorId : undefined,
       )
 
       // If we'd reach the well's field before any solid hit, segment to the field
@@ -772,6 +864,8 @@ export const stepSim = (s: RunState, dt: number) => {
             0.25,
             bounds,
             ignorePrismId >= 0 ? ignorePrismId : undefined,
+            ignoreBlockId >= 0 ? ignoreBlockId : undefined,
+            ignoreMirrorId >= 0 ? ignoreMirrorId : undefined,
           )
           if (!stepHit) {
             const next = add(o, mul(d, worldStep))
@@ -794,10 +888,38 @@ export const stepSim = (s: RunState, dt: number) => {
             break
           }
           if (stepHit.kind === 'block') {
-            // First-hit weld: damage and stop (no bounce off blocks).
+            // Pierce: damage the block and keep going through it (routing =
+            // throughput), with a per-block intensity falloff and a pierce cap.
             dealDamageAtHit(stepHit.id, stepHit.point, stepHit.normal, intensity, routedOptics)
-            rayLive = false
-            break
+            const cblk = s.blocks.find((bb) => bb.id === stepHit.id)
+            if (cblk && cblk.kind === 'chrome') {
+              // Chrome reflects (scrambles routing) instead of being pierced.
+              if (bouncesLeft <= 0) {
+                rayLive = false
+                break
+              }
+              routedOptics = true
+              d = normalize(reflect(d, stepHit.normal))
+              intensity *= s.stats.bounceFalloff
+              bouncesLeft -= 1
+              o = add(stepHit.point, mul(stepHit.normal, EPS + beamRadius))
+              minT = EPS + beamRadius * 0.75
+              ignoreBlockId = -1
+              break // resume outer tracing (re-detect the field)
+            }
+            if (piercesLeft <= 0) {
+              rayLive = false
+              break
+            }
+            piercesLeft -= 1
+            intensity *= s.stats.pierceFalloff
+            if (intensity < MIN_PIERCE_INTENSITY) {
+              rayLive = false
+              break
+            }
+            ignoreBlockId = stepHit.id
+            o = add(stepHit.point, mul(d, EPS + beamRadius))
+            continue // keep integrating the curve through the block
           }
           if (stepHit.kind === 'mirror' || stepHit.kind === 'wall') {
             if (stepHit.kind === 'wall' && stepHit.id === -4) {
@@ -810,6 +932,12 @@ export const stepSim = (s: RunState, dt: number) => {
               rayLive = false
               break
             }
+            if (stepHit.kind === 'mirror') {
+              damageMirror(stepHit.id, intensity)
+              ignoreMirrorId = stepHit.id
+            } else {
+              ignoreMirrorId = -1
+            }
             routedOptics = true
             d = normalize(reflect(d, stepHit.normal))
             if (!skipPenalty) {
@@ -818,10 +946,11 @@ export const stepSim = (s: RunState, dt: number) => {
             }
             o = add(stepHit.point, mul(stepHit.normal, EPS + beamRadius))
             minT = EPS + beamRadius * 0.75
+            ignoreBlockId = -1
             break // resume the outer tracing loop (re-detect the field)
           }
           if (stepHit.kind === 'prism') {
-            emitPrismRays(stepHit.id, stepHit.point, d, intensity, bouncesLeft)
+            emitPrismRays(stepHit.id, stepHit.point, d, intensity, bouncesLeft, piercesLeft)
             rayLive = false
             break
           }
@@ -841,9 +970,30 @@ export const stepSim = (s: RunState, dt: number) => {
       if (!tryAddSeg(o, hit.point, intensity)) break
 
       if (hit.kind === 'block') {
-        // First-hit weld: damage and stop (no bounce off blocks).
+        // Pierce: damage the block and continue straight through it, with a
+        // per-block intensity falloff and a pierce cap so focusing beats spraying.
         dealDamageAtHit(hit.id, hit.point, hit.normal, intensity, routedOptics)
-        break
+        const cblk = s.blocks.find((bb) => bb.id === hit.id)
+        if (cblk && cblk.kind === 'chrome') {
+          // Chrome reflects (scrambles routing) instead of being pierced.
+          if (bouncesLeft <= 0) break
+          routedOptics = true
+          d = normalize(reflect(d, hit.normal))
+          intensity *= s.stats.bounceFalloff
+          bouncesLeft -= 1
+          o = add(hit.point, mul(hit.normal, EPS + beamRadius))
+          minT = EPS + beamRadius * 0.75
+          ignoreBlockId = -1
+          continue
+        }
+        if (piercesLeft <= 0) break
+        piercesLeft -= 1
+        intensity *= s.stats.pierceFalloff
+        if (intensity < MIN_PIERCE_INTENSITY) break
+        ignoreBlockId = hit.id
+        o = add(hit.point, mul(d, EPS + beamRadius))
+        minT = EPS + beamRadius * 0.75
+        continue
       }
 
       if (hit.kind === 'mirror' || hit.kind === 'wall') {
@@ -855,6 +1005,13 @@ export const stepSim = (s: RunState, dt: number) => {
         const skipPenalty = isWall && s.stats.noWallPenalty
 
         if (!skipPenalty && bouncesLeft <= 0) break
+        // Mirrors take chip damage (and can burn through); walls just reflect.
+        if (hit.kind === 'mirror') {
+          damageMirror(hit.id, intensity)
+          ignoreMirrorId = hit.id
+        } else {
+          ignoreMirrorId = -1
+        }
         // Any reflection routes the beam; reward the resulting kill as a bank shot.
         routedOptics = true
         d = normalize(reflect(d, hit.normal))
@@ -865,11 +1022,12 @@ export const stepSim = (s: RunState, dt: number) => {
         // Offset along the normal to ensure we start outside the surface, especially at acute angles
         o = add(hit.point, mul(hit.normal, EPS + beamRadius))
         minT = EPS + beamRadius * 0.75
+        ignoreBlockId = -1
         continue
       }
 
       if (hit.kind === 'prism') {
-        emitPrismRays(hit.id, hit.point, d, intensity, bouncesLeft)
+        emitPrismRays(hit.id, hit.point, d, intensity, bouncesLeft, piercesLeft)
         break
       }
 
@@ -877,44 +1035,8 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  // ---- Black-hole contact damage ----
-  // A parked (not held) hole consumes whatever it touches, dealing the beam's
-  // full DPS to every block overlapping its core. Runs here so it shares the
-  // visual (drop-animated) positions and the destruction/combo/melt path.
-  {
-    const well = s.well
-    let damaging = false
-    if (well.placed && !well.grabbed) {
-      // Well position is already world-space; contact radius is world units.
-      const wc = { x: well.pos.x, y: well.pos.y }
-      const wr = WELL_DAMAGE_R
-      const wr2 = wr * wr
-      // Snapshot ids first: dealDamageAtHit mutates s.blocks on destruction.
-      for (const b of s.blocks.slice()) {
-        const a = b.localAabb
-        const minX = b.pos.x + a.minX
-        const maxX = b.pos.x + a.maxX
-        const minY = b.pos.y + a.minY
-        const maxY = b.pos.y + a.maxY
-        const nx = clamp(wc.x, minX, maxX)
-        const ny = clamp(wc.y, minY, maxY)
-        const ddx = wc.x - nx
-        const ddy = wc.y - ny
-        if (ddx * ddx + ddy * ddy > wr2) continue
-        damaging = true
-        // Damage point on the block surface nearest the core; normal points from
-        // the block center toward the hole so sparks spit outward sensibly.
-        const cxB = (minX + maxX) * 0.5
-        const cyB = (minY + maxY) * 0.5
-        const nlen = Math.hypot(wc.x - cxB, wc.y - cyB)
-        const normal =
-          nlen > 1e-3 ? { x: (wc.x - cxB) / nlen, y: (wc.y - cyB) / nlen } : { x: 0, y: -1 }
-        // Direct consume = full intensity, not an optics route.
-        dealDamageAtHit(b.id, { x: nx, y: ny }, normal, 1, false)
-      }
-    }
-    well.damaging = damaging
-  }
+  // The well is purely a beam lens now (it bends the beam by proximity above).
+  // It deals no contact damage; all damage comes from the routed beam.
 
   // If we're not actively damaging a block this frame, let dwell cool off.
   if (!didDamageBlockThisFrame) {

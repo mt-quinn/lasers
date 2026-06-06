@@ -64,6 +64,16 @@ export type UpgradeOffer = {
   description: string
 }
 
+// Routing-focused block variety. None of these are HP sponges — they change HOW
+// you must route the beam, not how long you hold it:
+// - normal: damageable from anywhere; the beam pierces it.
+// - fast: descends two cells per step (prioritization pressure).
+// - armored: only its glowing weak face takes damage; the beam pierces the
+//   shielded faces harmlessly, so you must route the beam onto the weak side.
+// - chrome: reflects the beam (scrambling your routing) and burns through fast
+//   under sustained contact.
+export type BlockKind = 'normal' | 'fast' | 'armored' | 'chrome'
+
 export type BlockEntity = {
   id: number
   // grid cells describing the polyomino in local cell coords
@@ -76,6 +86,13 @@ export type BlockEntity = {
   hp: number
   xpValue: number
   isGold: boolean
+  kind: BlockKind
+  // Armored only: outward normal of the weak face (damage applies when the beam's
+  // hit normal points the same way). {0,0} = vulnerable everywhere.
+  vulnNormal: Vec2
+  // Extra per-block visual drop offset (px) so fast double-steppers ease smoothly
+  // instead of snapping. Decays to 0 alongside the global drop animation.
+  dropAnimExtra: number
   // local-space loop points in *cell* units (not pixels), closed (last==first)
   loop: Vec2[]
   // local-space AABB in pixels (for quick reject); updated at spawn from shape
@@ -89,11 +106,19 @@ export type BoardFeatureKind = 'mirror' | 'prism' | 'blackHole'
 export type MirrorFeature = {
   id: number
   kind: 'mirror'
-  cells: BlockCell[]
+  pos: Vec2 // top-left of the square bounding box, world coords
   cellSize: number
-  cornerRadius: number
-  pos: Vec2 // top-left in world coords
-  loop: Vec2[]
+  // Side length (px) of the square whose diagonal is the reflective surface.
+  sizePx: number
+  // Diagonal orientation. 1 = '\' (top-left → bottom-right), -1 = '/'
+  // (bottom-left → top-right). A straight-up beam off '\' deflects left and off
+  // '/' deflects right — it can NEVER reflect back into the muzzle, which was the
+  // old "blocked emitter" dead-state.
+  orient: 1 | -1
+  // Mirrors are destructible: sustained beam contact burns them away, so an
+  // inconvenient one is never a permanent wall.
+  hp: number
+  hpMax: number
   localAabb: { minX: number; minY: number; maxX: number; maxY: number }
 }
 
@@ -130,6 +155,11 @@ export type RunStats = {
   beamGlowWidth: number
   maxBounces: number
   bounceFalloff: number
+  // The beam pierces through blocks (routing = throughput). It can pass through
+  // up to `maxPierces` blocks per path, losing `pierceFalloff` of its intensity
+  // (and thus damage) on each one, so focusing still beats spraying.
+  maxPierces: number
+  pierceFalloff: number
   splitterChance: number
   noWallPenalty: boolean
   extraChoices: number
@@ -185,9 +215,6 @@ export type WellState = {
   placed: boolean
   // True while the finger/cursor is held down (well follows the pointer).
   grabbed: boolean
-  // Transient (visual): true when the parked hole is currently touching — and so
-  // damaging — at least one block this frame. Drives the active/idle visual.
-  damaging: boolean
   pos: Vec2
   vel: Vec2
 }
@@ -296,8 +323,14 @@ export type RunState = {
   // Live music-reactive signals (driven by the streaming soundtrack).
   music: MusicSignals
 
-  // XP / level-up loop (now an invisible in-run power ramp: kills -> XP ->
-  // automatic +DPS, no menu).
+  // Heat / Overdrive: a skill-expressed, self-resetting beam amplifier. Heat
+  // (0..1) fills as you chain kills and decays when you idle; topping it out
+  // fires Overdrive (a temporary beam surge + score multiplier) that drains it.
+  heat: number
+  overdriveSec: number
+
+  // XP orbs are kept purely as kill juice (the melt orb that flies to the corner
+  // gauge). xp/level are vestigial now (power is fixed; no leveling).
   xp: number
   xpCap: number
   level: number
@@ -377,9 +410,10 @@ export const createInitialRunState = (): RunState => {
     sinceStepSec: 0,
     lastBeatToken: 0,
     stats: {
-      // Scale down visible numbers (HP/DPS) without changing time-to-kill:
-      // we scale both damage and health by the same factor.
-      dps: 3,
+      // Fixed beam power. The player's "power" is their routing skill, not a
+      // growing stat, so this never changes during a run (no DPS upgrades). It is
+      // tuned against the flat per-cell HP for a snappy, constant time-to-kill.
+      dps: 30,
       // Default beam width doubled (width is no longer an upgrade).
       beamWidth: 12.0,
       // Outer glow width (kept at original value for visual balance).
@@ -387,6 +421,10 @@ export const createInitialRunState = (): RunState => {
       maxBounces: 10,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
       bounceFalloff: 0.85,
+      // Piercing: the beam rakes through a column of blocks. Generous count, with
+      // a gentle per-block falloff so the first targets melt fastest.
+      maxPierces: 6,
+      pierceFalloff: 0.8,
       splitterChance: 0,
       noWallPenalty: false,
       extraChoices: 0,
@@ -401,7 +439,6 @@ export const createInitialRunState = (): RunState => {
     well: {
       placed: false,
       grabbed: false,
-      damaging: false,
       pos: { x: 180, y: 320 },
       vel: { x: 0, y: 0 },
     },
@@ -424,6 +461,8 @@ export const createInitialRunState = (): RunState => {
       // Default reactivity: punchy but still legible.
       intensity: 0.8,
     },
+    heat: 0,
+    overdriveSec: 0,
     xp: 0,
     xpCap: 5,
     level: 0,

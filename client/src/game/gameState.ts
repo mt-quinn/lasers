@@ -1,7 +1,9 @@
 import type { RunState } from './runState'
 import { createInitialRunState } from './runState'
 
-const GAME_STATE_KEY = 'laser_game_state_v1'
+// v2: routing-skill rework (fixed power, piercing beam, flat HP). Old v1 saves
+// use the obsolete HP/DPS model, so they are intentionally not loaded.
+const GAME_STATE_KEY = 'laser_game_state_v2'
 
 // Fields to exclude from serialization (view-dependent, input state, and transient FX)
 type SavedRunState = Omit<
@@ -25,6 +27,8 @@ type SavedRunState = Omit<
   | 'comboBest'
   | 'comboTimerSec'
   | 'crescendo'
+  | 'heat'
+  | 'overdriveSec'
   | 'sinceStepSec'
   | 'lastBeatToken'
 >
@@ -143,12 +147,21 @@ export const loadGameState = (): RunState | null => {
     // Merge saved state into fresh state
     Object.assign(freshState, parsed)
     
-    // MIGRATION: Normalize the fallback descent tempo (now the silent-mode
-    // metronome; music beats drive the step otherwise).
+    // MIGRATION: the descent interval is now driven by the deterministic
+    // difficulty schedule every frame; this is just a sane pre-first-tick value.
     freshState.dropIntervalSec = 1.1
     // MIGRATION: bounces are a fixed design constant now (the upgrade system is
     // gone), so don't let an old save pin an outdated value.
     freshState.stats.maxBounces = 10
+    // MIGRATION: ensure the piercing-beam stats exist on any merged save.
+    if (!Number.isFinite(freshState.stats.maxPierces)) freshState.stats.maxPierces = 6
+    if (!Number.isFinite(freshState.stats.pierceFalloff)) freshState.stats.pierceFalloff = 0.8
+    // MIGRATION: ensure routing-kind fields exist on any merged blocks.
+    for (const b of freshState.blocks) {
+      if (b.kind == null) b.kind = 'normal'
+      if (b.vulnNormal == null) b.vulnNormal = { x: 0, y: 0 }
+      if (!Number.isFinite(b.dropAnimExtra)) b.dropAnimExtra = 0
+    }
     // Also ensure dropTimerSec doesn't exceed the interval
     if (freshState.dropTimerSec > freshState.dropIntervalSec) {
       freshState.dropTimerSec = freshState.dropIntervalSec
