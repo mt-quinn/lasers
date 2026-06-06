@@ -150,11 +150,13 @@ export const loadGameState = (): RunState | null => {
     // MIGRATION: the descent interval is now driven by the deterministic
     // difficulty schedule every frame; this is just a sane pre-first-tick value.
     freshState.dropIntervalSec = 1.1
-    // MIGRATION: bounces are a fixed design constant now (the upgrade system is
-    // gone), so don't let an old save pin an outdated value.
+    // MIGRATION: beam power is a fixed design constant now (the upgrade system is
+    // gone), so don't let an old save pin outdated values. DPS and pierce count
+    // were retuned down so a single beam can no longer vaporize a whole stacked
+    // column on arrival (which made stacking/quantity meaningless).
     freshState.stats.maxBounces = 10
-    // MIGRATION: ensure the piercing-beam stats exist on any merged save.
-    if (!Number.isFinite(freshState.stats.maxPierces)) freshState.stats.maxPierces = 6
+    freshState.stats.dps = 20
+    freshState.stats.maxPierces = 1
     if (!Number.isFinite(freshState.stats.pierceFalloff)) freshState.stats.pierceFalloff = 0.8
     // MIGRATION: ensure routing-kind fields exist on any merged blocks.
     for (const b of freshState.blocks) {

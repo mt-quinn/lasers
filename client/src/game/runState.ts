@@ -417,9 +417,11 @@ export const createInitialRunState = (): RunState => {
     lastBeatToken: 0,
     stats: {
       // Fixed beam power. The player's "power" is their routing skill, not a
-      // growing stat, so this never changes during a run (no DPS upgrades). It is
-      // tuned against the flat per-cell HP for a snappy, constant time-to-kill.
-      dps: 30,
+      // growing stat, so this never changes during a run (no DPS upgrades). Tuned
+      // against the flat per-cell HP so a focused piece melts in ~1-2s (8hp/cell:
+      // ~0.4s for a 1-cell, ~1.6s for a 4-cell) -- quick, but slow enough that the
+      // board builds up and descends instead of being vaporized on arrival.
+      dps: 20,
       // Default beam width doubled (width is no longer an upgrade).
       beamWidth: 12.0,
       // Outer glow width (kept at original value for visual balance).
@@ -427,9 +429,14 @@ export const createInitialRunState = (): RunState => {
       maxBounces: 10,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
       bounceFalloff: 0.85,
-      // Piercing: the beam rakes through a column of blocks. Generous count, with
-      // a gentle per-block falloff so the first targets melt fastest.
-      maxPierces: 6,
+      // Piercing: how many blocks PAST the first the beam rakes through. Kept
+      // scarce on purpose. With a generous count one beam damages a whole stacked
+      // column at once (front + N behind), so stacking/quantity shields nothing
+      // and nothing survives to descend -- the exact reason the opening felt
+      // trivial. At 1, a beam damages the front piece and one behind it; stacks of
+      // 3+ shield the pieces at the back, which then advance toward the player.
+      // Overdrive grants bonus pierces as the "punch through the backlog" reward.
+      maxPierces: 1,
       pierceFalloff: 0.8,
       splitterChance: 0,
       noWallPenalty: false,
