@@ -6,6 +6,7 @@ import { spawnBoardThing, spawnPrismAt } from './spawn'
 import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
+import { sfxEngine } from '../audio/sfx'
 
 const EPS = 1.0
 const MAX_SPARKS = 280
@@ -615,6 +616,9 @@ export const stepSim = (s: RunState, dt: number) => {
 
     if (b.hp <= 0) {
       s.blocksDestroyed += 1
+      // Piece-destroyed SFX. Polyphonic + bus-limited, so multi-kills and rapid
+      // chains overlap cleanly without the volume piling up.
+      sfxEngine.playQuench()
 
       // Score: depth x combo. Each kill bumps the combo (refreshing its rolling
       // window) and scores base x combo-multiplier x route-bonus, where the base

@@ -20,6 +20,7 @@ import {
 } from './game/highScores'
 import { clearGameState, loadGameState, saveGameState } from './game/gameState'
 import { musicEngine } from './audio/music'
+import { sfxEngine } from './audio/sfx'
 
 type HudSnapshot = {
   paused: boolean
@@ -227,6 +228,9 @@ export default function App() {
   useEffect(() => {
     const onGesture = () => {
       if (musicEngine.isWantPlaying()) void musicEngine.start()
+      // Unlock the SFX context too so piece-destroyed sounds can play (they're
+      // independent of the music toggle).
+      sfxEngine.unlock()
     }
     window.addEventListener('pointerdown', onGesture, { passive: true })
     window.addEventListener('touchend', onGesture, { passive: true })
