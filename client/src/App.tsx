@@ -213,6 +213,14 @@ export default function App() {
   // Mirror the engine's "needs unlock" signal so we can show the tap prompt.
   useEffect(() => musicEngine.subscribeAudioNeedsUnlock(setAudioNeedsUnlock), [])
 
+  // While the tap-to-resume prompt is up, freeze the sim so the player can't
+  // lose a run behind it. A ref so the rAF loop reads the current value.
+  const audioGateRef = useRef(false)
+  const audioPromptVisible = audioNeedsUnlock && isTouchDevice && !hud.paused && !hud.gameOver
+  useEffect(() => {
+    audioGateRef.current = audioPromptVisible
+  }, [audioPromptVisible])
+
   // Start the soundtrack on the first user gesture (autoplay policy requires
   // it). Listeners stay installed so we also recover audio after the tab is
   // backgrounded / an iOS audio-session interruption.
@@ -340,7 +348,7 @@ export default function App() {
       // 90/120Hz displays (fixed-step would "pause" every other frame).
       const dtSec = Math.min(0.05, (now - last) / 1000)
       last = now
-      if (!s.paused) stepSim(s, dtSec)
+      if (!s.paused && !audioGateRef.current) stepSim(s, dtSec)
 
       // Sample the soundtrack every frame (even while paused) so the visuals
       // keep breathing, then push the live signals onto the run state.
@@ -543,25 +551,28 @@ export default function App() {
             </div>
 
             {/* Mobile audio-unlock prompt. A drag (the beam control) can't
-                resume audio on iOS; a tap on this overlay is a valid activation
-                gesture. Hidden once audio runs, and suppressed while a menu is
-                up (its buttons already unlock on tap). */}
+                resume audio on iOS; a tap on this full-screen overlay is a valid
+                activation gesture. The whole game is frozen while it's up (see
+                the audio gate in the main loop) so the player never loses a run
+                reading it. Suppressed while a menu is up (its buttons already
+                unlock on tap). */}
             {audioNeedsUnlock && isTouchDevice && !hud.paused && !hud.gameOver && (
-              <button
-                type="button"
+              <div
                 className="audioUnlock"
-                aria-label="Tap to resume audio"
+                role="button"
+                tabIndex={0}
+                aria-label="Tap to resume"
                 onClick={() => {
                   musicEngine.setWantPlaying(true)
                   setMusicOn(true)
                   void musicEngine.start()
                 }}
               >
-                <span className="audioUnlockCard">
-                  <span className="audioUnlockIcon" aria-hidden="true">♪</span>
-                  <span className="audioUnlockText">Tap to resume music</span>
-                </span>
-              </button>
+                <div className="audioUnlockCard">
+                  <div className="audioUnlockIcon" aria-hidden="true">♪</div>
+                  <div className="audioUnlockTitle">Tap to resume</div>
+                </div>
+              </div>
             )}
 
             {/* Pause overlay. */}

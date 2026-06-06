@@ -30,10 +30,11 @@ import type { MusicSignals } from '../game/runState'
 const AUDIUS_APP_NAME = 'lasers'
 const AUDIUS_API_BASE = 'https://discoveryprovider.audius.co/v1'
 
-// Soundtrack: the "All Things Bass" editorial playlist, played shuffled — a
-// random track on fresh load, then a new random track after each one finishes.
-// https://audius.co/Audius/playlist/all-things-bass  (encoded id below)
-const AUDIUS_PLAYLIST_ID = 'ozkbOY2'
+// Soundtrack: the "ABDUCTION" experimental bass / dubstep playlist, played
+// shuffled — a random track on fresh load, then a new random track after each
+// one finishes.
+// https://audius.co/cd91x/playlist/🛸abduction👽-experimental-bass-140-dubstep-more
+const AUDIUS_PLAYLIST_ID = 'MGyv5xm'
 
 // Fallback if the playlist can't be fetched: "Andrea Bedoya - To Release".
 // Resolved from https://audius.co/yabedoyag/andrea-bedoya-to-release-
@@ -254,6 +255,9 @@ class MusicEngine {
         clearTimeout(this.retryTimer)
         this.retryTimer = null
       }
+      // Invalidate any in-flight load/resume so their async continuations can't
+      // call play() *after* this pause and silently restart the track.
+      this.loadToken++
       this.audio?.pause()
       this.notifyNeedsUnlock()
       return
@@ -331,6 +335,9 @@ class MusicEngine {
         // Ignore; next gesture retries.
       }
     }
+    // The await above yields the event loop; the player may have toggled music
+    // off (and paused) in the meantime, so re-check before doing anything.
+    if (!this.wantPlaying) return
     const audio = this.audio
     if (!audio) return
     // No source yet, or the current source errored out: pick the (random)
@@ -344,8 +351,12 @@ class MusicEngine {
       return
     }
     if (audio.paused) {
+      if (!this.wantPlaying) return
       try {
         await audio.play()
+        // play() resolves asynchronously; if music was turned off while it
+        // started, undo it so the toggle wins the race.
+        if (!this.wantPlaying) audio.pause()
       } catch {
         // Blocked outside a gesture; retried on the next one.
       }
@@ -426,6 +437,9 @@ class MusicEngine {
     audio.load()
     try {
       await audio.play()
+      // If this load was superseded or music was turned off while play()
+      // started, undo it so a stale load can't override a pause.
+      if (token !== this.loadToken || !this.wantPlaying) audio.pause()
     } catch {
       // Autoplay blocked or the node errored: the 'error' handler reschedules,
       // and the next user gesture will also retry.
