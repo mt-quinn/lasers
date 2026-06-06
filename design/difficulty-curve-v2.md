@@ -1,6 +1,6 @@
-# Big Lasers — Difficulty Curve (v2, XP + Step Drop)
+# laserburn — Difficulty Curve (v2, XP + Step Drop)
 
-This document defines an **implementable, “human-playable” difficulty curve** for *Big Lasers* (Breakout-ish aim skill + Tetris-like step drop). It’s designed to:
+This document defines an **implementable, “human-playable” difficulty curve** for *laserburn* (Breakout-ish aim skill + Tetris-like step drop). It’s designed to:
 
 - Keep the player in a **flow** state: challenged, rarely overwhelmed.
 - **Force engagement with upgrades**: base stats will not keep up indefinitely.

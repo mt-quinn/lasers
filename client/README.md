@@ -1,6 +1,6 @@
-## Big Lasers (client)
+## laserburn (client)
 
-This is the playable web client for the laser game prototype.
+This is the playable web client for laserburn (https://laserburn.fun).
 
 ### Run locally
 From this folder:

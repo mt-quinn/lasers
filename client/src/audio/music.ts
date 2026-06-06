@@ -17,7 +17,7 @@
 // followers with independent attack/release for punch without jitter, and do a
 // simple onset/beat detector.
 //
-// The signals are intentionally numeric (not CSS variables) because Lasers is
+// The signals are intentionally numeric (not CSS variables) because laserburn is
 // canvas-rendered: the existing draw loop just reads numbers off RunState.
 //
 // CORS note: the Audius stream redirect chain serves
@@ -27,7 +27,7 @@
 import { MUSIC_SPECTRUM_BINS } from '../game/runState'
 import type { MusicSignals } from '../game/runState'
 
-const AUDIUS_APP_NAME = 'lasers'
+const AUDIUS_APP_NAME = 'laserburn'
 const AUDIUS_API_BASE = 'https://discoveryprovider.audius.co/v1'
 
 // Tempo-matched soundtrack. Instead of a fixed playlist, each track is chosen to
