@@ -15,6 +15,12 @@
 // gameplay feedback should fire whether or not the soundtrack is on. It shares
 // nothing with the music AudioContext, and unlocks on the same first gesture.
 
+// Master switch for the piece-destroyed SFX. Disabled for now — quench.wav
+// isn't the right sound. The whole audio route (this engine, the gesture
+// unlock in App, and the stepSim trigger) is intentionally left wired up; to
+// re-enable, drop in the new sample (or repoint QUENCH_URL) and flip this true.
+const QUENCH_ENABLED: boolean = false
+
 const QUENCH_URL = `${import.meta.env.BASE_URL}quench.wav`
 
 // Baseline level for the quench SFX (0..1). A single play lands here; the bus
@@ -37,7 +43,8 @@ class SfxEngine {
   private activeVoices = 0
 
   constructor() {
-    if (typeof window !== 'undefined') void this.prefetch()
+    // Skip downloading the sample while the effect is disabled.
+    if (QUENCH_ENABLED && typeof window !== 'undefined') void this.prefetch()
   }
 
   private async prefetch() {
@@ -87,6 +94,7 @@ class SfxEngine {
   // Must be called from inside a user gesture the first time (autoplay policy).
   // Idempotent and safe to call on every gesture.
   unlock() {
+    if (!QUENCH_ENABLED) return
     this.ensureGraph()
     const ctx = this.ctx
     if (ctx && ctx.state === 'suspended') {
@@ -99,6 +107,7 @@ class SfxEngine {
   // Fire-and-forget a quench. No-ops until the context is unlocked + the sample
   // is decoded (both happen by the time gameplay produces a kill).
   playQuench() {
+    if (!QUENCH_ENABLED) return
     const ctx = this.ctx
     const buffer = this.buffer
     const limiter = this.limiter
