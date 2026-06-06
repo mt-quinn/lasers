@@ -733,40 +733,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.fillStyle = rim
         ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
         ctx.restore()
-
-        // Fracture: hairline cracks spread from the piece as its health drains,
-        // a clearer "about to break" read than paling out alone.
-        if (!b.isGold && hpPct < 0.55) {
-          const fr = (0.55 - hpPct) / 0.55
-          let seed = (b.id * 2654435761) >>> 0
-          const rnd = () => {
-            seed = (seed * 1664525 + 1013904223) >>> 0
-            return seed / 4294967296
-          }
-          ctx.save()
-          ctx.clip()
-          ctx.globalCompositeOperation = 'source-over'
-          ctx.strokeStyle = `rgba(18,7,28,${(0.28 + 0.4 * fr).toFixed(3)})`
-          ctx.lineWidth = 0.8 + 1.2 * fr
-          ctx.lineCap = 'round'
-          const reach = Math.max(w, h) * 0.62
-          const nC = 2 + Math.floor(fr * 3)
-          for (let k = 0; k < nC; k++) {
-            const ang = rnd() * Math.PI * 2
-            const midA = ang + (rnd() - 0.5) * 0.7
-            const m = 0.45 + rnd() * 0.2
-            const ex = bcx + Math.cos(ang) * reach
-            const ey = bcy + Math.sin(ang) * reach
-            const mx = bcx + Math.cos(midA) * reach * m
-            const my = bcy + Math.sin(midA) * reach * m
-            ctx.beginPath()
-            ctx.moveTo(bcx, bcy)
-            ctx.lineTo(mx, my)
-            ctx.lineTo(ex, ey)
-            ctx.stroke()
-          }
-          ctx.restore()
-        }
       }
 
       ctx.lineWidth = 2
