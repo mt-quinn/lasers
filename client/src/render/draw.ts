@@ -197,14 +197,6 @@ const relativeLuma = (cssRgb: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-const pickHpAnchor = (s: RunState, b: RunState['blocks'][number]) => {
-  // The number rides its natural on-piece anchor the whole way down (the old
-  // "slide up so it stays under the top edge" behavior is unnecessary now that
-  // the perspective shaft shows pieces flying in from far above).
-  const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
-  return { x: b.pos.x + b.hpAnchorLocalPx.x, y: visualY + b.hpAnchorLocalPx.y }
-}
-
 export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -619,12 +611,32 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
-    // Blocks (base render; HP text is drawn at the very end so it stays above glow/laser).
+    // Discrete danger tiers for the drain-gauge overlay. The intact silhouette
+    // proportion carries the fine health read; the tier color makes the
+    // dangerous states pop even on a tiny, far-away piece (color/brightness
+    // survive distance where a saturation gradient can't). FULL/HEALTHY keep the
+    // native body color; HURT/CRITICAL wash the intact region amber/red.
+    const critPulse = 0.5 + 0.5 * Math.sin(tNow * 7)
+    const healthTier = (hpPct: number): { washFill: string; lineStroke: string; lineGlow: number } => {
+      if (hpPct > 0.66) return { washFill: '', lineStroke: '', lineGlow: 0 }
+      if (hpPct > 0.4) return { washFill: '', lineStroke: 'rgba(150,255,130,0.85)', lineGlow: 6 }
+      if (hpPct > 0.18)
+        return { washFill: 'rgba(255,176,64,0.34)', lineStroke: 'rgba(255,196,92,0.95)', lineGlow: 9 }
+      return {
+        washFill: `rgba(255,72,52,${(0.45 + 0.18 * critPulse).toFixed(3)})`,
+        lineStroke: 'rgba(255,120,90,1)',
+        lineGlow: 12 + 8 * critPulse,
+      }
+    }
+
+    // Blocks (base render; the drain-gauge HP overlay is drawn per piece below).
     // Depth-sort far -> near so nearer (lower) pieces overlap farther ones.
     const sortedBlocks = [...s.blocks].sort((a, b) => a.pos.y - b.pos.y)
     for (const b of sortedBlocks) {
       const hpPct = clamp(b.hp / b.hpMax, 0, 1)
-      const glow = 0.35 + 0.65 * (1 - hpPct)
+      // Base bloom is HP-independent now; the drain-gauge overlay below owns the
+      // health read (proportion + tier color), so the body just shows identity.
+      const glow = 0.6
 
       // Apply smooth drop animation offset (plus the per-block extra so fast
       // double-steppers ease instead of snapping).
@@ -650,10 +662,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.translate(-bcx, -bcy)
       }
 
-      // Color: HP is encoded by SATURATION (low HP = vivid/urgent, full HP =
-      // pale), which frees HUE for the continuous rainbow. When music is off
-      // (mi == 0) it falls back to the original health gradient so the baseline
-      // look is unchanged.
+      // Color: the body is now a pure identity color (rainbow hue / gold). HP no
+      // longer rides saturation here — the drain-gauge overlay further down is the
+      // single source of the health read, so a damaged piece stays vivid until the
+      // gauge erodes/tints it.
       const pieceHue = hueAt(bcx, bcy)
       let fillBase: string
       let lum: number
@@ -661,14 +673,13 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         fillBase = '#ffd700'
         lum = relativeLuma(fillBase)
       } else if (mi > 0) {
-        // Music on: hue is the rainbow, HP rides SATURATION (full health = vivid,
-        // draining health = the color drains toward gray). No health-red blended
-        // in, so a damaged piece desaturates instead of going red.
-        const mc = hslToRgb(pieceHue, lerp(22, 96, hpPct), 62)
+        // Music on: full-vividness rainbow hue keyed off screen position.
+        const mc = hslToRgb(pieceHue, 96, 62)
         fillBase = `rgb(${mc.r} ${mc.g} ${mc.b})`
         lum = (0.2126 * mc.r + 0.7152 * mc.g + 0.0722 * mc.b) / 255
       } else {
-        fillBase = healthFill(hpPct)
+        // Music off: a fixed "full health" color from the original palette.
+        fillBase = healthFill(1)
         lum = relativeLuma(fillBase)
       }
 
@@ -902,6 +913,116 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           }
           ctx.shadowBlur = 0
         }
+        ctx.restore()
+      }
+
+      // --- Health drain gauge (single source of the HP read) ---------------
+      // The intact (bright) fraction of the silhouette equals hp/hpMax: a dark
+      // "spent" region eats inward from the face the beam can damage, and the
+      // intact body recedes away from it. A tier color washes the intact region
+      // and a glowing molten line marks the cut, so even a tiny far-away piece
+      // reads its danger by color + how much of it has gone dark. Composed over
+      // the finished body so it works for every kind (normal / gold / armored /
+      // chrome / fast). A truly-full piece (hpPct ~ 1) shows nothing.
+      if (hpPct < 0.999) {
+        const gax = visualPos.x + b.localAabb.minX
+        const gay = visualPos.y + b.localAabb.minY
+        const gw = b.localAabb.maxX - b.localAabb.minX
+        const gh = b.localAabb.maxY - b.localAabb.minY
+        const tier = healthTier(hpPct)
+
+        // Erosion direction: hollow grows inward from the damageable face. Normal
+        // pieces (any face) erode from the bottom, the upward beam's impact side;
+        // directional (armored) pieces erode from their weak face so the spent
+        // region visibly eats in from the side you must strike.
+        let vnx = 0
+        let vny = 1
+        if (b.kind === 'armored' && (b.vulnNormal.x !== 0 || b.vulnNormal.y !== 0)) {
+          vnx = b.vulnNormal.x
+          vny = b.vulnNormal.y
+        }
+
+        // Outward-padded bbox (overdraw is safe — everything is clipped to the
+        // silhouette). Split it into hollow + intact rects along the erosion axis
+        // and place the cut line between them.
+        const x0 = gax - 2
+        const y0 = gay - 2
+        const x1 = gax + gw + 2
+        const y1 = gay + gh + 2
+        let hollow: { x: number; y: number; w: number; h: number }
+        let intact: { x: number; y: number; w: number; h: number }
+        let cutAx: number
+        let cutAy: number
+        let cutBx: number
+        let cutBy: number
+        if (vnx < 0) {
+          // Weak face = left: hollow eats from the left, intact kept on the right.
+          const xc = gax + gw * (1 - hpPct)
+          hollow = { x: x0, y: y0, w: xc - x0, h: y1 - y0 }
+          intact = { x: xc, y: y0, w: x1 - xc, h: y1 - y0 }
+          cutAx = xc
+          cutAy = y0
+          cutBx = xc
+          cutBy = y1
+        } else if (vnx > 0) {
+          // Weak face = right: hollow eats from the right, intact kept on the left.
+          const xc = gax + gw * hpPct
+          hollow = { x: xc, y: y0, w: x1 - xc, h: y1 - y0 }
+          intact = { x: x0, y: y0, w: xc - x0, h: y1 - y0 }
+          cutAx = xc
+          cutAy = y0
+          cutBx = xc
+          cutBy = y1
+        } else if (vny < 0) {
+          // Weak face = top: hollow eats from the top, intact kept on the bottom.
+          const yc = gay + gh * (1 - hpPct)
+          hollow = { x: x0, y: y0, w: x1 - x0, h: yc - y0 }
+          intact = { x: x0, y: yc, w: x1 - x0, h: y1 - yc }
+          cutAx = x0
+          cutAy = yc
+          cutBx = x1
+          cutBy = yc
+        } else {
+          // Weak face = bottom (default): hollow eats from the bottom, intact top.
+          const yc = gay + gh * hpPct
+          hollow = { x: x0, y: yc, w: x1 - x0, h: y1 - yc }
+          intact = { x: x0, y: y0, w: x1 - x0, h: yc - y0 }
+          cutAx = x0
+          cutAy = yc
+          cutBx = x1
+          cutBy = yc
+        }
+
+        drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
+        ctx.save()
+        ctx.clip()
+
+        // Spent/hollow region: dim whatever was underneath regardless of kind, so
+        // the lit remainder pops as the health read.
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = 'rgba(6,5,12,0.62)'
+        ctx.fillRect(hollow.x, hollow.y, hollow.w, hollow.h)
+
+        // Tier wash over the intact region (HURT / CRITICAL only).
+        if (tier.washFill) {
+          ctx.fillStyle = tier.washFill
+          ctx.fillRect(intact.x, intact.y, intact.w, intact.h)
+        }
+
+        // Molten cut line at the fill level (HEALTHY and below).
+        if (tier.lineStroke) {
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = tier.lineStroke
+          ctx.shadowColor = tier.lineStroke
+          ctx.shadowBlur = tier.lineGlow
+          ctx.lineWidth = 2.5
+          ctx.beginPath()
+          ctx.moveTo(cutAx, cutAy)
+          ctx.lineTo(cutBx, cutBy)
+          ctx.stroke()
+          ctx.shadowBlur = 0
+        }
+
         ctx.restore()
       }
       ctx.restore()
@@ -2356,28 +2477,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.fillStyle = 'rgba(255,246,213,0.96)'
       ctx.fillText(label, cxx, cyy)
       ctx.restore()
-    }
-
-    // HP text last so it stays readable above welding glow + sparks + laser.
-    for (const b of s.blocks) {
-      const hpPct = clamp(b.hp / b.hpMax, 0, 1)
-      const fillBase = healthFill(hpPct)
-      const lum = relativeLuma(fillBase)
-
-      const anchor = pickHpAnchor(s, b)
-      const pc = project(anchor.x, anchor.y)
-      const cx = pc.x
-      const cy = pc.y
-      ctx.font = `900 ${(18 * pc.scale).toFixed(1)}px Nunito`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      const darkText = lum > 0.55
-      ctx.fillStyle = darkText ? 'rgba(10,5,18,0.92)' : 'rgba(255,248,230,0.95)'
-      ctx.strokeStyle = darkText ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'
-      ctx.lineWidth = 3 * pc.scale
-      const label = String(Math.max(0, Math.ceil(b.hp)))
-      ctx.strokeText(label, cx, cy)
-      ctx.fillText(label, cx, cy)
     }
 
     // Power-up flash: a compact neon badge that pops in, holds briefly, then
