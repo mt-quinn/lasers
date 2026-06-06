@@ -177,6 +177,54 @@ export type LaserState = {
   hitBlockId: number | null
 }
 
+// Player's gravity-well puck (the single control surface). Lives in SCREEN
+// space (px) so its physics bounce off the visible playfield walls and feel
+// uniform; the beam unprojects it to world space to solve its arc.
+export type WellState = {
+  // True once the player has placed it at least once this run.
+  placed: boolean
+  // True while the finger/cursor is held down (well follows the pointer).
+  grabbed: boolean
+  // Transient (visual): true when the parked hole is currently touching — and so
+  // damaging — at least one block this frame. Drives the active/idle visual.
+  damaging: boolean
+  pos: Vec2
+  vel: Vec2
+}
+
+// Live signals derived from the streaming soundtrack (Audius). All band/
+// envelope values are smoothed to 0..1. These are read by the renderer and
+// (visual-only) sim FX to make the whole game react to the music.
+export type MusicSignals = {
+  // True while a track is actively playing and the analyser is returning data.
+  playing: boolean
+  // Smoothed frequency bands (0..1), adaptively normalized per-track.
+  bass: number
+  mid: number
+  treble: number
+  // Adaptively-normalized overall loudness motion (0..1).
+  energy: number
+  // Sustained "loudness motion" envelope (0..1) — good for breathing/swell.
+  pulse: number
+  // Transient attack envelope (0..1) — spikes on note/percussion onsets.
+  onset: number
+  // Beat flash (0..1): snaps to 1 on a detected beat, then decays. Good for flashes.
+  beat: number
+  // Increments once per detected beat (lets consumers fire one-shot events).
+  beatToken: number
+  // Continuously-advancing rainbow hue (0..360). The backbone of the color
+  // motion: it never flashes, it glides — speed nudged by mid/treble.
+  hue: number
+  // Smoothed per-band spectrum (0..1), low->high frequency. Drives the depth
+  // grid's per-line glow without re-running analysis in the renderer.
+  spectrum: number[]
+  // User-facing reactivity strength (0..1). Scales how strongly signals drive FX.
+  intensity: number
+}
+
+// Number of spectrum bins exposed to the renderer (cheap, smoothed).
+export const MUSIC_SPECTRUM_BINS = 16
+
 export type RunState = {
   paused: boolean
 
@@ -217,12 +265,18 @@ export type RunState = {
     fadeDur: number
   }
 
-  // Global "tetris-like" drop pacing.
+  // Global "tetris-like" drop pacing. The field steps down one cell per music
+  // beat (see beat-descent fields below); dropIntervalSec is the silent fallback
+  // tempo used when no beats are arriving.
   dropIntervalSec: number
   dropTimerSec: number
   // Smooth drop animation: visual offset from 0 to cellSize (40px)
   dropAnimOffset: number
   dropAnimDuration: number
+  // Beat-synced descent: seconds since the last step, and the last consumed
+  // music beat token (so we step once per detected beat, bounded by tempo).
+  sinceStepSec: number
+  lastBeatToken: number
 
   stats: RunStats
 
@@ -234,9 +288,16 @@ export type RunState = {
     aimDir: Vec2
   }
 
+  // Player gravity-well puck (the control surface).
+  well: WellState
+
   laser: LaserState
 
-  // XP / level-up loop
+  // Live music-reactive signals (driven by the streaming soundtrack).
+  music: MusicSignals
+
+  // XP / level-up loop (now an invisible in-run power ramp: kills -> XP ->
+  // automatic +DPS, no menu).
   xp: number
   xpCap: number
   level: number
@@ -245,6 +306,16 @@ export type RunState = {
   levelUpOptions: UpgradeOffer[]
   xpOrbs: XpOrb[]
   nextOrbId: number
+
+  // Score-attack: depth x combo. `score` is the leaderboard value; `combo`
+  // counts kills inside a rolling window (resets when comboTimerSec hits 0);
+  // `crescendo` (0..1) is a visual surge the renderer amplifies on big plays.
+  score: number
+  combo: number
+  comboBest: number
+  comboTimerSec: number
+  crescendo: number
+  bestScoreLocal: number
 
   // FX
   meltFx: MeltFx[]
@@ -292,24 +363,28 @@ export const createInitialRunState = (): RunState => {
     bestDepthLocal: 0,
     gameOver: false,
     tutorialMovedEmitter: false,
-    lives: 3,
+    // Single life: "how deep" score-attack. One fail ends the run.
+    lives: 1,
     respiteSec: 0,
     lifeLossFx: null,
     levelUpNotificationFx: null,
-    // Start with a full interval so the player sees the cadence before the first step.
-    dropIntervalSec: 1.0,
-    dropTimerSec: 1.0,
+    // Fallback descent tempo (used when no music beats are arriving). With music
+    // on, the field steps on the beat instead.
+    dropIntervalSec: 1.1,
+    dropTimerSec: 1.1,
     dropAnimOffset: 0,
     dropAnimDuration: 0.2, // 200ms animation
+    sinceStepSec: 0,
+    lastBeatToken: 0,
     stats: {
       // Scale down visible numbers (HP/DPS) without changing time-to-kill:
       // we scale both damage and health by the same factor.
-      dps: 10,
+      dps: 3,
       // Default beam width doubled (width is no longer an upgrade).
       beamWidth: 12.0,
       // Outer glow width (kept at original value for visual balance).
       beamGlowWidth: 20.4,
-      maxBounces: 2,
+      maxBounces: 10,
       // Starting bounce multiplier (lower means more degradation; >1 means amplification per bounce).
       bounceFalloff: 0.85,
       splitterChance: 0,
@@ -323,9 +398,31 @@ export const createInitialRunState = (): RunState => {
       pos: { x: 180, y: 600 },
       aimDir: { x: 0, y: -1 },
     },
+    well: {
+      placed: false,
+      grabbed: false,
+      damaging: false,
+      pos: { x: 180, y: 320 },
+      vel: { x: 0, y: 0 },
+    },
     laser: {
       segments: [],
       hitBlockId: null,
+    },
+    music: {
+      playing: false,
+      bass: 0,
+      mid: 0,
+      treble: 0,
+      energy: 0,
+      pulse: 0,
+      onset: 0,
+      beat: 0,
+      beatToken: 0,
+      hue: 0,
+      spectrum: new Array(MUSIC_SPECTRUM_BINS).fill(0),
+      // Default reactivity: punchy but still legible.
+      intensity: 0.8,
     },
     xp: 0,
     xpCap: 5,
@@ -335,6 +432,12 @@ export const createInitialRunState = (): RunState => {
     levelUpOptions: [],
     xpOrbs: [],
     nextOrbId: 1,
+    score: 0,
+    combo: 0,
+    comboBest: 0,
+    comboTimerSec: 0,
+    crescendo: 0,
+    bestScoreLocal: 0,
     meltFx: [],
     nextMeltId: 1,
     sparks: [],

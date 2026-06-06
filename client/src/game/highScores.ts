@@ -1,6 +1,8 @@
 export type HighScoreEntry = {
   name: string
+  // Depth is kept for display (how deep the run got); score is the ranking key.
   depth: number
+  score: number
   ts: number
 }
 
@@ -15,21 +17,22 @@ const sanitizeName = (raw: string) => {
   return clampLen(s, 16)
 }
 
-const isEntry = (x: any): x is HighScoreEntry =>
-  x &&
-  typeof x === 'object' &&
-  typeof x.name === 'string' &&
-  Number.isFinite(x.depth) &&
-  Number.isFinite(x.ts)
+const isEntry = (x: unknown): x is HighScoreEntry => {
+  if (!x || typeof x !== 'object') return false
+  const o = x as Record<string, unknown>
+  return typeof o.name === 'string' && Number.isFinite(o.depth) && Number.isFinite(o.ts)
+}
 
 const normalize = (list: HighScoreEntry[]): HighScoreEntry[] => {
   return [...list]
     .map((e) => ({
       name: sanitizeName(e.name),
       depth: Math.max(0, Math.floor(e.depth)),
+      // Older saves predate `score`; default to 0 so they still load.
+      score: Math.max(0, Math.floor((e as { score?: number }).score ?? 0)),
       ts: Math.max(0, Math.floor(e.ts)),
     }))
-    .sort((a, b) => (b.depth !== a.depth ? b.depth - a.depth : a.ts - b.ts))
+    .sort((a, b) => (b.score !== a.score ? b.score - a.score : a.ts - b.ts))
     .slice(0, 5)
 }
 
@@ -54,18 +57,25 @@ export const saveHighScores = (scores: HighScoreEntry[]) => {
   }
 }
 
-export const getBestDepth = (scores: HighScoreEntry[]) => (scores.length > 0 ? scores[0]!.depth : 0)
+export const getBestScore = (scores: HighScoreEntry[]) => (scores.length > 0 ? scores[0]!.score : 0)
 
-export const qualifiesTop5 = (scores: HighScoreEntry[], depth: number) => {
-  const d = Math.max(0, Math.floor(depth))
-  if (scores.length < 5) return d > 0
-  return d >= scores[scores.length - 1]!.depth
+export const getBestDepth = (scores: HighScoreEntry[]) =>
+  scores.reduce((m, e) => Math.max(m, e.depth), 0)
+
+export const qualifiesTop5 = (scores: HighScoreEntry[], score: number) => {
+  const sc = Math.max(0, Math.floor(score))
+  if (scores.length < 5) return sc > 0
+  return sc >= scores[scores.length - 1]!.score
 }
 
-export const addHighScore = (scores: HighScoreEntry[], entry: { name: string; depth: number }): HighScoreEntry[] => {
+export const addHighScore = (
+  scores: HighScoreEntry[],
+  entry: { name: string; depth: number; score: number },
+): HighScoreEntry[] => {
   const next: HighScoreEntry = {
     name: sanitizeName(entry.name),
     depth: Math.max(0, Math.floor(entry.depth)),
+    score: Math.max(0, Math.floor(entry.score)),
     ts: Date.now(),
   }
   return normalize([...scores, next])
@@ -87,5 +97,3 @@ export const saveLastPlayerName = (name: string) => {
     // ignore
   }
 }
-
-

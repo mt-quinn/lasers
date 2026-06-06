@@ -5,10 +5,12 @@ import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 // import { computeXpCap, getRarityColor } from './game/levelUp'  // Unused after upgrade system removal
-import { getArenaLayout, MIN_RETICLE_GAP, SLIDER_PAD } from './game/layout'
+import { getArenaLayout } from './game/layout'
+import { makeProjection } from './render/projection'
 import {
   addHighScore,
   getBestDepth,
+  getBestScore,
   loadHighScores,
   loadLastPlayerName,
   qualifiesTop5,
@@ -17,69 +19,32 @@ import {
   type HighScoreEntry,
 } from './game/highScores'
 import { clearGameState, loadGameState, saveGameState } from './game/gameState'
+import { musicEngine } from './audio/music'
 
 type HudSnapshot = {
   paused: boolean
   pauseBtnBottomPx: number
   depth: number
+  score: number
   gameOver: boolean
 }
 
-// Helper function to compute derived stats for the pause screen
+// The menus surface only the stats that matter to an endless run: how deep
+// you got, how many pieces you cleared, and how long you lasted.
 const computePauseStats = (state: RunState) => {
-  const { stats, dropIntervalSec, lives, depth, blocksDestroyed, timeSec } = state
-  const { dps, maxBounces, bounceFalloff } = stats
-
-  // Drop rate: drops per second
-  const dropRate = 1 / dropIntervalSec
-
-  // Damage per drop: how much damage is dealt during one drop interval
-  const damagePerDrop = dps * dropIntervalSec
-
-  // Total DPS: effective DPS accounting for all bounces and degradation
-  // First bounce: dps * 1.0
-  // Second bounce: dps * bounceFalloff
-  // Third bounce: dps * bounceFalloff^2
-  // Sum = dps * (1 + bounceFalloff + bounceFalloff^2 + ... + bounceFalloff^(maxBounces-1))
-  // This is a geometric series: sum = (1 - r^n) / (1 - r) when r != 1
-  let totalDps = dps
-  if (maxBounces > 1) {
-    if (Math.abs(bounceFalloff - 1.0) < 0.0001) {
-      // If bounceFalloff is ~1.0, each bounce does full damage
-      totalDps = dps * maxBounces
-    } else {
-      // Geometric series sum
-      totalDps = dps * (1 - Math.pow(bounceFalloff, maxBounces)) / (1 - bounceFalloff)
-    }
-  }
-
-  // Last bounce DPS: damage at the final bounce only
-  const lastBounceDps = maxBounces > 1 ? dps * Math.pow(bounceFalloff, maxBounces - 1) : dps
-
-  // Format time as MM:SS
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
+  const { depth, blocksDestroyed, timeSec } = state
+  const mins = Math.floor(timeSec / 60)
+  const secs = Math.floor(timeSec % 60)
   return {
-    lives,
     depth,
     piecesDestroyed: blocksDestroyed,
-    runTime: formatTime(timeSec),
-    dps: dps.toFixed(1),
-    dropRate: dropRate.toFixed(2),
-    bounces: maxBounces,
-    beamDegradation: (bounceFalloff * 100).toFixed(0) + '%',
-    damagePerDrop: damagePerDrop.toFixed(1),
-    totalDps: totalDps.toFixed(1),
-    lastBounceDps: lastBounceDps.toFixed(1),
+    runTime: `${mins}:${secs.toString().padStart(2, '0')}`,
   }
 }
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
   const saveBucketRef = useRef<number>(-1)
@@ -104,13 +69,16 @@ export default function App() {
     paused: false,
     pauseBtnBottomPx: computePauseBtnBottomPx(),
     depth: stateRef.current.depth,
+    score: stateRef.current.score,
     gameOver: false,
   }))
 
+  const [musicOn, setMusicOn] = useState<boolean>(() => musicEngine.isWantPlaying())
   const [highScores, setHighScores] = useState<HighScoreEntry[]>(() => loadHighScores())
   const [nameDraft, setNameDraft] = useState<string>(() => loadLastPlayerName())
   const [showNamePrompt, setShowNamePrompt] = useState(false)
   const [pendingScoreDepth, setPendingScoreDepth] = useState<number | null>(null)
+  const [pendingScore, setPendingScore] = useState<number | null>(null)
   const handledGameOverRef = useRef(false)
 
   const setPaused = useCallback((paused: boolean) => {
@@ -118,133 +86,102 @@ export default function App() {
     setHud((h) => ({ ...h, paused }))
   }, [])
 
-  // Keep the sim/draw layer informed of the device-best depth so the HUD "BEST" label can render.
+  // Keep the sim/draw layer informed of the device-best depth + score so the HUD
+  // "BEST" label can render.
   useEffect(() => {
     stateRef.current.bestDepthLocal = getBestDepth(highScores)
+    stateRef.current.bestScoreLocal = getBestScore(highScores)
   }, [highScores])
 
-  // Pointer input: touch anywhere -> slider position + aim direction.
+  // Pointer input: the single control surface is the gravity-well puck.
+  // Press anywhere -> the well teleports under the finger (momentum cancelled);
+  // drag -> it follows; release -> it inherits the flick velocity (a still
+  // release parks it). Physics (friction, wall bounces) run in the sim.
   useEffect(() => {
-    const RETICLE_FREEZE_THRESHOLD_PX = 5 // pixels of movement to consider it unique input
-
-    const getLocal = (e: PointerEvent) => {
+    // Map a pointer event to WORLD space: the well lives in the perspective
+    // playfield (like the blocks), so it scales with depth and bounces off the
+    // converging walls. We unproject the screen point through the same
+    // homography the renderer uses.
+    const getPoint = (e: PointerEvent) => {
       const canvas = canvasRef.current
       if (!canvas) return null
       const rect = canvas.getBoundingClientRect()
-      return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-        w: rect.width,
-        h: rect.height,
-      }
-    }
-
-    const pickRoleForPointerDown = (localY: number, s: RunState) => {
-      // Any interaction below the death line should move the slider (easy to control),
-      // while anything above should aim (prevents accidental grabs when aiming low).
+      const sx = e.clientX - rect.left
+      const sy = e.clientY - rect.top
+      const s = stateRef.current
       const layout = getArenaLayout(s.view)
-      return localY >= layout.failY ? 'move' : 'aim'
+      const proj = makeProjection(s.view, layout)
+      const p = proj.unproject(sx, sy)
+      // Constrain to the world playfield even while dragging, so the hole can't
+      // be pulled outside the perspective space (it stays where you drop it).
+      const topWorldY = proj.unproject(s.view.width / 2, 0).y
+      p.x = clamp(p.x, 0, s.view.width)
+      p.y = clamp(p.y, topWorldY, layout.emitterY)
+      return p
     }
 
-    // Check if we need to unfreeze reticle based on unique input
-    const checkAndUnfreezeReticle = (s: RunState, localX: number, localY: number) => {
-      if (s.input.freezeReticleUntilNextInput && !s.levelUpActive) {
-        const dx = Math.abs(localX - s.input.frozenReticleX)
-        const dy = Math.abs(localY - s.input.frozenReticleY)
-        if (dx > RETICLE_FREEZE_THRESHOLD_PX || dy > RETICLE_FREEZE_THRESHOLD_PX) {
-          s.input.freezeReticleUntilNextInput = false
-        }
-      }
-    }
+    // Ignore presses that land on UI buttons (pause/music) so they don't also
+    // drop the well underneath.
+    const onUi = (e: PointerEvent) =>
+      e.target instanceof Element && e.target.closest('button') != null
+
+    let activePointer: number | null = null
+    let lastX = 0
+    let lastY = 0
+    let lastT = 0
+    let vx = 0
+    let vy = 0
 
     const onPointerDown = (e: PointerEvent) => {
       const s = stateRef.current
-      const local = getLocal(e)
-      if (!local) return
-
-      checkAndUnfreezeReticle(s, local.x, local.y)
-
-      const preferredRole = pickRoleForPointerDown(local.y, s)
-
-      const assign = (role: 'aim' | 'move') => {
-        if (role === 'aim') {
-          s.input.aimPointerId = e.pointerId
-          s.input.aimActive = true
-          s.input.aimX = local.x
-          s.input.aimY = local.y
-          if (!s.input.freezeReticleUntilNextInput) {
-            s.input.reticleTargetX = local.x
-            s.input.reticleTargetY = local.y
-          }
-        } else {
-          s.input.movePointerId = e.pointerId
-          s.input.moveActive = true
-          s.input.moveX = local.x
-          s.input.moveY = local.y
-        }
-      }
-
-      // Assign to preferred role if free; otherwise use the other role if free.
-      if (preferredRole === 'aim') {
-        if (s.input.aimPointerId == null) assign('aim')
-        else if (s.input.movePointerId == null && e.pointerType !== 'mouse') assign('move')
-      } else {
-        if (s.input.movePointerId == null) assign('move')
-        else if (s.input.aimPointerId == null) assign('aim')
-      }
+      if (s.gameOver) return
+      if (onUi(e)) return
+      const p = getPoint(e)
+      if (!p) return
+      activePointer = e.pointerId
+      // Teleport under the finger and cancel momentum.
+      s.well.pos.x = p.x
+      s.well.pos.y = p.y
+      s.well.vel.x = 0
+      s.well.vel.y = 0
+      s.well.grabbed = true
+      s.well.placed = true
+      lastX = p.x
+      lastY = p.y
+      lastT = e.timeStamp
+      vx = 0
+      vy = 0
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      if (activePointer !== e.pointerId) return
+      const p = getPoint(e)
+      if (!p) return
       const s = stateRef.current
-      const local = getLocal(e)
-      if (!local) return
-
-      checkAndUnfreezeReticle(s, local.x, local.y)
-
-      // Desktop UX: while the mouse is inside the play area, aim should track
-      // the cursor continuously (no click needed).
-      if (e.pointerType === 'mouse') {
-        const inside =
-          local.x >= 0 && local.x <= local.w && local.y >= 0 && local.y <= local.h
-        if (inside && !s.input.freezeReticleUntilNextInput) {
-          // Mouse follows instantly for responsive desktop UX
-          s.reticle.x = local.x
-          s.reticle.y = local.y
-          s.input.reticleTargetX = local.x
-          s.input.reticleTargetY = local.y
-        }
-      }
-
-      if (s.input.aimPointerId === e.pointerId) {
-        s.input.aimActive = true
-        s.input.aimX = local.x
-        s.input.aimY = local.y
-        // Touch/stylus aim updates target; smoothing applied in sim
-        if (!s.input.freezeReticleUntilNextInput) {
-          s.input.reticleTargetX = local.x
-          s.input.reticleTargetY = local.y
-        }
-      }
-      if (s.input.movePointerId === e.pointerId) {
-        s.input.moveActive = true
-        s.input.moveX = local.x
-        s.input.moveY = local.y
-      }
+      s.well.pos.x = p.x
+      s.well.pos.y = p.y
+      // Track pointer velocity (px/sec), lightly smoothed, for the throw.
+      const dt = Math.max(0.001, (e.timeStamp - lastT) / 1000)
+      vx = vx * 0.4 + ((p.x - lastX) / dt) * 0.6
+      vy = vy * 0.4 + ((p.y - lastY) / dt) * 0.6
+      lastX = p.x
+      lastY = p.y
+      lastT = e.timeStamp
     }
 
     const onPointerUp = (e: PointerEvent) => {
+      if (activePointer !== e.pointerId) return
+      activePointer = null
       const s = stateRef.current
-      if (s.input.aimPointerId === e.pointerId) {
-        // Mouse aiming is hover-driven; don't disable aim on mouseup.
-        if (e.pointerType !== 'mouse') {
-          s.input.aimPointerId = null
-          s.input.aimActive = false
-        }
+      s.well.grabbed = false
+      // A throw only if the finger was still moving at release; otherwise park.
+      const sinceMove = (e.timeStamp - lastT) / 1000
+      if (sinceMove > 0.05) {
+        vx = 0
+        vy = 0
       }
-      if (s.input.movePointerId === e.pointerId) {
-        s.input.movePointerId = null
-        s.input.moveActive = false
-      }
+      s.well.vel.x = vx
+      s.well.vel.y = vy
     }
 
     window.addEventListener('pointerdown', onPointerDown)
@@ -259,27 +196,36 @@ export default function App() {
     }
   }, [])
 
-  // Keyboard movement: left/right arrows + A/D.
+  // Attach the DOM <audio> element to the music engine once mounted.
   useEffect(() => {
-    const setKey = (e: KeyboardEvent, isDown: boolean) => {
-      const s = stateRef.current
-      const k = e.key
-      if (k === 'ArrowLeft' || k === 'a' || k === 'A') {
-        s.input.keyLeft = isDown
-        e.preventDefault()
-      } else if (k === 'ArrowRight' || k === 'd' || k === 'D') {
-        s.input.keyRight = isDown
-        e.preventDefault()
-      }
+    if (musicAudioRef.current) musicEngine.attach(musicAudioRef.current)
+  }, [])
+
+  // Start the soundtrack on the first user gesture (autoplay policy requires
+  // it). Listeners stay installed so we also recover audio after the tab is
+  // backgrounded / an iOS audio-session interruption.
+  useEffect(() => {
+    const onGesture = () => {
+      if (musicEngine.isWantPlaying()) void musicEngine.start()
     }
-    const onDown = (e: KeyboardEvent) => setKey(e, true)
-    const onUp = (e: KeyboardEvent) => setKey(e, false)
-    window.addEventListener('keydown', onDown, { passive: false })
-    window.addEventListener('keyup', onUp, { passive: false })
+    window.addEventListener('pointerdown', onGesture, { passive: true })
+    window.addEventListener('touchend', onGesture, { passive: true })
+    window.addEventListener('keydown', onGesture, { passive: true })
     return () => {
-      window.removeEventListener('keydown', onDown)
-      window.removeEventListener('keyup', onUp)
+      window.removeEventListener('pointerdown', onGesture)
+      window.removeEventListener('touchend', onGesture)
+      window.removeEventListener('keydown', onGesture)
     }
+  }, [])
+
+  const toggleMusic = useCallback(() => {
+    // Drive the engine synchronously inside the click handler so audio.play()
+    // keeps the user-activation it needs (calling it inside a setState updater
+    // runs it during React's render phase — outside the gesture — and StrictMode
+    // double-invokes updaters, so the side effect must live out here).
+    const next = !musicEngine.isWantPlaying()
+    musicEngine.setWantPlaying(next)
+    setMusicOn(next)
   }, [])
 
   // Esc toggles the upgrade menu (and pauses/resumes accordingly).
@@ -355,20 +301,17 @@ export default function App() {
         s.view.safeBottom = 0
       }
 
-      // Keep controls snapped to the current rail even if the sim is paused.
+      // Emitter is a fixed muzzle at bottom-center; snap it even while paused.
       const layout = getArenaLayout(s.view)
-      s.emitter.pos.x = clamp(s.emitter.pos.x, SLIDER_PAD, s.view.width - SLIDER_PAD)
+      s.emitter.pos.x = s.view.width / 2
       s.emitter.pos.y = layout.emitterY
 
-      s.reticle.x = clamp(s.reticle.x, 0, w)
-      s.reticle.y = clamp(s.reticle.y, 0, Math.min(h, layout.emitterY - MIN_RETICLE_GAP))
-
-      s.input.moveX = clamp(s.input.moveX, 0, w)
-      s.input.moveY = clamp(s.input.moveY, 0, h)
-      s.input.aimX = clamp(s.input.aimX, 0, w)
-      s.input.aimY = clamp(s.input.aimY, 0, h)
-      s.input.reticleTargetX = clamp(s.input.reticleTargetX, 0, w)
-      s.input.reticleTargetY = clamp(s.input.reticleTargetY, 0, Math.min(h, layout.emitterY - MIN_RETICLE_GAP))
+      // Keep the well puck inside the (possibly resized) world playfield. World
+      // X spans [0, width]; clamp Y between the visible top and the muzzle row.
+      const proj = makeProjection(s.view, layout)
+      const topWorldY = proj.unproject(w / 2, 0).y
+      s.well.pos.x = clamp(s.well.pos.x, 0, w)
+      s.well.pos.y = clamp(s.well.pos.y, topWorldY, layout.emitterY)
     }
 
     resize()
@@ -387,6 +330,11 @@ export default function App() {
       last = now
       if (!s.paused) stepSim(s, dtSec)
 
+      // Sample the soundtrack every frame (even while paused) so the visuals
+      // keep breathing, then push the live signals onto the run state.
+      musicEngine.sample(now)
+      musicEngine.applyTo(s.music)
+
       drawFrame(canvas, s)
 
       // HUD: update at ~10fps to keep React cheap (avoid depending on React state inside RAF).
@@ -397,6 +345,7 @@ export default function App() {
           paused: s.paused,
           pauseBtnBottomPx: computePauseBtnBottomPx(),
           depth: s.depth,
+          score: s.score,
           gameOver: s.gameOver,
         })
       }
@@ -412,6 +361,32 @@ export default function App() {
       }
 
       rafRef.current = requestAnimationFrame(tick)
+    }
+
+    if (import.meta.env.DEV) {
+      ;(window as unknown as { __music?: () => unknown }).__music = () =>
+        stateRef.current.music
+      ;(window as unknown as { __game?: () => unknown }).__game = () => {
+        const s = stateRef.current
+        return {
+          depth: s.depth,
+          score: s.score,
+          combo: s.combo,
+          comboBest: s.comboBest,
+          crescendo: s.crescendo,
+          gameOver: s.gameOver,
+          lives: s.lives,
+          blocks: s.blocks.length,
+          dps: s.stats.dps,
+          well: {
+            placed: s.well.placed,
+            grabbed: s.well.grabbed,
+            pos: s.well.pos,
+            vel: s.well.vel,
+          },
+          segs: s.laser.segments.length,
+        }
+      }
     }
 
     rafRef.current = requestAnimationFrame(tick)
@@ -441,151 +416,171 @@ export default function App() {
       paused: false,
       pauseBtnBottomPx: computePauseBtnBottomPx(),
       depth: 0,
+      score: 0,
       gameOver: false,
     })
     // Clear saved state when player explicitly restarts
     clearGameState()
   }, [computePauseBtnBottomPx, highScores])
 
-  // When a run ends, decide whether we need to prompt for a name (top-5).
+  // When a run ends, decide whether we need to prompt for a name (top-5 by score).
   useEffect(() => {
     if (!hud.gameOver) {
       handledGameOverRef.current = false
       setShowNamePrompt(false)
       setPendingScoreDepth(null)
+      setPendingScore(null)
       return
     }
     if (handledGameOverRef.current) return
     handledGameOverRef.current = true
 
-    const depth = hud.depth
-    setPendingScoreDepth(depth)
-    if (qualifiesTop5(highScores, depth)) {
+    setPendingScoreDepth(hud.depth)
+    setPendingScore(hud.score)
+    if (qualifiesTop5(highScores, hud.score)) {
       setShowNamePrompt(true)
     }
-  }, [hud.gameOver, hud.depth, highScores])
+  }, [hud.gameOver, hud.depth, hud.score, highScores])
 
   const submitHighScore = useCallback(() => {
-    if (pendingScoreDepth == null) return
-    const next = addHighScore(highScores, { name: nameDraft, depth: pendingScoreDepth })
+    if (pendingScoreDepth == null || pendingScore == null) return
+    const next = addHighScore(highScores, {
+      name: nameDraft,
+      depth: pendingScoreDepth,
+      score: pendingScore,
+    })
     setHighScores(next)
     saveHighScores(next)
     saveLastPlayerName(nameDraft)
     setShowNamePrompt(false)
-    // Update local best immediately for the live HUD label on subsequent runs.
+    // Update local bests immediately for the live HUD labels on subsequent runs.
     stateRef.current.bestDepthLocal = getBestDepth(next)
-  }, [highScores, nameDraft, pendingScoreDepth])
+    stateRef.current.bestScoreLocal = getBestScore(next)
+  }, [highScores, nameDraft, pendingScoreDepth, pendingScore])
 
   const skipHighScore = useCallback(() => {
     setShowNamePrompt(false)
   }, [])
 
-  // Memoize pause stats to avoid recalculating on every render
+  // Run stats for the menus (pause + game over). Recomputed only when a menu
+  // is actually open.
   const pauseStats = useMemo(() => {
-    if (!hud.paused || stateRef.current.levelUpActive || hud.gameOver) {
-      return null
-    }
+    const menuOpen = (hud.paused && !stateRef.current.levelUpActive) || hud.gameOver
+    if (!menuOpen) return null
     return computePauseStats(stateRef.current)
-  }, [hud.paused, hud.gameOver, hud.depth, stateRef.current.lives, stateRef.current.blocksDestroyed, stateRef.current.timeSec, stateRef.current.stats, stateRef.current.dropIntervalSec])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hud.paused, hud.gameOver, hud.depth, hud.score])
 
   return (
     <div className="lg-viewport">
+      <audio
+        ref={musicAudioRef}
+        crossOrigin="anonymous"
+        loop
+        playsInline
+        preload="auto"
+        style={{ display: 'none' }}
+      />
       <div className="lg-shell">
         <main className="lg-main">
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
 
-            {!stateRef.current.levelUpActive && (
+            {/* Unified control dock: one glass cluster of equal-size icon
+                buttons, matching the HUD L's glass/stroke language. */}
+            <div className="controlDock" style={{ bottom: `${hud.pauseBtnBottomPx}px` }}>
+              {!stateRef.current.levelUpActive && (
+                <button
+                  type="button"
+                  className="dockBtn"
+                  onClick={() => {
+                    if (hud.gameOver) return
+                    setPaused(!hud.paused)
+                  }}
+                  aria-label={hud.paused ? 'Play' : 'Pause'}
+                  title={hud.paused ? 'Resume' : 'Pause'}
+                >
+                  {hud.paused ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8 5.5v13l11-6.5z" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="7" y="5.5" width="3.5" height="13" rx="1.4" />
+                      <rect x="13.5" y="5.5" width="3.5" height="13" rx="1.4" />
+                    </svg>
+                  )}
+                </button>
+              )}
+
               <button
                 type="button"
-                className="arenaPauseBtn"
-                style={{ bottom: `${hud.pauseBtnBottomPx}px` }}
-                onClick={() => {
-                  if (hud.gameOver) return
-                  setPaused(!hud.paused)
-                }}
+                className={`dockBtn music${musicOn ? ' is-on' : ''}`}
+                onClick={toggleMusic}
+                aria-pressed={musicOn}
+                aria-label={musicOn ? 'Mute music' : 'Play music'}
+                title={musicOn ? 'Music on — click to mute' : 'Music off — click to play'}
               >
-                {hud.paused ? 'Play' : 'Pause'}
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 16.5V7l9-2v9" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="6.5" cy="16.5" r="2.6" />
+                  <circle cx="15.5" cy="14" r="2.6" />
+                </svg>
+                {!musicOn && <span className="muteSlash" aria-hidden="true" />}
               </button>
-            )}
+            </div>
 
-            {/* Pause overlay (shows local leaderboard). */}
+            {/* Pause overlay. */}
             {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && pauseStats && (
-              <div className="pauseOverlay" role="dialog" aria-label="Paused">
-                <div className="pausePanel">
-                  <div className="pauseTitle">Paused</div>
-                  
-                  {/* Stats section */}
-                  <div className="pauseStats">
-                    <div className="pauseStatsTitle">Current Run Stats</div>
-                    <div className="statsGrid">
-                      <div className="statItem">
-                        <span className="statLabel">Lives</span>
-                        <span className="statValue">{pauseStats.lives}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Depth</span>
-                        <span className="statValue">{pauseStats.depth}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Pieces Destroyed</span>
-                        <span className="statValue">{pauseStats.piecesDestroyed}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Run Time</span>
-                        <span className="statValue">{pauseStats.runTime}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">DPS</span>
-                        <span className="statValue">{pauseStats.dps}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Drop Rate</span>
-                        <span className="statValue">{pauseStats.dropRate}/s</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Bounces</span>
-                        <span className="statValue">{pauseStats.bounces}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Beam Degradation</span>
-                        <span className="statValue">{pauseStats.beamDegradation}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Damage per Drop</span>
-                        <span className="statValue">{pauseStats.damagePerDrop}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Total DPS</span>
-                        <span className="statValue">{pauseStats.totalDps}</span>
-                      </div>
-                      <div className="statItem">
-                        <span className="statLabel">Last Bounce DPS</span>
-                        <span className="statValue">{pauseStats.lastBounceDps}</span>
-                      </div>
+              <div className="menuOverlay" role="dialog" aria-label="Paused">
+                <div className="menuPanel">
+                  <div className="menuKicker">Run in progress</div>
+                  <div className="menuTitle">Paused</div>
+
+                  <div className="menuHero">
+                    <span className="menuHeroLabel">Score</span>
+                    <span className="menuHeroValue">{hud.score.toLocaleString()}</span>
+                  </div>
+
+                  <div className="menuChips">
+                    <div className="menuChip">
+                      <span className="v">{pauseStats.depth}</span>
+                      <span className="k">Depth</span>
+                    </div>
+                    <div className="menuChip">
+                      <span className="v">{pauseStats.piecesDestroyed}</span>
+                      <span className="k">Pieces</span>
+                    </div>
+                    <div className="menuChip">
+                      <span className="v">{pauseStats.runTime}</span>
+                      <span className="k">Time</span>
                     </div>
                   </div>
 
                   {highScores.length > 0 && (
-                    <div className="pauseScores">
-                      <div className="pauseScoresTitle">Top Depths</div>
-                      <ol className="scoreList">
-                        {highScores.map((e, i) => (
-                          <li key={`${e.ts}-${i}`} className="scoreRow">
-                            <span className="scoreRank">{i + 1}</span>
-                            <span className="scoreName">{e.name}</span>
-                            <span className="scoreValue">{e.depth}</span>
+                    <div className="menuSection">
+                      <div className="menuSectionTitle">Top Scores</div>
+                      <ol className="menuScoreList">
+                        {highScores.slice(0, 5).map((e, i) => (
+                          <li key={`${e.ts}-${i}`} className="menuScoreRow">
+                            <span className="rank">{i + 1}</span>
+                            <span className="name">{e.name}</span>
+                            <span className="val">
+                              {e.score.toLocaleString()}
+                              <span className="depth">d{e.depth}</span>
+                            </span>
                           </li>
                         ))}
                       </ol>
                     </div>
                   )}
-                  <div className="pauseActions">
-                    <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
-                      Resume
-                    </button>
-                    <button type="button" className="btn" onClick={restart}>
+
+                  <div className="menuActions">
+                    <button type="button" className="menuBtn ghost" onClick={restart}>
                       Restart
+                    </button>
+                    <button type="button" className="menuBtn primary" onClick={() => setPaused(false)}>
+                      Resume
                     </button>
                   </div>
                 </div>
@@ -594,27 +589,49 @@ export default function App() {
 
             {/* Game-over overlay + optional name prompt for top-5. */}
             {hud.gameOver && (
-              <div className="pauseOverlay" role="dialog" aria-label="Game over">
-                <div className="pausePanel">
-                  <div className="pauseTitle">Game Over</div>
-                  <div className="gameOverDepth">Depth: {hud.depth}</div>
+              <div className="menuOverlay" role="dialog" aria-label="Game over">
+                <div className="menuPanel">
+                  <div className="menuKicker">Run ended</div>
+                  <div className="menuTitle">Game Over</div>
+
+                  <div className="menuHero">
+                    <span className="menuHeroLabel">Final Score</span>
+                    <span className="menuHeroValue">{hud.score.toLocaleString()}</span>
+                  </div>
+
+                  {pauseStats && (
+                    <div className="menuChips">
+                      <div className="menuChip">
+                        <span className="v">{hud.depth}</span>
+                        <span className="k">Depth</span>
+                      </div>
+                      <div className="menuChip">
+                        <span className="v">{pauseStats.piecesDestroyed}</span>
+                        <span className="k">Pieces</span>
+                      </div>
+                      <div className="menuChip">
+                        <span className="v">{pauseStats.runTime}</span>
+                        <span className="k">Time</span>
+                      </div>
+                    </div>
+                  )}
 
                   {showNamePrompt && (
-                    <div className="namePrompt">
-                      <div className="namePromptTitle">New Top 5 — enter your name</div>
+                    <div className="menuSection">
+                      <div className="menuSectionTitle">New Top 5 — enter your name</div>
                       <input
-                        className="nameInput"
+                        className="menuInput"
                         value={nameDraft}
                         onChange={(e) => setNameDraft(e.target.value)}
                         maxLength={16}
                         placeholder="PLAYER"
                         autoFocus
                       />
-                      <div className="pauseActions">
-                        <button type="button" className="btn ghost" onClick={skipHighScore}>
+                      <div className="menuActions">
+                        <button type="button" className="menuBtn ghost" onClick={skipHighScore}>
                           Skip
                         </button>
-                        <button type="button" className="btn" onClick={submitHighScore}>
+                        <button type="button" className="menuBtn primary" onClick={submitHighScore}>
                           Save
                         </button>
                       </div>
@@ -622,25 +639,30 @@ export default function App() {
                   )}
 
                   {highScores.length > 0 && (
-                    <div className="pauseScores">
-                      <div className="pauseScoresTitle">Top Depths</div>
-                      <ol className="scoreList">
-                        {highScores.map((e, i) => (
-                          <li key={`${e.ts}-${i}`} className="scoreRow">
-                            <span className="scoreRank">{i + 1}</span>
-                            <span className="scoreName">{e.name}</span>
-                            <span className="scoreValue">{e.depth}</span>
+                    <div className="menuSection">
+                      <div className="menuSectionTitle">Top Scores</div>
+                      <ol className="menuScoreList">
+                        {highScores.slice(0, 5).map((e, i) => (
+                          <li key={`${e.ts}-${i}`} className="menuScoreRow">
+                            <span className="rank">{i + 1}</span>
+                            <span className="name">{e.name}</span>
+                            <span className="val">
+                              {e.score.toLocaleString()}
+                              <span className="depth">d{e.depth}</span>
+                            </span>
                           </li>
                         ))}
                       </ol>
                     </div>
                   )}
 
-                  <div className="pauseActions">
-                    <button type="button" className="btn" onClick={restart}>
-                      Restart
-                    </button>
-                  </div>
+                  {!showNamePrompt && (
+                    <div className="menuActions">
+                      <button type="button" className="menuBtn primary" onClick={restart}>
+                        Play Again
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -1,7 +1,9 @@
 import { clamp } from './math'
-import type { BlockEntity, BoardFeature, BlackHoleFeature, MirrorFeature, PrismFeature, RunState } from './runState'
+import type { BlockEntity, BoardFeature, MirrorFeature, PrismFeature, RunState } from './runState'
 import { buildCellLoop, computeLocalAabbPx } from './outline'
 import { SHAPES } from './shapes'
+import { getArenaLayout } from './layout'
+import { screenTopWorldY } from '../render/projection'
 
 const randOf = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)]!
 
@@ -51,35 +53,60 @@ const collidesAny = (cand: WorldAabb, s: RunState) => {
 
 const rollFeatureKind = (tSec: number): BoardFeature['kind'] | null => {
   // Tunable knobs. Start rare so the board reads cleanly; ramp slightly over time.
+  // Optics (mirror/prism) are now the player's routing *tools*, so they appear a
+  // bit more often than the old per-feature rate (black holes are gone).
   const ramp = clamp((tSec - 25) / 180, 0, 1)
-  // Requested: 5% each before ramp, 8% each after ramp.
-  const pMirror = 0.05 + 0.03 * ramp
-  const pPrism = 0.05 + 0.03 * ramp
-  const pHole = 0.05 + 0.03 * ramp
+  const pMirror = 0.07 + 0.04 * ramp
+  const pPrism = 0.07 + 0.04 * ramp
 
   const r = Math.random()
-  if (r < pHole) return 'blackHole'
-  if (r < pHole + pPrism) return 'prism'
-  if (r < pHole + pPrism + pMirror) return 'mirror'
+  if (r < pPrism) return 'prism'
+  if (r < pPrism + pMirror) return 'mirror'
   return null
 }
 
-const placeAabb = (s: RunState, wPx: number, hPx: number) => {
+const placeAabb = (s: RunState, wPx: number, hPx: number, avoidCenterHalf = 0) => {
   const pad = 18
   const gap = 16
   const xMin = pad
   const xMax = s.view.width - wPx - pad
 
-  const baseY = -hPx - 28
-  const maxBacklog = Math.max(260, s.view.height * 0.65)
+  // Optionally keep the piece out of the central column (used for mirrors, which
+  // would otherwise reflect the straight-up beam back down and stall the game).
+  const centerX = s.view.width / 2
+  const genX = () => {
+    if (avoidCenterHalf > 0) {
+      // Left lane: piece's right edge stays left of the protected band.
+      const leftHi = centerX - avoidCenterHalf - wPx
+      // Right lane: piece's left edge stays right of the protected band.
+      const rightLo = centerX + avoidCenterHalf
+      const leftOk = leftHi >= xMin
+      const rightOk = rightLo <= xMax
+      if (leftOk || rightOk) {
+        const pickLeft = leftOk && (!rightOk || Math.random() < 0.5)
+        if (pickLeft) return clamp(xMin + Math.random() * (leftHi - xMin), xMin, leftHi)
+        return clamp(rightLo + Math.random() * (xMax - rightLo), rightLo, xMax)
+      }
+      // Fallback (piece too wide to dodge the band): fall through to full width.
+    }
+    return clamp(Math.random() * (s.view.width - wPx), xMin, xMax)
+  }
 
-  let placedX = clamp(Math.random() * (s.view.width - wPx), xMin, xMax)
+  // Spawn fully ABOVE the visible top edge so pieces descend into view (rather
+  // than popping into the middle of the now-visible perspective shaft).
+  const topWorldY = screenTopWorldY(s.view, getArenaLayout(s.view))
+  const spawnMargin = 28
+  const baseY = topWorldY - hPx - spawnMargin
+  const maxBacklog = Math.max(260, s.view.height * 0.65)
+  const backlogFloor = baseY - maxBacklog
+
+  let placedX = genX()
   let placedY = baseY
   let found = false
   let bestScore = -Infinity
 
   for (let attempt = 0; attempt < 22; attempt++) {
-    const x = clamp(Math.random() * (s.view.width - wPx), xMin, xMax)
+    const x = genX()
 
     // Find all occupants that overlap horizontally, then spawn above the topmost of them.
     let minTopY = Infinity
@@ -105,7 +132,7 @@ const placeAabb = (s: RunState, wPx: number, hPx: number) => {
     }
 
     const yRaw = Number.isFinite(minTopY) ? Math.min(baseY, minTopY - (hPx + gap)) : baseY
-    const y = Math.max(-maxBacklog - hPx, yRaw)
+    const y = Math.max(backlogFloor, yRaw)
     const cand = { minX: x, minY: y, maxX: x + wPx, maxY: y + hPx }
 
     if (!collidesAny(cand, s)) {
@@ -126,7 +153,7 @@ const placeAabb = (s: RunState, wPx: number, hPx: number) => {
     for (const b of s.blocks) minY = Math.min(minY, blockWorldAabb(b).minY)
     for (const f of s.features) minY = Math.min(minY, featureWorldAabb(f).minY)
     const yRaw = Number.isFinite(minY) ? Math.min(baseY, minY - (hPx + gap)) : baseY
-    placedY = Math.max(-maxBacklog - hPx, yRaw)
+    placedY = Math.max(backlogFloor, yRaw)
   }
 
   return { x: placedX, y: placedY }
@@ -152,7 +179,9 @@ const spawnMirror = (s: RunState) => {
 
   const loop = buildCellLoop(cells)
   const localAabb = computeLocalAabbPx(cells, cellSize)
-  const placed = placeAabb(s, wPx, hPx)
+  // Keep mirrors out of the central beam column so they never reflect the
+  // straight-up shot back down and freeze the game.
+  const placed = placeAabb(s, wPx, hPx, s.view.width * 0.2)
 
   const mirror: MirrorFeature = {
     id: s.nextFeatureId++,
@@ -225,26 +254,6 @@ export const spawnPrismAt = (s: RunState, x: number, y: number) => {
   s.features.push(prism)
 }
 
-const spawnBlackHole = (s: RunState) => {
-  const cellSize = 40
-  const rCore = cellSize * 0.38 // core absorber (slightly smaller than the tile)
-  const rInfluence = cellSize * 1.65 * 2.0 * 0.85 // ~15% smaller influence radius
-  const wPx = cellSize
-  const hPx = cellSize
-  const placed = placeAabb(s, wPx, hPx)
-  const hole: BlackHoleFeature = {
-    id: s.nextFeatureId++,
-    kind: 'blackHole',
-    pos: { x: placed.x, y: placed.y },
-    cellSize,
-    rCore,
-    rInfluence,
-    localAabb: { minX: 0, minY: 0, maxX: cellSize, maxY: cellSize },
-  }
-  s.features.push(hole)
-  s.normalBlocksSinceFeature = 0
-}
-
 export const spawnBoardThing = (s: RunState) => {
   const kind = rollFeatureKind(s.timeSec)
   // Early-run safeguard: first 15 blocks must be normal (no undamageable features).
@@ -257,7 +266,6 @@ export const spawnBoardThing = (s: RunState) => {
   }
   if (kind === 'mirror') return spawnMirror(s)
   if (kind === 'prism') return spawnPrism(s)
-  if (kind === 'blackHole') return spawnBlackHole(s)
   return spawnBlock(s)
 }
 
@@ -300,7 +308,7 @@ export const spawnBlock = (s: RunState) => {
   //
   // Note: this uses a fixed slope per depth, so slowing the drop interval means HP grows
   // more slowly in real time (but stays consistent per “lines survived”).
-  const baseHp0 = 14
+  const baseHp0 = 1
   const dropsPerMinBaseline = 100
   const initialRate = 10
   const rateIncrement = 2

@@ -10,6 +10,7 @@ type SavedRunState = Omit<
   | 'input'
   | 'reticle'
   | 'laser'
+  | 'music'
   | 'xpOrbs'
   | 'meltFx'
   | 'sparks'
@@ -18,6 +19,14 @@ type SavedRunState = Omit<
   | 'weld'
   | 'lifeLossFx'
   | 'levelUpNotificationFx'
+  // Transient control + combo state (recomputed live each run).
+  | 'well'
+  | 'combo'
+  | 'comboBest'
+  | 'comboTimerSec'
+  | 'crescendo'
+  | 'sinceStepSec'
+  | 'lastBeatToken'
 >
 
 const isValidSavedState = (x: unknown): x is SavedRunState => {
@@ -105,6 +114,9 @@ export const saveGameState = (state: RunState) => {
       spawnTimer: state.spawnTimer,
       nextOrbId: state.nextOrbId,
       nextMeltId: state.nextMeltId,
+      // Score persists with the run so a refresh keeps depth and score in sync.
+      score: state.score,
+      bestScoreLocal: state.bestScoreLocal,
     }
 
     localStorage.setItem(GAME_STATE_KEY, JSON.stringify(toSave))
@@ -131,9 +143,12 @@ export const loadGameState = (): RunState | null => {
     // Merge saved state into fresh state
     Object.assign(freshState, parsed)
     
-    // MIGRATION: Reset dropIntervalSec to 1.0 to fix inconsistent drop rates
-    // Old saved states may contain modified values from the commented-out upgrade system
-    freshState.dropIntervalSec = 1.0
+    // MIGRATION: Normalize the fallback descent tempo (now the silent-mode
+    // metronome; music beats drive the step otherwise).
+    freshState.dropIntervalSec = 1.1
+    // MIGRATION: bounces are a fixed design constant now (the upgrade system is
+    // gone), so don't let an old save pin an outdated value.
+    freshState.stats.maxBounces = 10
     // Also ensure dropTimerSec doesn't exceed the interval
     if (freshState.dropTimerSec > freshState.dropIntervalSec) {
       freshState.dropTimerSec = freshState.dropIntervalSec

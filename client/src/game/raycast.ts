@@ -2,6 +2,12 @@ import type { Vec2 } from './math'
 import { add, clamp, cross, dot, len, mul, normalize, sub } from './math'
 import type { BlockEntity, BlackHoleFeature, BoardFeature, MirrorFeature, PrismFeature } from './runState'
 
+// Pieces above this WORLD y are culled from the beam. With the perspective
+// renderer the shaft is visible well above the old screen-top (y=0), so this is
+// pushed far up to keep "what you see is what you can hit" coherent (the beam
+// must not pass through pieces visibly approaching down the shaft).
+export const VISIBLE_CULL_Y = -1200
+
 export type RayHit = {
   t: number
   point: Vec2
@@ -161,7 +167,7 @@ const raycastScenePolys = (
     const maxX = p.poly.pos.x + aabb.maxX
     const maxY = p.poly.pos.y + aabb.maxY
 
-    if (maxY < 0) continue
+    if (maxY < VISIBLE_CULL_Y) continue
     if (!quickRejectRayAabb(o, d, minX, minY, maxX, maxY)) continue
 
     const prims = buildPrimsForBlock(p.poly)
@@ -204,7 +210,7 @@ const raycastSceneCircles = (
   let best: SceneHit | null = null
 
   for (const c of circles) {
-    if (c.maxY < 0) continue
+    if (c.maxY < VISIBLE_CULL_Y) continue
     if (c.kind === 'prism' && ignorePrismId != null && c.id === ignorePrismId) continue
     // Important: if the ray starts inside a prism's circle (common immediately after splitting),
     // we must NOT "hit" it again on the way out, otherwise it will repeatedly split from a single pass.
@@ -284,7 +290,7 @@ const raycastSceneAabbs = (
   const d = normalize(dIn)
   let best: SceneHit | null = null
   for (const a of aabbs) {
-    if (a.maxY < 0) continue
+    if (a.maxY < VISIBLE_CULL_Y) continue
     if (!quickRejectRayAabb(o, d, a.minX, a.minY, a.maxX, a.maxY)) continue
     const hit = rayAabb(o, d, a.minX, a.minY, a.maxX, a.maxY)
     if (!hit) continue
@@ -302,6 +308,7 @@ const raycastSceneWalls = (
   d: Vec2,
   w: number,
   h: number,
+  topY: number,
   maxDist: number,
   minT: number,
 ): SceneHit | null => {
@@ -313,7 +320,7 @@ const raycastSceneWalls = (
     if (t >= bestT) return
     const point = add(o, mul(d, t))
     const eps = 1e-3
-    if (point.x < -eps || point.x > w + eps || point.y < -eps || point.y > h + eps) return
+    if (point.x < -eps || point.x > w + eps || point.y < topY - eps || point.y > h + eps) return
     bestT = t
     best = { t, point, normal: normalize({ x: nx, y: ny }), kind: 'wall', id: wallId }
   }
@@ -328,9 +335,9 @@ const raycastSceneWalls = (
     const t = (w - o.x) / d.x
     consider(t, -1, 0, -2)
   }
-  // Top wall y=0 (normal +Y)
+  // Top wall y=topY (normal +Y) — the visible top edge of the screen.
   if (Math.abs(d.y) > 1e-9 && d.y < 0) {
-    const t = (0 - o.y) / d.y
+    const t = (topY - o.y) / d.y
     consider(t, 0, 1, -3)
   }
   // Bottom wall y=h (normal -Y) - the back wall behind the emitter
@@ -350,7 +357,7 @@ export const raycastSceneThick = (
   maxDist: number,
   radius: number,
   minT: number = 0,
-  bounds?: { w: number; h: number },
+  bounds?: { w: number; h: number; top?: number },
   ignorePrismId?: number,
 ): SceneHit | null => {
   const d = normalize(dIn)
@@ -409,7 +416,7 @@ export const raycastSceneThick = (
     const oo = off === 0 ? o : add(o, mul(perp, off))
     const hitPoly = polys.length ? raycastScenePolys(oo, d, polys, maxDist, minT) : null
     const hitCircle = circles.length ? raycastSceneCircles(oo, d, circles, maxDist, minT, ignorePrismId) : null
-    const hitWall = bounds ? raycastSceneWalls(oo, d, bounds.w, bounds.h, maxDist, minT) : null
+    const hitWall = bounds ? raycastSceneWalls(oo, d, bounds.w, bounds.h, bounds.top ?? 0, maxDist, minT) : null
 
     let hitObj: SceneHit | null = null
     const a = hitPoly
@@ -462,7 +469,7 @@ export const raycastBlocks = (
 
     // Gameplay rule: blocks are not shootable until they are visible.
     // If the block is fully above the top edge of the screen, skip it.
-    if (maxY < 0) continue
+    if (maxY < VISIBLE_CULL_Y) continue
 
     if (!quickRejectRayAabb(o, d, minX, minY, maxX, maxY)) continue
 
@@ -504,7 +511,7 @@ export const raycastBlocksThick = (
   maxDist: number,
   radius: number,
   minT: number = 0,
-  bounds?: { w: number; h: number },
+  bounds?: { w: number; h: number; top?: number },
 ): RayHit | null => {
   if (radius <= 0.01) return raycastBlocks(o, dIn, blocks, maxDist, minT)
 
@@ -519,7 +526,7 @@ export const raycastBlocksThick = (
   for (const off of offsets) {
     const oo = off === 0 ? o : add(o, mul(perp, off))
     const hitBlock = raycastBlocks(oo, d, blocks, maxDist, minT)
-    const hitWall = bounds ? raycastWalls(oo, d, bounds.w, bounds.h, maxDist, minT) : null
+    const hitWall = bounds ? raycastWalls(oo, d, bounds.w, bounds.h, bounds.top ?? 0, maxDist, minT) : null
     const hit =
       hitBlock && hitWall ? (hitBlock.t <= hitWall.t ? hitBlock : hitWall) : hitBlock ?? hitWall
     if (!hit) continue
@@ -534,6 +541,7 @@ const raycastWalls = (
   d: Vec2,
   w: number,
   h: number,
+  topY: number,
   maxDist: number,
   minT: number,
 ): RayHit | null => {
@@ -546,7 +554,7 @@ const raycastWalls = (
     const p = add(o, mul(d, t))
     // Only accept if the point lies on-screen (with a tiny tolerance).
     const eps = 1e-3
-    if (p.x < -eps || p.x > w + eps || p.y < -eps || p.y > h + eps) return
+    if (p.x < -eps || p.x > w + eps || p.y < topY - eps || p.y > h + eps) return
     bestT = t
     best = { t, point: p, normal: normalize({ x: nx, y: ny }), blockId: wallId }
   }
@@ -561,9 +569,9 @@ const raycastWalls = (
     const t = (w - o.x) / d.x
     consider(t, -1, 0, -2)
   }
-  // Top wall y=0 (normal +Y)
+  // Top wall y=topY (normal +Y) — the visible top edge of the screen.
   if (Math.abs(d.y) > 1e-9 && d.y < 0) {
-    const t = (0 - o.y) / d.y
+    const t = (topY - o.y) / d.y
     consider(t, 0, 1, -3)
   }
   // Bottom wall y=h (normal -Y) - the back wall behind the emitter
