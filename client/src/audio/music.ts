@@ -30,12 +30,20 @@ import type { MusicSignals } from '../game/runState'
 const AUDIUS_APP_NAME = 'lasers'
 const AUDIUS_API_BASE = 'https://discoveryprovider.audius.co/v1'
 
-// Default soundtrack: "Andrea Bedoya - To Release" (Electronic / techno).
+// Soundtrack: the "All Things Bass" editorial playlist, played shuffled — a
+// random track on fresh load, then a new random track after each one finishes.
+// https://audius.co/Audius/playlist/all-things-bass  (encoded id below)
+const AUDIUS_PLAYLIST_ID = 'ozkbOY2'
+
+// Fallback if the playlist can't be fetched: "Andrea Bedoya - To Release".
 // Resolved from https://audius.co/yabedoyag/andrea-bedoya-to-release-
 export const DEFAULT_TRACK_ID = 'NlE37'
 
 const streamUrl = (trackId: string) =>
   `${AUDIUS_API_BASE}/tracks/${trackId}/stream?app_name=${AUDIUS_APP_NAME}`
+
+const playlistTracksUrl = (playlistId: string) =>
+  `${AUDIUS_API_BASE}/playlists/${playlistId}/tracks?app_name=${AUDIUS_APP_NAME}`
 
 type EngineSignals = Omit<MusicSignals, 'intensity'>
 
@@ -64,6 +72,15 @@ class MusicEngine {
   private freq: Uint8Array<ArrayBuffer> | null = null
 
   private trackId = DEFAULT_TRACK_ID
+
+  // Shuffled-playlist state. The track ids are fetched once; `shuffleOrder` is a
+  // shuffled permutation we walk with `shuffleIdx`. When we run off the end we
+  // reshuffle and start over, so the whole playlist loops with a fresh shuffle.
+  // `pickedInitial` guards so we only choose the starting track on first play.
+  private playlistIds: string[] = []
+  private shuffleOrder: string[] = []
+  private shuffleIdx = 0
+  private pickedInitial = false
 
   // Stream failover state. The Audius discovery provider load-balances the
   // /stream endpoint across community content nodes, some of which are
@@ -110,7 +127,9 @@ class MusicEngine {
     if (this.audio === el) return
     this.audio = el
     el.crossOrigin = 'anonymous'
-    el.loop = true
+    // No single-track loop: we advance to a new random playlist track when one
+    // finishes (see onAudioEnded).
+    el.loop = false
     if (!this.listenersBound) {
       this.listenersBound = true
       // A healthy load: clear the failover counter so a later glitch starts
@@ -121,6 +140,8 @@ class MusicEngine {
       el.addEventListener('error', this.onAudioError)
       // Mid-playback drop: the connection stalled. Re-resolve to a new node.
       el.addEventListener('stalled', this.onAudioStalled)
+      // Track finished: shuffle onward to a new random track.
+      el.addEventListener('ended', this.onAudioEnded)
     }
   }
 
@@ -139,6 +160,70 @@ class MusicEngine {
     if (!this.wantPlaying || !audio) return
     if (audio.readyState >= 3) return
     this.scheduleRetry()
+  }
+
+  private onAudioEnded = () => {
+    if (!this.wantPlaying) return
+    void this.advanceTrack()
+  }
+
+  // Fetch the playlist's track ids once. On first success, also choose the
+  // random starting track. Safe to call repeatedly; it no-ops once loaded and
+  // retries (on a later play/track-end) if a previous fetch failed.
+  private async ensurePlaylist(): Promise<void> {
+    if (this.playlistIds.length === 0) {
+      try {
+        const bust = Date.now().toString(36)
+        const res = await fetch(`${playlistTracksUrl(AUDIUS_PLAYLIST_ID)}&_=${bust}`, { mode: 'cors' })
+        if (res.ok) {
+          const json = (await res.json()) as { data?: Array<{ id?: unknown }> }
+          const ids = Array.isArray(json.data)
+            ? json.data
+                .map((t) => (typeof t?.id === 'string' ? t.id : null))
+                .filter((x): x is string => !!x)
+            : []
+          if (ids.length > 0) this.playlistIds = ids
+        }
+      } catch {
+        // Keep the DEFAULT_TRACK_ID fallback; we'll retry later.
+      }
+    }
+    if (!this.pickedInitial && this.playlistIds.length > 0) {
+      this.reshuffle()
+      this.shuffleIdx = 0
+      this.trackId = this.shuffleOrder[0]!
+      this.pickedInitial = true
+    }
+  }
+
+  // Build a fresh shuffled order (Fisher–Yates). When there's a current track,
+  // avoid putting it first so a reshuffle never plays the same song twice in a
+  // row across the loop boundary.
+  private reshuffle(): void {
+    const order = [...this.playlistIds]
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[order[i], order[j]] = [order[j]!, order[i]!]
+    }
+    if (order.length > 1 && order[0] === this.trackId) {
+      ;[order[0], order[1]] = [order[1]!, order[0]!]
+    }
+    this.shuffleOrder = order
+  }
+
+  private async advanceTrack(): Promise<void> {
+    await this.ensurePlaylist()
+    if (this.shuffleOrder.length > 0) {
+      this.shuffleIdx += 1
+      // Off the end of the shuffle → loop the playlist with a new shuffle.
+      if (this.shuffleIdx >= this.shuffleOrder.length) {
+        this.reshuffle()
+        this.shuffleIdx = 0
+      }
+      this.trackId = this.shuffleOrder[this.shuffleIdx]!
+    }
+    // With an empty playlist this simply replays the current fallback track.
+    void this.loadAndPlay()
   }
 
   private scheduleRetry() {
@@ -195,8 +280,13 @@ class MusicEngine {
     }
     const audio = this.audio
     if (!audio) return
-    // No source yet, or the current source errored out: (re)resolve a node.
+    // No source yet, or the current source errored out: pick the (random)
+    // playlist track and resolve a node. ensurePlaylist sets the starting track
+    // on first play; on later resumes it's a no-op so we keep the same song.
     if (!audio.src || audio.error) {
+      await this.ensurePlaylist()
+      // Bail if music was turned off or the element changed while we fetched.
+      if (this.audio !== audio || !this.wantPlaying) return
       void this.loadAndPlay()
       return
     }
