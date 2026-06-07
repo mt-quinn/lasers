@@ -1,9 +1,9 @@
 import { add, clamp, mul, normalize, reflect } from './math'
 import type { Vec2 } from './math'
-import type { RunState, MirrorFeature } from './runState'
+import type { RunState, MirrorFeature, BlockEntity } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing, spawnPrismAt, spawnShatterChildren } from './spawn'
-import { BLOCK_MELT_DUR, XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
+import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
 import { sfxEngine } from '../audio/sfx'
@@ -40,6 +40,20 @@ export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to ke
 // Overdrive surge (more damage, more pierces, double score) that then drains it.
 const HEAT_PER_KILL = 0.06 // base heat per kill (scaled up by combo + piece value)
 const HEAT_DECAY = 0.11 // heat lost per second when not killing / not in overdrive
+
+// Heat motes (destroyed-block debris the player vacuums with the well). World
+// units; radii are world px (≈ screen px at the near plane). The well is
+// generous on purpose — collecting a batch at once is the satisfying payoff.
+const MOTE_LIFE_MIN = 6.0
+const MOTE_LIFE_MAX = 9.0
+const MOTE_PULL_R = 340 // start curving motes toward the well within this radius
+const MOTE_CAPTURE_R = 46 // captured (begins flying to the gauge) within this
+const MOTE_PULL_ACCEL = 1500 // px/s^2 toward the well at the core, eased by distance
+const MOTE_FLY_DUR = 0.5 // seconds for a captured mote to reach the gauge
+const MAX_MOTES = 420
+// Mote burst sizing: total heat is fixed by the kill; more motes = finer grain.
+const MOTE_MIN_COUNT = 3
+const MOTE_MAX_COUNT = 16
 const OVERDRIVE_DURATION = 5.0 // seconds of surge once heat tops out
 const OVERDRIVE_DPS_MULT = 1.7
 const OVERDRIVE_BONUS_PIERCES = 3
@@ -107,6 +121,51 @@ const updateWellPuck = (s: RunState, dt: number) => {
     well.vel.x = 0
     well.vel.y = 0
   }
+}
+
+// Burst a destroyed block into heat motes spread across its footprint. `heatBudget`
+// (the heat this kill is worth) is divided evenly across the motes; collecting them
+// with the well is what actually fills the gauge.
+const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: number) => {
+  const cells = b.cells.length
+  const count = Math.max(
+    MOTE_MIN_COUNT,
+    Math.min(MOTE_MAX_COUNT, Math.round(2 + b.xpValue * 1.1 + cells * 0.7)),
+  )
+  const perHeat = heatBudget / count
+  const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
+  const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
+  for (let i = 0; i < count; i++) {
+    // Spawn within a random footprint cell so the burst matches the block shape.
+    const cell = b.cells[Math.floor(Math.random() * cells)]!
+    const px = b.pos.x + (cell.x + Math.random()) * b.cellSize
+    const py = b.pos.y + (cell.y + Math.random()) * b.cellSize
+    // Explosive outward velocity from the block center + jitter; heavy drag in the
+    // update settles them into a hovering cloud the player can sweep up.
+    const dx = px - cx
+    const dy = py - cy
+    const dl = Math.hypot(dx, dy) || 1
+    const speed = 60 + Math.random() * 140
+    s.heatMotes.push({
+      id: s.nextMoteId++,
+      x: px,
+      y: py,
+      vx: (dx / dl) * speed + (Math.random() * 2 - 1) * 60,
+      vy: (dy / dl) * speed + (Math.random() * 2 - 1) * 60 - 40,
+      age: 0,
+      life: MOTE_LIFE_MIN + Math.random() * (MOTE_LIFE_MAX - MOTE_LIFE_MIN),
+      heat: perHeat,
+      hue,
+      size: 1.6 + Math.random() * 1.8,
+      seed: Math.random() * 1000,
+      collecting: false,
+      ct: 0,
+      cdur: MOTE_FLY_DUR,
+      cfx: px,
+      cfy: py,
+    })
+  }
+  if (s.heatMotes.length > MAX_MOTES) s.heatMotes.splice(0, s.heatMotes.length - MAX_MOTES)
 }
 
 // Helper functions for smooth drop animation hitbox adjustment
@@ -290,6 +349,12 @@ export const stepSim = (s: RunState, dt: number) => {
     for (const f of s.features) {
       f.pos.y += f.cellSize
     }
+    // Heat motes ride the board: they step down one cell with the pieces (and
+    // share the same drop animation), so collected debris drifts toward the
+    // player in lockstep instead of hanging in place.
+    for (const m of s.heatMotes) {
+      if (!m.collecting) m.y += cellSize
+    }
 
     // Start the visual catch-up animation (offset counts back down to 0).
     s.dropAnimOffset = cellSize
@@ -367,7 +432,59 @@ export const stepSim = (s: RunState, dt: number) => {
     }
   }
 
-  // Heat / Overdrive: fills from chained kills (added in dealDamageAtHit), decays
+  // Heat motes: vacuum destroyed-block debris toward the well; captured motes fly
+  // to the gauge and deliver their heat on arrival (the collection IS the fill).
+  if (s.heatMotes.length > 0) {
+    const well = s.well
+    // A mote is gone once it drifts past the bottom of the screen (no timeout).
+    const offBottom = s.view.height + 30
+    const dead: number[] = []
+    for (const m of s.heatMotes) {
+      if (m.collecting) {
+        m.ct += dt
+        if (m.ct >= m.cdur) {
+          if (s.overdriveSec <= 0) s.heat = clamp(s.heat + m.heat, 0, 1)
+          dead.push(m.id)
+        }
+        continue
+      }
+      m.age += dt
+      // Heavy drag settles the initial burst quickly; sustained descent comes from
+      // the per-step board drop above, so motes track the grid like the pieces.
+      const k = Math.pow(0.1, dt)
+      m.vx *= k
+      m.vy *= k
+      // Well attraction (generous). Active only once the player has placed it.
+      if (well.placed) {
+        const dx = well.pos.x - m.x
+        const dy = well.pos.y - m.y
+        const dist = Math.hypot(dx, dy)
+        if (dist < MOTE_CAPTURE_R) {
+          m.collecting = true
+          m.ct = 0
+          m.cfx = m.x
+          // Capture from the on-screen (animated) position for a seamless handoff.
+          m.cfy = m.y - s.dropAnimOffset
+          continue
+        }
+        if (dist < MOTE_PULL_R) {
+          const f = 1 - dist / MOTE_PULL_R
+          const a = (MOTE_PULL_ACCEL * f * f * dt) / (dist || 1)
+          m.vx += dx * a
+          m.vy += dy * a
+        }
+      }
+      m.x += m.vx * dt
+      m.y += m.vy * dt
+      if (m.y - s.dropAnimOffset > offBottom) dead.push(m.id)
+    }
+    if (dead.length > 0) {
+      const ds = new Set(dead)
+      s.heatMotes = s.heatMotes.filter((m) => !ds.has(m.id))
+    }
+  }
+
+  // Heat / Overdrive: fills from collected heat motes (delivered above), decays
   // when idle, and on topping out fires a short surge that drains it back down.
   if (s.overdriveSec > 0) {
     s.overdriveSec = Math.max(0, s.overdriveSec - dt)
@@ -657,12 +774,11 @@ export const stepSim = (s: RunState, dt: number) => {
       s.comboBest = Math.max(s.comboBest, s.combo)
       s.comboTimerSec = COMBO_WINDOW_SEC
 
-      // Heat builds from chained kills (combo + piece value). It only accrues
-      // outside Overdrive (during the surge the meter is draining).
-      if (s.overdriveSec <= 0) {
-        const heatGain = HEAT_PER_KILL * Math.max(1, b.xpValue) * (1 + 0.05 * s.combo)
-        s.heat = clamp(s.heat + heatGain, 0, 1)
-      }
+      // Heat is no longer granted at the moment of the kill. Instead the block
+      // bursts into heat motes (spawned below) carrying this kill's heat value;
+      // the player vacuums them with the well to fill the gauge. The budget still
+      // scales with combo + piece value, captured here at kill time.
+      const heatBudget = HEAT_PER_KILL * Math.max(1, b.xpValue) * (1 + 0.05 * s.combo)
 
       // Multi-kill: each additional block killed in the SAME beam pass (this
       // frame) is worth progressively more — the direct reward for carving a
@@ -688,54 +804,12 @@ export const stepSim = (s: RunState, dt: number) => {
       if (b.isGold) {
         s.stats.goldXpBonus += 1
       }
-      
-      const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
-      // Melt collapses downward into a small blob near the *bottom* of the piece, then releases the XP orb.
-      const bottom = b.pos.y + b.localAabb.maxY
-      const orbFrom = { x: cx, y: bottom - 6 }
-      
-      // For gold blocks, spawn multiple XP orbs with offsets and delays
-      if (b.isGold && b.xpValue >= 5) {
-        const orbCount = b.xpValue
-        const xpPerOrb = b.xpValue / orbCount // distribute total XP evenly
-        for (let i = 0; i < orbCount; i++) {
-          const angle = (i / orbCount) * Math.PI * 2
-          const radius = 8
-          const offsetX = Math.cos(angle) * radius
-          const offsetY = Math.sin(angle) * radius
-          const delay = i * 0.08 // slight animation delay between orbs
-          
-          s.meltFx.push({
-            id: `melt-${s.nextMeltId++}`,
-            pos: { ...b.pos },
-            cellSize: b.cellSize,
-            cornerRadius: b.cornerRadius,
-            loop: b.loop,
-            localAabb: { ...b.localAabb },
-            t: -delay, // negative time creates delay effect; melt update adds dt each frame
-            dur: BLOCK_MELT_DUR,
-            orbFrom: { x: orbFrom.x + offsetX, y: orbFrom.y + offsetY },
-            orbTo: { ...layout.xpTarget },
-            value: xpPerOrb,
-            seed: Math.random() * 1000,
-          })
-        }
-      } else {
-        s.meltFx.push({
-          id: `melt-${s.nextMeltId++}`,
-          pos: { ...b.pos },
-          cellSize: b.cellSize,
-          cornerRadius: b.cornerRadius,
-          loop: b.loop,
-          localAabb: { ...b.localAabb },
-          t: 0,
-          dur: BLOCK_MELT_DUR,
-          orbFrom,
-          orbTo: { ...layout.xpTarget },
-          value: b.xpValue,
-          seed: Math.random() * 1000,
-        })
-      }
+
+      // Death FX: the block explodes into heat motes carrying this kill's heat
+      // budget. The player vacuums them with the well to fill the gauge (replaces
+      // the old melt-into-XP-orb flow). Gold blocks burst brighter (their large
+      // heat budget is simply spread across the standard mote count).
+      spawnHeatMotes(s, b, heatBudget, 0)
 
       // Check if this destroyed block should spawn a splitter (prism)
       if (s.stats.splitterChance > 0 && Math.random() < s.stats.splitterChance) {

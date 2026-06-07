@@ -56,6 +56,36 @@ export type WeldGlow = {
   intensity: number
 }
 
+// A "heat mote": glowing debris flung out when a block is destroyed. Motes hang
+// in the field (world space) carrying a slice of the kill's heat value. The
+// player vacuums them with the gravity well; on capture a mote flies to the heat
+// gauge and delivers its heat on arrival. Uncollected motes fade and are lost,
+// so the well is the heat-collection mechanic (score is still granted at kill).
+export type HeatMote = {
+  id: number
+  x: number
+  y: number
+  vx: number
+  vy: number
+  age: number
+  life: number
+  // Heat (0..1 contribution) delivered to the gauge when this mote arrives.
+  heat: number
+  // Identity hue seed (used when the music-reactive palette is on).
+  hue: number
+  size: number
+  seed: number
+  // Collection: once captured by the well, the mote flies (in screen space, from
+  // the projected capture point) to the heat gauge and delivers `heat` on arrival.
+  collecting: boolean
+  ct: number
+  cdur: number
+  // World-space point where it was captured (the renderer projects this as the
+  // start of the delivery flight toward the screen-space gauge).
+  cfx: number
+  cfy: number
+}
+
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
 export type UpgradeType = 'damage' | 'bounces' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade'
@@ -369,6 +399,10 @@ export type RunState = {
   weldGlows: WeldGlow[]
   sparkEmitAcc: number
   weld: { blockId: number; x: number; y: number; dwell: number }
+  // Heat motes: destroyed-block debris the player vacuums with the well to fill
+  // the heat gauge (see HeatMote).
+  heatMotes: HeatMote[]
+  nextMoteId: number
 
   blocks: BlockEntity[]
   nextBlockId: number
@@ -503,6 +537,8 @@ export const createInitialRunState = (): RunState => {
     weldGlows: [],
     sparkEmitAcc: 0,
     weld: { blockId: -1, x: 0, y: 0, dwell: 0 },
+    heatMotes: [],
+    nextMoteId: 1,
     blocks: [],
     nextBlockId: 1,
     features: [],

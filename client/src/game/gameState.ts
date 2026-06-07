@@ -19,6 +19,8 @@ type SavedRunState = Omit<
   | 'weldGlows'
   | 'sparkEmitAcc'
   | 'weld'
+  | 'heatMotes'
+  | 'nextMoteId'
   | 'lifeLossFx'
   | 'levelUpNotificationFx'
   // Transient control + combo state (recomputed live each run).

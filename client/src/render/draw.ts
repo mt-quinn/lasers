@@ -1466,6 +1466,57 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.restore()
     }
 
+    // Heat motes: glowing debris from destroyed blocks. Loose motes hover in the
+    // field (world-space, projected like sparks); once the well captures one it
+    // flies (screen-space) to the heat gauge and winks out as it delivers.
+    if (s.heatMotes.length > 0) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      const hgw = layout.xpGauge.w
+      const hgh = layout.xpGauge.h
+      const gaugeTx = layout.xpGauge.x + hgw / 2
+      const gaugeTy = layout.xpGauge.y + (hgh - hgh * clamp(s.heat, 0, 1))
+      for (const m of s.heatMotes) {
+        const mHue = hueAt(m.x, m.y)
+        if (m.collecting) {
+          // Fly from the projected capture point to the screen-space gauge.
+          const tt = Math.pow(clamp(m.ct / m.cdur, 0, 1), 0.7)
+          const fromS = project(m.cfx, m.cfy)
+          const px = fromS.x + (gaugeTx - fromS.x) * tt
+          const py = fromS.y + (gaugeTy - fromS.y) * tt
+          const z = lerp(fromS.scale, 1, tt)
+          const r = (2.2 + 1.8 * (1 - tt)) * z + 1.4
+          ctx.fillStyle = heat(mHue, 255, 180, 90, 85, 66, 0.32)
+          ctx.beginPath()
+          ctx.arc(px, py, r * 2.4, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = heat(mHue, 255, 222, 140, 85, 72, 0.95)
+          ctx.beginPath()
+          ctx.arc(px, py, r, 0, Math.PI * 2)
+          ctx.fill()
+        } else {
+          // Loose motes ride the board grid: same drop-animation offset as pieces.
+          const flick = 0.78 + 0.22 * Math.sin(tNow * 7 + m.seed)
+          const sp = project(m.x, m.y - s.dropAnimOffset)
+          const a = 0.9 * flick
+          const r = m.size * 0.9 * sp.scale + 1.0
+          ctx.fillStyle = heat(mHue, 255, 150, 70, 82, 60, 0.26 * a)
+          ctx.beginPath()
+          ctx.arc(sp.x, sp.y, r * 2.6, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = heat(mHue, 255, 210, 120, 85, 68, 0.95 * a)
+          ctx.beginPath()
+          ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = `rgba(255,250,240,${(0.7 * a).toFixed(3)})`
+          ctx.beginPath()
+          ctx.arc(sp.x, sp.y, Math.max(0.8, r * 0.45), 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+      ctx.restore()
+    }
+
     // Welding hit FX: glow + sparks at beam contact points.
     if (s.weldGlows.length > 0 || s.sparks.length > 0) {
       ctx.save()
