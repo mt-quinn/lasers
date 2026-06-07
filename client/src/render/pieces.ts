@@ -240,84 +240,108 @@ export const drawBlockKindOverlay = (
   ctx.save()
 
   if (kind === 'armored') {
+    // Armored read = a DARK gunmetal plate bolted across the bottom (reflective
+    // underside) of the face. Dark detailing is the key: additive beam/spark glow
+    // and bloom only brighten bright pixels, so a dark plate + recessed bolts stay
+    // legible no matter how bright the impact gets, and the bolts (not chevrons)
+    // make it clearly "armor", not "fast".
     const flash = Math.min(1, fx.shieldFlashSec / 0.3)
-    const plateH = Math.min(h * 0.5, cellSize * 0.82)
+    const plateH = Math.min(h * 0.5, cellSize * 0.92)
     const plateTop = ay + h - plateH
 
     drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
     ctx.save()
     ctx.clip()
 
+    // Solid, near-opaque gunmetal slab (dark -> darker toward the edge).
     ctx.globalCompositeOperation = 'source-over'
     const plate = ctx.createLinearGradient(0, plateTop, 0, ay + h)
-    plate.addColorStop(0, 'rgba(58,68,86,0.86)')
-    plate.addColorStop(0.5, 'rgba(36,44,60,0.94)')
-    plate.addColorStop(1, 'rgba(20,26,38,0.96)')
+    plate.addColorStop(0, 'rgba(46,54,70,0.97)')
+    plate.addColorStop(0.45, 'rgba(28,34,48,0.99)')
+    plate.addColorStop(1, 'rgba(13,16,24,1)')
     ctx.fillStyle = plate
     ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
 
+    // Subtle brushed-metal sheen so the plate still reads as metal, kept low so
+    // it never blows out.
     ctx.save()
     ctx.beginPath()
     ctx.rect(ax - 2, plateTop, w + 4, plateH + 4)
     ctx.clip()
     ctx.globalCompositeOperation = 'screen'
-    ctx.strokeStyle = 'rgba(150,166,194,0.14)'
-    ctx.lineWidth = 2
-    for (let x = -plateH; x < w + plateH; x += 10) {
-      ctx.beginPath()
-      ctx.moveTo(ax + x, plateTop)
-      ctx.lineTo(ax + x + plateH, plateTop + plateH)
-      ctx.stroke()
-    }
+    const sheen = ctx.createLinearGradient(ax, plateTop, ax + w, plateTop + plateH)
+    sheen.addColorStop(0, 'rgba(120,140,170,0)')
+    sheen.addColorStop(0.5, 'rgba(120,140,170,0.10)')
+    sheen.addColorStop(1, 'rgba(120,140,170,0)')
+    ctx.fillStyle = sheen
+    ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
     ctx.restore()
 
-    ctx.globalCompositeOperation = 'screen'
-    ctx.strokeStyle = `rgba(${flash > 0 ? '190,225,255' : '170,188,214'},${(0.5 + 0.4 * flash).toFixed(3)})`
-    ctx.lineWidth = 2 + 2 * flash
+    // Hard armor boundary: a thick DARK divider with a thin metallic lip above it.
+    // The dark line survives bloom; the lip gives the plate a forged top edge.
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.strokeStyle = 'rgba(6,8,14,0.95)'
+    ctx.lineWidth = 3
     ctx.beginPath()
-    ctx.moveTo(ax - 2, plateTop + 1)
-    ctx.lineTo(ax + w + 2, plateTop + 1)
+    ctx.moveTo(ax - 2, plateTop)
+    ctx.lineTo(ax + w + 2, plateTop)
+    ctx.stroke()
+    ctx.strokeStyle = `rgba(${flash > 0 ? '200,230,255' : '150,170,202'},${(0.55 + 0.35 * flash).toFixed(3)})`
+    ctx.lineWidth = 1.3
+    ctx.beginPath()
+    ctx.moveTo(ax - 2, plateTop - 1.4)
+    ctx.lineTo(ax + w + 2, plateTop - 1.4)
     ctx.stroke()
 
-    if (flash > 0) {
-      ctx.fillStyle = `rgba(150,205,255,${(0.5 * flash).toFixed(3)})`
-      ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
-    }
-
+    // Bolt row, inset from the very bottom edge so the grazing reflected beam
+    // can't sit on top of them. Each bolt = dark socket + raised head + glint +
+    // hex slot, so they stay readable as recessed armor fixings even when bright.
+    const boltR = Math.max(2.2, Math.min(cellSize * 0.12, 6))
+    const boltY = plateTop + plateH * 0.46
+    const gap = Math.max(boltR * 3.4, cellSize * 0.52)
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = 'rgba(196,208,230,0.55)'
-    const rv = 2.2
-    const ri = 6
-    for (const [rx, ry] of [
-      [ax + ri, plateTop + ri],
-      [ax + w - ri, plateTop + ri],
-    ] as const) {
+    for (let bx = ax + Math.max(boltR * 1.6, gap * 0.5); bx < ax + w - boltR; bx += gap) {
+      // Recessed socket shadow.
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'
       ctx.beginPath()
-      ctx.arc(rx, ry, rv, 0, Math.PI * 2)
+      ctx.arc(bx, boltY + boltR * 0.18, boltR * 1.18, 0, Math.PI * 2)
       ctx.fill()
-    }
-    ctx.restore()
-
-    ctx.save()
-    ctx.globalCompositeOperation = 'screen'
-    ctx.strokeStyle = `rgba(150,205,255,${(0.65 + 0.35 * flash).toFixed(3)})`
-    ctx.shadowColor = 'rgba(150,205,255,0.9)'
-    ctx.shadowBlur = 5 + 14 * flash
-    ctx.lineWidth = 2 + 2 * flash
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    const tooth = Math.min(cellSize * 0.34, 12)
-    const baseY = ay + h - 3
-    const step = tooth * 1.5
-    for (let tx = ax + step * 0.5; tx < ax + w - 2; tx += step) {
+      // Bolt head.
+      const bg = ctx.createRadialGradient(
+        bx - boltR * 0.3,
+        boltY - boltR * 0.3,
+        boltR * 0.2,
+        bx,
+        boltY,
+        boltR,
+      )
+      bg.addColorStop(0, 'rgba(150,164,190,0.98)')
+      bg.addColorStop(1, 'rgba(70,82,104,0.98)')
+      ctx.fillStyle = bg
       ctx.beginPath()
-      ctx.moveTo(tx - tooth * 0.5, baseY - tooth * 0.6)
-      ctx.lineTo(tx, baseY)
-      ctx.lineTo(tx + tooth * 0.5, baseY - tooth * 0.6)
+      ctx.arc(bx, boltY, boltR, 0, Math.PI * 2)
+      ctx.fill()
+      // Dark slot across the head.
+      ctx.strokeStyle = 'rgba(14,18,28,0.85)'
+      ctx.lineWidth = Math.max(1, boltR * 0.32)
+      ctx.beginPath()
+      ctx.moveTo(bx - boltR * 0.58, boltY)
+      ctx.lineTo(bx + boltR * 0.58, boltY)
       ctx.stroke()
     }
-    ctx.shadowBlur = 0
+
     ctx.restore()
+
+    // Deflection flash: an icy edge wash only while a no-damage hit is registering.
+    if (flash > 0) {
+      drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
+      ctx.save()
+      ctx.clip()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.fillStyle = `rgba(150,205,255,${(0.4 * flash).toFixed(3)})`
+      ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
+      ctx.restore()
+    }
   } else if (kind === 'chrome') {
     drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
     ctx.save()
@@ -339,77 +363,127 @@ export const drawBlockKindOverlay = (
     }
     ctx.restore()
   } else if (kind === 'fast') {
-    ctx.globalCompositeOperation = 'screen'
-    ctx.strokeStyle = 'rgba(120,240,255,0.95)'
-    ctx.shadowColor = 'rgba(120,240,255,0.7)'
-    ctx.shadowBlur = 8
-    ctx.lineWidth = 3
+    // "Drops far / fast": an embossed downward double-chevron. A dark engraved
+    // groove sits under the bright cyan edge, so even when bloom blows out the
+    // highlight the chevron shape survives as a crisp dark outline.
+    const cxC = ax + w / 2
+    const chW = Math.min(w, h) * 0.34
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    const cxC = ax + w / 2
-    const chW = Math.min(w, h) * 0.3
     for (let k = 0; k < 2; k++) {
-      const yy = ay + h * (0.36 + k * 0.26)
-      ctx.beginPath()
-      ctx.moveTo(cxC - chW, yy - chW * 0.55)
-      ctx.lineTo(cxC, yy + chW * 0.55)
-      ctx.lineTo(cxC + chW, yy - chW * 0.55)
-      ctx.stroke()
+      const yy = ay + h * (0.33 + k * 0.3)
+      const stroke = () => {
+        ctx.beginPath()
+        ctx.moveTo(cxC - chW, yy - chW * 0.5)
+        ctx.lineTo(cxC, yy + chW * 0.55)
+        ctx.lineTo(cxC + chW, yy - chW * 0.5)
+        ctx.stroke()
+      }
+      // Dark engraved groove (survives bloom).
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = 'rgba(6,18,28,0.82)'
+      ctx.lineWidth = Math.max(4.5, chW * 0.5)
+      stroke()
+      // Bright cyan crest with a soft glow.
+      ctx.globalCompositeOperation = 'screen'
+      ctx.strokeStyle = 'rgba(150,246,255,0.98)'
+      ctx.shadowColor = 'rgba(80,228,255,0.7)'
+      ctx.shadowBlur = 7
+      ctx.lineWidth = Math.max(2, chW * 0.24)
+      stroke()
+      ctx.shadowBlur = 0
     }
-    ctx.shadowBlur = 0
   } else if (kind === 'shatter') {
-    const flick = 0.7 + 0.3 * Math.sin(fx.tNow * 9 + fx.blockId)
+    // "Fractures into a cluster": each footprint cell is previewed as a rounded
+    // sub-piece outlined by a dark molten crack channel with a hot edge and a
+    // glowing core dot. The dark cracks survive bloom; the cell grid + cluster
+    // dots read as "this breaks into many pieces" (no chevrons, so it no longer
+    // mirrors the fast block).
+    const flick = 0.72 + 0.28 * Math.sin(fx.tNow * 9 + fx.blockId)
     drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
     ctx.save()
     ctx.clip()
     ctx.globalCompositeOperation = 'screen'
-    ctx.fillStyle = `rgba(255,120,40,${(0.16 + 0.12 * flick).toFixed(3)})`
+    ctx.fillStyle = `rgba(255,120,40,${(0.14 + 0.1 * flick).toFixed(3)})`
     ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
-    // Fracture seams between cells, drawn bold so the "shatters into pieces"
-    // read is obvious at a glance and from a distance.
-    ctx.strokeStyle = `rgba(255,214,150,${(0.85 + 0.15 * flick).toFixed(3)})`
-    ctx.shadowColor = 'rgba(255,150,70,0.95)'
-    ctx.shadowBlur = 9
-    ctx.lineWidth = Math.max(2.6, cellSize * 0.12)
-    ctx.lineCap = 'round'
+
     const cs = cellSize
-    const inset = 1.5
-    for (const c of cells) {
-      const rx = ax + c.x * cs + inset
-      const ry = ay + c.y * cs + inset
-      ctx.strokeRect(rx, ry, cs - inset * 2, cs - inset * 2)
+    const inset = Math.max(2.5, cellSize * 0.16)
+    const rr = Math.max(2, cellSize * 0.2)
+    const subRect = (x: number, y: number, ww: number, hh: number, r: number) => {
+      const rad = Math.min(r, ww * 0.5, hh * 0.5)
+      ctx.beginPath()
+      ctx.moveTo(x + rad, y)
+      ctx.arcTo(x + ww, y, x + ww, y + hh, rad)
+      ctx.arcTo(x + ww, y + hh, x, y + hh, rad)
+      ctx.arcTo(x, y + hh, x, y, rad)
+      ctx.arcTo(x, y, x + ww, y, rad)
+      ctx.closePath()
     }
-    // Dark cores down the centre of each seam give the bright strokes a crisp
-    // edge so they stay legible over light bodies.
-    ctx.shadowBlur = 0
+
+    // Bold dark seams along the internal cell boundaries so the 1x1 split is
+    // unmistakable (the gap between sub-pieces reads as a deep crack, not body
+    // color). Drawn under the hot cell edges, which are inset, so the seam centre
+    // stays dark while each cell is framed in molten gold.
+    const cellSet = new Set(cells.map((c) => `${c.x},${c.y}`))
     ctx.globalCompositeOperation = 'source-over'
-    ctx.strokeStyle = 'rgba(90,30,0,0.45)'
-    ctx.lineWidth = Math.max(1, cellSize * 0.05)
+    ctx.strokeStyle = 'rgba(6,3,0,0.97)'
+    ctx.lineCap = 'round'
+    ctx.lineWidth = Math.max(3.5, cellSize * 0.2)
     for (const c of cells) {
-      const rx = ax + c.x * cs + inset
-      const ry = ay + c.y * cs + inset
-      ctx.strokeRect(rx, ry, cs - inset * 2, cs - inset * 2)
+      if (cellSet.has(`${c.x + 1},${c.y}`)) {
+        const x = ax + (c.x + 1) * cs
+        ctx.beginPath()
+        ctx.moveTo(x, ay + c.y * cs + inset)
+        ctx.lineTo(x, ay + (c.y + 1) * cs - inset)
+        ctx.stroke()
+      }
+      if (cellSet.has(`${c.x},${c.y + 1}`)) {
+        const y = ay + (c.y + 1) * cs
+        ctx.beginPath()
+        ctx.moveTo(ax + c.x * cs + inset, y)
+        ctx.lineTo(ax + (c.x + 1) * cs - inset, y)
+        ctx.stroke()
+      }
     }
-    ctx.globalCompositeOperation = 'screen'
-    ctx.restore()
-    ctx.globalCompositeOperation = 'screen'
-    ctx.strokeStyle = 'rgba(255,190,110,0.95)'
-    ctx.shadowColor = 'rgba(255,150,70,0.7)'
-    ctx.shadowBlur = 7
-    ctx.lineWidth = 2.5
+
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    const sxC = ax + w / 2
-    const schW = Math.min(w, h) * 0.26
-    for (let k = 0; k < 2; k++) {
-      const yy = ay + h * (0.4 + k * 0.24)
-      ctx.beginPath()
-      ctx.moveTo(sxC - schW, yy - schW * 0.55)
-      ctx.lineTo(sxC, yy + schW * 0.55)
-      ctx.lineTo(sxC + schW, yy - schW * 0.55)
+    for (const c of cells) {
+      const rx = ax + c.x * cs + inset
+      const ry = ay + c.y * cs + inset
+      const cw = cs - inset * 2
+      const ch = cs - inset * 2
+      // Dark crack channel.
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = 'rgba(38,12,2,0.88)'
+      ctx.lineWidth = Math.max(3, cellSize * 0.14)
+      subRect(rx, ry, cw, ch, rr)
       ctx.stroke()
+      // Hot molten edge.
+      ctx.globalCompositeOperation = 'screen'
+      ctx.strokeStyle = `rgba(255,200,120,${(0.82 + 0.18 * flick).toFixed(3)})`
+      ctx.shadowColor = 'rgba(255,140,60,0.9)'
+      ctx.shadowBlur = 8
+      ctx.lineWidth = Math.max(1.4, cellSize * 0.06)
+      subRect(rx, ry, cw, ch, rr)
+      ctx.stroke()
+      ctx.shadowBlur = 0
+      // Cluster-piece core dot.
+      const ccx = rx + cw / 2
+      const ccy = ry + ch / 2
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.fillStyle = 'rgba(28,9,0,0.7)'
+      ctx.beginPath()
+      ctx.arc(ccx, ccy, Math.max(1.8, cellSize * 0.1), 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.fillStyle = `rgba(255,184,96,${(0.8 * flick + 0.2).toFixed(3)})`
+      ctx.beginPath()
+      ctx.arc(ccx, ccy, Math.max(1, cellSize * 0.055), 0, Math.PI * 2)
+      ctx.fill()
     }
-    ctx.shadowBlur = 0
+    ctx.restore()
   }
 
   ctx.restore()

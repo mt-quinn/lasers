@@ -49,7 +49,7 @@ const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
   {
     kind: 'shatter',
     name: 'Shatter block',
-    desc: 'A Fast block that spawns a cluster of normal blocks when destroyed.',
+    desc: 'Spawns a cluster of normal blocks when destroyed.',
   },
   {
     kind: 'mirror',
@@ -667,8 +667,8 @@ export default function App() {
                     </ul>
                   </div>
 
-                  <div className="menuActions">
-                    <button type="button" className="menuBtn ghost" onClick={restart}>
+                  <div className="menuActions pauseActions">
+                    <button type="button" className="menuBtn danger" onClick={restart}>
                       Restart
                     </button>
                     <button type="button" className="menuBtn primary" onClick={() => setPaused(false)}>

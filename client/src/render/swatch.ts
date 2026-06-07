@@ -7,8 +7,6 @@ import {
   drawRoundedPolyomino,
   applyDomedDepth,
   drawBlockKindOverlay,
-  drawMirrorShape,
-  drawPrismShape,
 } from './pieces'
 import { healthFill, relativeLuma } from './draw'
 
@@ -121,24 +119,186 @@ const drawBlockSwatch = (
   )
 }
 
+// Faux-3D chrome blade — echoes the GL mirror: a thin double-sided reflector
+// standing along the cell diagonal (bounces a beam either way), not a solid
+// wedge. Static, music-off baseline so the key never drifts.
 const drawMirrorSwatch = (ctx: CanvasRenderingContext2D, box: number) => {
-  const margin = box * 0.18
-  const sizePx = box - margin * 2
-  drawMirrorShape(ctx, {
-    pos: { x: margin, y: margin },
-    sizePx,
-    orient: -1,
-    hp: 1,
-    hpMax: 1,
+  const cx = box * 0.5
+  const cy = box * 0.46
+  const H = box * 0.13
+  const inv = 1 / Math.SQRT2
+  // orient '/': diagonal direction (1,-1), width-perp (1,1).
+  const dx = inv
+  const dy = -inv
+  const nx = inv
+  const ny = inv
+  const Lh = box * 0.34
+  const Wh = box * 0.09
+  const corner = (sd: number, sn: number, off: number) => ({
+    x: cx + dx * Lh * sd + nx * Wh * sn,
+    y: cy + dy * Lh * sd + ny * Wh * sn + off,
   })
+  const blade = (off: number) => {
+    const p = [corner(1, 1, off), corner(1, -1, off), corner(-1, -1, off), corner(-1, 1, off)]
+    ctx.beginPath()
+    ctx.moveTo(p[0].x, p[0].y)
+    for (let i = 1; i < 4; i++) ctx.lineTo(p[i].x, p[i].y)
+    ctx.closePath()
+    return p
+  }
+  // Contact shadow.
+  ctx.save()
+  ctx.filter = 'blur(3px)'
+  blade(H + 3)
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'
+  ctx.fill()
+  ctx.restore()
+  // Extrusion skirt + connecting walls (steel thickness).
+  const top = blade(0)
+  const bot = blade(H)
+  ctx.beginPath()
+  for (let i = 0; i < 4; i++) {
+    const a = top[i]
+    const b = top[(i + 1) % 4]
+    const a2 = bot[i]
+    const b2 = bot[(i + 1) % 4]
+    ctx.moveTo(a.x, a.y)
+    ctx.lineTo(b.x, b.y)
+    ctx.lineTo(b2.x, b2.y)
+    ctx.lineTo(a2.x, a2.y)
+    ctx.closePath()
+  }
+  const skirt = ctx.createLinearGradient(0, cy - Lh, 0, cy + Lh + H)
+  skirt.addColorStop(0, 'rgb(96 108 132)')
+  skirt.addColorStop(1, 'rgb(40 48 62)')
+  ctx.fillStyle = skirt
+  ctx.fill()
+  // Chrome top face: gradient across the blade width (sky → hot horizon → ground).
+  blade(0)
+  const chrome = ctx.createLinearGradient(
+    cx + nx * Wh,
+    cy + ny * Wh,
+    cx - nx * Wh,
+    cy - ny * Wh,
+  )
+  chrome.addColorStop(0, 'rgb(150 172 205)')
+  chrome.addColorStop(0.45, 'rgb(238 248 255)')
+  chrome.addColorStop(0.6, 'rgb(150 176 210)')
+  chrome.addColorStop(1, 'rgb(60 78 106)')
+  ctx.fillStyle = chrome
+  ctx.fill()
+  // Bright specular core line running down the blade length.
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)'
+  ctx.lineWidth = Math.max(1.4, box * 0.024)
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  ctx.moveTo(cx + dx * Lh * 0.9, cy + dy * Lh * 0.9)
+  ctx.lineTo(cx - dx * Lh * 0.9, cy - dy * Lh * 0.9)
+  ctx.stroke()
 }
 
+// Faux-3D faceted crystal — echoes the GL splitter gem (octagonal crown with a
+// glowing core and exit arrows on the top facet).
 const drawSplitterSwatch = (ctx: CanvasRenderingContext2D, box: number) => {
-  // Match in-game proportions: r = cellSize * 0.36, drawn centered.
-  const cellSize = box * 0.62
-  const r = cellSize * 0.5
-  const pos: Vec2 = { x: (box - cellSize) / 2, y: (box - cellSize) / 2 }
-  drawPrismShape(ctx, { pos, cellSize, r, exitsDeg: [45, -45] })
+  const cx = box * 0.5
+  const cy = box * 0.46
+  const R = box * 0.34
+  const H = R * 0.5
+  const SIDES = 8
+  const a0 = -Math.PI / 2
+  const oct = (rad: number, dy: number) => {
+    ctx.beginPath()
+    for (let i = 0; i < SIDES; i++) {
+      const a = a0 + (i / SIDES) * Math.PI * 2
+      const x = cx + Math.cos(a) * rad
+      const y = cy + Math.sin(a) * rad + dy
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+  }
+  // Contact shadow.
+  ctx.save()
+  ctx.filter = 'blur(3px)'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy + H + 3, R, R * 0.55, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'
+  ctx.fill()
+  ctx.restore()
+  // Pavilion skirt (thickness below the girdle).
+  oct(R, H)
+  ctx.fillStyle = 'rgb(22 56 92)'
+  ctx.fill()
+  // Crystal body, deep-blue rim → glassy → darker core (contrast for arrows).
+  oct(R, 0)
+  const body = ctx.createRadialGradient(cx - R * 0.2, cy - R * 0.2, R * 0.05, cx, cy, R)
+  body.addColorStop(0, 'rgb(120 185 230)')
+  body.addColorStop(0.45, 'rgb(70 140 195)')
+  body.addColorStop(0.78, 'rgb(34 86 140)')
+  body.addColorStop(1, 'rgb(14 40 72)')
+  ctx.fillStyle = body
+  ctx.fill()
+  // A few faint facet cut lines near the rim.
+  ctx.save()
+  oct(R, 0)
+  ctx.clip()
+  ctx.globalCompositeOperation = 'screen'
+  ctx.strokeStyle = 'rgba(170,215,250,0.12)'
+  ctx.lineWidth = Math.max(1, box * 0.008)
+  for (let i = 0; i < SIDES; i++) {
+    const a = a0 + ((i + 0.5) / SIDES) * Math.PI * 2
+    ctx.beginPath()
+    ctx.moveTo(cx + Math.cos(a) * R * 0.34, cy + Math.sin(a) * R * 0.34)
+    ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R)
+    ctx.stroke()
+  }
+  ctx.restore()
+  // Exit arrows on the top facet: bold, high-contrast.
+  const exits = [45, -45]
+  const rot = (vx: number, vy: number, rad: number) => ({
+    x: vx * Math.cos(rad) - vy * Math.sin(rad),
+    y: vx * Math.sin(rad) + vy * Math.cos(rad),
+  })
+  const rayLen = R * 0.88
+  const headLen = R * 0.34
+  const headAng = Math.PI / 6
+  const drawArrows = (style: string, lw: number) => {
+    ctx.strokeStyle = style
+    ctx.lineWidth = lw
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    for (const deg of exits) {
+      const d = rot(0, -1, (deg * Math.PI) / 180)
+      const ex = cx + d.x * rayLen
+      const ey = cy + d.y * rayLen
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(ex, ey)
+      const back = rot(-d.x, -d.y, 0)
+      const l = rot(back.x, back.y, headAng)
+      const r = rot(back.x, back.y, -headAng)
+      ctx.moveTo(ex, ey)
+      ctx.lineTo(ex + l.x * headLen, ey + l.y * headLen)
+      ctx.moveTo(ex, ey)
+      ctx.lineTo(ex + r.x * headLen, ey + r.y * headLen)
+      ctx.stroke()
+    }
+  }
+  ctx.save()
+  ctx.globalCompositeOperation = 'screen'
+  drawArrows('rgba(150,210,255,0.5)', Math.max(4, box * 0.1))
+  ctx.restore()
+  drawArrows('rgba(6,16,30,0.92)', Math.max(3.5, box * 0.075))
+  drawArrows('rgba(238,250,255,1)', Math.max(2, box * 0.045))
+  // Central hub.
+  ctx.beginPath()
+  ctx.arc(cx, cy, Math.max(2, box * 0.05), 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(6,16,30,0.92)'
+  ctx.fill()
+  ctx.beginPath()
+  ctx.arc(cx, cy, Math.max(1.4, box * 0.032), 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(245,252,255,1)'
+  ctx.fill()
 }
 
 // Render a single legend swatch into `canvas`. `box` is the CSS pixel size of

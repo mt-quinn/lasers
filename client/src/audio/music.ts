@@ -144,6 +144,11 @@ class MusicEngine {
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private loadToken = 0
   private listenersBound = false
+  // True while a track is being (re)loaded — including the gap between one track
+  // ending and the next starting. The element is transiently paused/ended then,
+  // but it resolves itself without a gesture, so the "tap to resume" prompt must
+  // stay hidden during this window.
+  private loadPending = false
 
   // Adaptive normalization + envelope state.
   private floor = 0
@@ -202,6 +207,7 @@ class MusicEngine {
 
   private onAudioHealthy = () => {
     this.loadAttempt = 0
+    this.loadPending = false
     this.notifyNeedsUnlock()
   }
 
@@ -220,6 +226,10 @@ class MusicEngine {
 
   private onAudioEnded = () => {
     if (!this.wantPlaying) return
+    // Mark the transition immediately so the per-frame unlock check doesn't catch
+    // the element in its brief ended/paused state and pop the resume prompt.
+    this.loadPending = true
+    this.notifyNeedsUnlock()
     void this.pickAndPlayNext()
   }
 
@@ -377,6 +387,9 @@ class MusicEngine {
     if (!ctx || ctx.state !== 'running') return true
     const audio = this.audio
     if (!audio) return true
+    // Mid-transition (track change / (re)load): the element is transiently
+    // paused/ended but will resume on its own, so don't surface the prompt.
+    if (this.loadPending) return false
     return audio.paused || audio.ended || !!audio.error
   }
 
@@ -503,6 +516,7 @@ class MusicEngine {
     const audio = this.audio
     if (!audio) return
     this.loadAttempt += 1
+    this.loadPending = true
     const token = ++this.loadToken
     this.resetAnalysisState()
 

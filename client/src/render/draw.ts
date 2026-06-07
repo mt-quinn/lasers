@@ -1,19 +1,16 @@
 import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from '../game/runState'
-import type { RunState, BlockEntity } from '../game/runState'
+import type { RunState, BlockEntity, MirrorFeature, PrismFeature } from '../game/runState'
 import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
 import { getArenaLayout } from '../game/layout'
 import { makeProjection } from './projection'
 import { renderLens } from './lensGL'
 import { renderPiecesGL, type GLPiece } from './piecesGL'
-import { renderBloom } from './bloom'
+import { renderFeaturesGL, type GLFeature } from './featuresGL'
 
 // Render pieces as extruded 3D solids via WebGL (with a 2D-billboard fallback if
 // WebGL is unavailable). Toggle off to compare against the legacy 2D path.
 const USE_GL_PIECES = true
-
-// Selective bloom post-process over the final composite.
-const USE_BLOOM = true
 
 // Piece extrusion height as a fraction of cell size. Shared by the GL piece pass
 // and the screen-space FX (sparks) so on-piece effects sit on the 3D top face.
@@ -34,6 +31,21 @@ const getPieceAtlas = (w: number, h: number) => {
     pieceAtlas.height = h
   }
   return pieceAtlasCtx
+}
+
+// Reusable atlas for the WebGL feature pass (mirror chrome panels + gem tops).
+let featAtlas: HTMLCanvasElement | null = null
+let featAtlasCtx: CanvasRenderingContext2D | null = null
+const getFeatAtlas = (w: number, h: number) => {
+  if (!featAtlas) {
+    featAtlas = document.createElement('canvas')
+    featAtlasCtx = featAtlas.getContext('2d')
+  }
+  if (featAtlas.width !== w || featAtlas.height !== h) {
+    featAtlas.width = w
+    featAtlas.height = h
+  }
+  return featAtlasCtx
 }
 
 // Reusable scratch canvas for the contact-shadow pass: all silhouettes are drawn
@@ -743,8 +755,8 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
 
       // Welding hot-spot: the beam contact point glows and grows on the affected
       // piece. Baked into the body (clipped to the shape) so it rides the 3D top
-      // face in the GL pass exactly aligned with the art; the bloom pass haloes
-      // the white-hot core. World hit point -> atlas-local via the block origin.
+      // face in the GL pass exactly aligned with the art.
+      // World hit point -> atlas-local via the block origin.
       for (const wg of s.weldGlows) {
         if (wg.blockId !== b.id) continue
         const wt = clamp(wg.age / Math.max(0.0001, wg.life), 0, 1)
@@ -1327,8 +1339,310 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     }
 
     // Board features: mirrors (destructible diagonal deflectors) / prisms / black holes.
+    // Mirrors + splitters render as 3D solids in a single GL pass (matching the
+    // block slabs); the black hole stays 2D. `glFeaturesDrawn` gates the 2D
+    // fallback shapes in the loop below.
+    let glFeaturesDrawn = false
+    if (USE_GL_PIECES && s.features.length > 0) {
+      // Chrome panel for a mirror's diagonal face (u along the edge, v top→down).
+      const bakeMirrorPanel = (
+        c: CanvasRenderingContext2D,
+        w: number,
+        h: number,
+        hp: number,
+        hpMax: number,
+      ) => {
+        c.clearRect(0, 0, w, h)
+        // Chrome: light "sky" up top, a hot horizon band, dark "ground" below.
+        const g = c.createLinearGradient(0, 0, 0, h)
+        g.addColorStop(0, 'rgb(150,172,205)')
+        g.addColorStop(0.34, 'rgb(206,224,248)')
+        g.addColorStop(0.5, 'rgb(248,253,255)')
+        g.addColorStop(0.62, 'rgb(150,176,210)')
+        g.addColorStop(1, 'rgb(54,70,98)')
+        c.fillStyle = g
+        c.fillRect(0, 0, w, h)
+        // Offset specular hotspot (light from upper-left).
+        c.globalCompositeOperation = 'lighter'
+        const hs = c.createRadialGradient(w * 0.34, h * 0.42, 1, w * 0.34, h * 0.42, h * 0.85)
+        hs.addColorStop(0, 'rgba(255,255,255,0.85)')
+        hs.addColorStop(0.4, 'rgba(210,235,255,0.3)')
+        hs.addColorStop(1, 'rgba(210,235,255,0)')
+        c.fillStyle = hs
+        c.fillRect(0, 0, w, h)
+        // Faint cool environment tint streak.
+        const en = c.createLinearGradient(0, 0, w, h)
+        en.addColorStop(0, 'rgba(120,200,255,0.0)')
+        en.addColorStop(0.5, 'rgba(150,215,255,0.16)')
+        en.addColorStop(1, 'rgba(120,200,255,0.0)')
+        c.fillStyle = en
+        c.fillRect(0, 0, w, h)
+        c.globalCompositeOperation = 'source-over'
+        // Bright top lip.
+        c.fillStyle = 'rgba(255,255,255,0.55)'
+        c.fillRect(0, 0, w, Math.max(1, h * 0.04))
+        // Wear cracks burn in as the mirror takes damage.
+        const wear = clamp(1 - hp / Math.max(1, hpMax), 0, 1)
+        if (wear > 0.12) {
+          c.strokeStyle = `rgba(12,8,14,${(0.5 * wear).toFixed(3)})`
+          c.lineWidth = Math.max(1, h * 0.02)
+          c.lineCap = 'round'
+          const cracks = 2 + Math.round(wear * 3)
+          for (let i = 0; i < cracks; i++) {
+            const fx = (i + 0.5) / cracks
+            const x = fx * w
+            c.beginPath()
+            c.moveTo(x, h * (0.2 + 0.1 * i))
+            c.lineTo(x + (i % 2 ? 1 : -1) * w * 0.05, h * (0.7 - 0.05 * i))
+            c.stroke()
+          }
+        }
+      }
+
+      // Gem top facet for a splitter: glowing core, faceted cut, exit arrows.
+      const bakeGemTop = (
+        c: CanvasRenderingContext2D,
+        size: number,
+        exitsDeg: number[],
+        hue: number,
+      ) => {
+        c.clearRect(0, 0, size, size)
+        const cx = size / 2
+        const cy = size / 2
+        const R = size / 2
+        // Crystal body: deep blue rim, glassy mid, darker core so the bright
+        // arrows on top have strong contrast to read against.
+        const body = c.createRadialGradient(cx - R * 0.2, cy - R * 0.2, R * 0.05, cx, cy, R)
+        body.addColorStop(0, heat(hue, 120, 185, 230, 80, 64, 0.98))
+        body.addColorStop(0.45, heat(hue, 70, 140, 195, 75, 50, 0.96))
+        body.addColorStop(0.78, 'rgba(34,86,140,0.96)')
+        body.addColorStop(1, 'rgba(14,40,72,0.96)')
+        c.fillStyle = body
+        c.beginPath()
+        c.arc(cx, cy, R, 0, Math.PI * 2)
+        c.fill()
+        // A few faint facet cut lines (kept subtle so they don't fight the arrows).
+        c.globalCompositeOperation = 'screen'
+        c.strokeStyle = 'rgba(170,215,250,0.12)'
+        c.lineWidth = Math.max(1, size * 0.01)
+        for (let i = 0; i < 8; i++) {
+          const a = -Math.PI / 2 + ((i + 0.5) / 8) * Math.PI * 2
+          c.beginPath()
+          c.moveTo(cx + Math.cos(a) * R * 0.34, cy + Math.sin(a) * R * 0.34)
+          c.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R)
+          c.stroke()
+        }
+        c.globalCompositeOperation = 'source-over'
+
+        // Exit arrows (relative to straight-up beam): bold, high-contrast.
+        const rot = (vx: number, vy: number, rad: number) => ({
+          x: vx * Math.cos(rad) - vy * Math.sin(rad),
+          y: vx * Math.sin(rad) + vy * Math.cos(rad),
+        })
+        const rayLen = R * 0.9
+        const headLen = R * 0.34
+        const headAng = Math.PI / 6
+        const drawArrows = (style: string, lw: number) => {
+          c.strokeStyle = style
+          c.lineWidth = lw
+          c.lineCap = 'round'
+          c.lineJoin = 'round'
+          for (const deg of exitsDeg) {
+            const d = rot(0, -1, (deg * Math.PI) / 180)
+            const ex = cx + d.x * rayLen
+            const ey = cy + d.y * rayLen
+            c.beginPath()
+            c.moveTo(cx, cy)
+            c.lineTo(ex, ey)
+            const back = rot(-d.x, -d.y, 0)
+            const l = rot(back.x, back.y, headAng)
+            const r = rot(back.x, back.y, -headAng)
+            c.moveTo(ex, ey)
+            c.lineTo(ex + l.x * headLen, ey + l.y * headLen)
+            c.moveTo(ex, ey)
+            c.lineTo(ex + r.x * headLen, ey + r.y * headLen)
+            c.stroke()
+          }
+        }
+        // Soft luminous halo behind the arrows so they separate from the body.
+        c.globalCompositeOperation = 'screen'
+        drawArrows('rgba(150,210,255,0.5)', Math.max(4, size * 0.11))
+        // Thick dark casing for contrast against the glassy body.
+        c.globalCompositeOperation = 'source-over'
+        drawArrows('rgba(6,16,30,0.92)', Math.max(3.5, size * 0.085))
+        // Bright white-cyan core stroke.
+        drawArrows('rgba(238,250,255,1)', Math.max(2, size * 0.05))
+        // Central hub the arrows emit from.
+        c.beginPath()
+        c.arc(cx, cy, Math.max(2, size * 0.06), 0, Math.PI * 2)
+        c.fillStyle = 'rgba(6,16,30,0.92)'
+        c.fill()
+        c.beginPath()
+        c.arc(cx, cy, Math.max(1.4, size * 0.038), 0, Math.PI * 2)
+        c.fillStyle = 'rgba(245,252,255,1)'
+        c.fill()
+      }
+
+      const fscale = Math.min(2, Math.max(1, s.view.dpr))
+      const FSEP = 2
+      type FSlot =
+        | { kind: 'mirror'; f: MirrorFeature; sx: number; sy: number; sw: number; sh: number }
+        | { kind: 'gem'; f: PrismFeature; sx: number; sy: number; sw: number; sh: number }
+      const fslots: FSlot[] = []
+      let fx = FSEP
+      let frowH = 0
+      let fatlasW = 1
+      const place = (sw: number, sh: number) => {
+        if (fx + sw + FSEP > 2048) {
+          fx = FSEP
+          fatlasW = Math.max(fatlasW, fx)
+        }
+        const slot = { sx: fx, sy: FSEP, sw, sh }
+        fx += sw + FSEP
+        frowH = Math.max(frowH, sh)
+        fatlasW = Math.max(fatlasW, fx)
+        return slot
+      }
+      for (const f of s.features) {
+        if (f.kind === 'mirror') {
+          const w = Math.max(8, Math.round(f.sizePx * 1.42 * fscale))
+          const h = Math.max(8, Math.round(f.sizePx * 0.78 * fscale))
+          const p = place(w, h)
+          fslots.push({ kind: 'mirror', f, ...p })
+        } else if (f.kind === 'prism') {
+          const sz = Math.max(8, Math.round(f.r * 2.0 * fscale))
+          const p = place(sz, sz)
+          fslots.push({ kind: 'gem', f, ...p })
+        }
+      }
+      if (fslots.length > 0) {
+        const fatlasH = FSEP + frowH + FSEP
+        const fac = getFeatAtlas(fatlasW, fatlasH)
+        if (fac && featAtlas) {
+          fac.setTransform(1, 0, 0, 1, 0, 0)
+          fac.clearRect(0, 0, fatlasW, fatlasH)
+          const glFeatures: GLFeature[] = []
+          for (const sl of fslots) {
+            fac.save()
+            fac.beginPath()
+            fac.rect(sl.sx, sl.sy, sl.sw, sl.sh)
+            fac.clip()
+            fac.translate(sl.sx, sl.sy)
+            if (sl.kind === 'mirror') {
+              bakeMirrorPanel(fac, sl.sw, sl.sh, sl.f.hp, sl.f.hpMax)
+            } else {
+              const ex = Array.isArray(sl.f.exitsDeg) ? sl.f.exitsDeg : [45, -45]
+              bakeGemTop(fac, sl.sw, ex, hueAt(sl.f.pos.x, sl.f.pos.y))
+            }
+            fac.restore()
+            const u0 = sl.sx / fatlasW
+            const v0 = sl.sy / fatlasH
+            const u1 = (sl.sx + sl.sw) / fatlasW
+            const v1 = (sl.sy + sl.sh) / fatlasH
+            if (sl.kind === 'mirror') {
+              const f = sl.f
+              const vx = f.pos.x
+              const vy = f.pos.y - s.dropAnimOffset
+              const sz = f.sizePx
+              glFeatures.push({
+                kind: 'mirror',
+                tl: { x: vx, y: vy },
+                tr: { x: vx + sz, y: vy },
+                br: { x: vx + sz, y: vy + sz },
+                bl: { x: vx, y: vy + sz },
+                orient: f.orient,
+                height: sz * PIECE_EXTRUDE,
+                cr: 0.46,
+                cg: 0.51,
+                cb: 0.6,
+                u0,
+                v0,
+                u1,
+                v1,
+              })
+            } else {
+              const f = sl.f
+              const cx = f.pos.x + f.cellSize * 0.5
+              const cy = f.pos.y - s.dropAnimOffset + f.cellSize * 0.5
+              glFeatures.push({
+                kind: 'gem',
+                cx,
+                cy,
+                radius: f.r,
+                height: f.cellSize * PIECE_EXTRUDE * 0.85,
+                cr: 0.32,
+                cg: 0.6,
+                cb: 0.86,
+                u0,
+                v0,
+                u1,
+                v1,
+              })
+            }
+          }
+
+          // Contact shadows under the features (single batched blur).
+          const sdpr = s.view.dpr
+          const sctx = getShadowCanvas(ctx.canvas.width, ctx.canvas.height)
+          if (sctx) {
+            sctx.setTransform(sdpr, 0, 0, sdpr, 0, 0)
+            sctx.clearRect(0, 0, s.view.width, s.view.height)
+            sctx.fillStyle = 'rgba(0,0,0,0.3)'
+            for (const sl of fslots) {
+              const f = sl.f
+              const fcx = f.pos.x + (f.localAabb.minX + f.localAabb.maxX) * 0.5
+              const fcy =
+                f.pos.y - s.dropAnimOffset + (f.localAabb.minY + f.localAabb.maxY) * 0.5
+              const pc = project(fcx, fcy)
+              const rr = sl.kind === 'gem' ? sl.f.r : sl.f.sizePx * 0.6
+              sctx.save()
+              sctx.translate(pc.x + 4 * pc.scale, pc.y + 8 * pc.scale)
+              sctx.scale(pc.scale, pc.scale)
+              sctx.beginPath()
+              sctx.ellipse(0, 0, rr, rr * 0.6, 0, 0, Math.PI * 2)
+              sctx.fill()
+              sctx.restore()
+            }
+            ctx.save()
+            ctx.setTransform(1, 0, 0, 1, 0, 0)
+            ctx.globalCompositeOperation = 'source-over'
+            ctx.filter = `blur(${(5 * sdpr).toFixed(2)}px)`
+            ctx.drawImage(shadowCanvas as HTMLCanvasElement, 0, 0)
+            ctx.filter = 'none'
+            ctx.restore()
+          }
+
+          const out = renderFeaturesGL(
+            featAtlas,
+            glFeatures,
+            {
+              cx: proj.cx,
+              strength: proj.strength,
+              nearWorldY: proj.nearWorldY,
+              horizonY: proj.horizonY,
+              span: proj.span,
+              pMin: proj.pMin,
+              pMax: proj.pMax,
+            },
+            s.view.width,
+            s.view.height,
+            s.view.dpr,
+          )
+          if (out) {
+            ctx.save()
+            ctx.globalCompositeOperation = 'source-over'
+            ctx.globalAlpha = 1
+            ctx.drawImage(out, 0, 0, s.view.width, s.view.height)
+            ctx.restore()
+            glFeaturesDrawn = true
+          }
+        }
+      }
+    }
+
     if (s.features.length > 0) {
       for (const f of s.features) {
+        if (glFeaturesDrawn && (f.kind === 'mirror' || f.kind === 'prism')) continue
         // Apply smooth drop animation offset
         const visualPos = { x: f.pos.x, y: f.pos.y - s.dropAnimOffset }
 
@@ -1736,15 +2050,15 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         } else {
           // Loose ember: a flickering hot cinder with a velocity-aligned tail. At
           // rest it twinkles like a coal; once the well hooks it the tail stretches
-          // into a bright streak racing inward (the bloom pass haloes the head).
+          // into a bright streak racing inward.
           const flick = 0.7 + 0.3 * Math.sin(tNow * (8 + (m.seed % 5)) + m.seed)
           const sp = project(m.x, m.y - s.dropAnimOffset)
           const z = sp.scale
           const a = (m.hooked ? 1 : 0.9) * flick
           const r = m.size * 0.85 * z + 0.9
           // LOD: far up the board a mote is only a few px; the halo/tail/twinkle
-          // are imperceptible there, so collapse to a single ember dot (the bloom
-          // pass still glows it). Keeps full detail for near motes.
+          // are imperceptible there, so collapse to a single ember dot.
+          // Keeps full detail for near motes.
           if (z < 0.32) {
             ctx.fillStyle = heat(mHue, 255, 205, 115, 85, 66, 0.95 * a)
             ctx.beginPath()
@@ -2428,25 +2742,6 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     }
   })
 
-  // Selective bloom post. Runs after the full frame (2D scene + GL pieces) is on
-  // the canvas, with the transform back at device pixels. A high threshold + soft
-  // knee means only the laser core, the well, weld/heat highlights, motes and the
-  // glossy piece rims bloom -- mid-tones are left untouched so it stays tasteful.
-  if (USE_BLOOM) {
-    const glow = renderBloom(canvas, {
-      threshold: 0.7,
-      knee: 0.22,
-      intensity: 0.78,
-      iterations: 2,
-    })
-    if (glow) {
-      ctx.save()
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.globalCompositeOperation = 'lighter'
-      ctx.drawImage(glow, 0, 0)
-      ctx.restore()
-    }
-  }
 }
 
 

@@ -341,7 +341,7 @@ export const stepSim = (s: RunState, dt: number) => {
     s.depth += 1
     const fastStepCells = s.depth % 2 === 0 ? 2 : 1
     for (const b of s.blocks) {
-      if (b.kind === 'fast' || b.kind === 'shatter') {
+      if (b.kind === 'fast') {
         b.pos.y += b.cellSize * fastStepCells
         // Extra visual catch-up only for the cells beyond the global 1-cell drop
         // animation (so a 2-cell beat eases over two cells, a 1-cell beat reads
