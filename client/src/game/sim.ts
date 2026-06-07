@@ -52,8 +52,8 @@ const MOTE_PULL_ACCEL = 1500 // px/s^2 toward the well at the core, eased by dis
 const MOTE_FLY_DUR = 0.5 // seconds for a captured mote to reach the gauge
 const MAX_MOTES = 420
 // Mote burst sizing: total heat is fixed by the kill; more motes = finer grain.
-const MOTE_MIN_COUNT = 3
-const MOTE_MAX_COUNT = 16
+const MOTE_MIN_COUNT = 2
+const MOTE_MAX_COUNT = 8
 const OVERDRIVE_DURATION = 5.0 // seconds of surge once heat tops out
 const OVERDRIVE_DPS_MULT = 1.7
 const OVERDRIVE_BONUS_PIERCES = 3
@@ -128,9 +128,11 @@ const updateWellPuck = (s: RunState, dt: number) => {
 // with the well is what actually fills the gauge.
 const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: number) => {
   const cells = b.cells.length
+  // Half as many motes as before -> each carries double the heat (perHeat scales
+  // automatically since the budget is fixed and just divided across the count).
   const count = Math.max(
     MOTE_MIN_COUNT,
-    Math.min(MOTE_MAX_COUNT, Math.round(2 + b.xpValue * 1.1 + cells * 0.7)),
+    Math.min(MOTE_MAX_COUNT, Math.round(1 + b.xpValue * 0.55 + cells * 0.35)),
   )
   const perHeat = heatBudget / count
   const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
@@ -145,13 +147,15 @@ const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: nu
     const dx = px - cx
     const dy = py - cy
     const dl = Math.hypot(dx, dy) || 1
-    const speed = 60 + Math.random() * 140
+    // Gentle outward pop so motes stay clustered over the block's footprint
+    // (heavy drag settles them quickly) instead of spraying across the board.
+    const speed = 12 + Math.random() * 26
     s.heatMotes.push({
       id: s.nextMoteId++,
       x: px,
       y: py,
-      vx: (dx / dl) * speed + (Math.random() * 2 - 1) * 60,
-      vy: (dy / dl) * speed + (Math.random() * 2 - 1) * 60 - 40,
+      vx: (dx / dl) * speed + (Math.random() * 2 - 1) * 16,
+      vy: (dy / dl) * speed + (Math.random() * 2 - 1) * 16 - 8,
       age: 0,
       life: MOTE_LIFE_MIN + Math.random() * (MOTE_LIFE_MAX - MOTE_LIFE_MIN),
       heat: perHeat,
@@ -159,6 +163,7 @@ const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: nu
       size: 1.6 + Math.random() * 1.8,
       seed: Math.random() * 1000,
       collecting: false,
+      hooked: false,
       ct: 0,
       cdur: MOTE_FLY_DUR,
       cfx: px,
@@ -353,7 +358,9 @@ export const stepSim = (s: RunState, dt: number) => {
     // share the same drop animation), so collected debris drifts toward the
     // player in lockstep instead of hanging in place.
     for (const m of s.heatMotes) {
-      if (!m.collecting) m.y += cellSize
+      // Hooked motes are flying to the well under gravity, so they ignore the
+      // board's descent (otherwise the drop drags them off their homing path).
+      if (!m.collecting && !m.hooked) m.y += cellSize
     }
 
     // Start the visual catch-up animation (offset counts back down to 0).
@@ -449,9 +456,9 @@ export const stepSim = (s: RunState, dt: number) => {
         continue
       }
       m.age += dt
-      // Heavy drag settles the initial burst quickly; sustained descent comes from
-      // the per-step board drop above, so motes track the grid like the pieces.
-      const k = Math.pow(0.1, dt)
+      // Heavy drag settles the initial burst; lighter drag once hooked so the
+      // mote keeps building speed toward the well instead of stalling out.
+      const k = Math.pow(m.hooked ? 0.45 : 0.1, dt)
       m.vx *= k
       m.vy *= k
       // Well attraction (generous). Active only once the player has placed it.
@@ -467,9 +474,13 @@ export const stepSim = (s: RunState, dt: number) => {
           m.cfy = m.y - s.dropAnimOffset
           continue
         }
-        if (dist < MOTE_PULL_R) {
-          const f = 1 - dist / MOTE_PULL_R
-          const a = (MOTE_PULL_ACCEL * f * f * dt) / (dist || 1)
+        // Once a mote enters the pull radius it's hooked for good and homes in
+        // regardless of how far the well later drifts.
+        if (dist < MOTE_PULL_R) m.hooked = true
+        if (m.hooked) {
+          // Constant-strength pull toward the well (direction only), so the mote
+          // accelerates in no matter the distance.
+          const a = (MOTE_PULL_ACCEL * dt) / (dist || 1)
           m.vx += dx * a
           m.vy += dy * a
         }

@@ -86,6 +86,70 @@ export const drawRoundedPolyomino = (
   ctx.closePath()
 }
 
+// Sample the rounded polyomino OUTLINE into a closed list of points (local px,
+// i.e. cell coords * cellSize). This is the exact silhouette drawRoundedPolyomino
+// fills, so the WebGL extrusion can build side walls that line up perfectly under
+// the textured top face (no square corners peeking past the rounded art).
+export const roundedOutlinePoints = (
+  loop: Vec2[],
+  cellSize: number,
+  rPx: number,
+  arcSegs = 4,
+): Vec2[] => {
+  if (loop.length < 3) return loop.map((p) => ({ x: p.x * cellSize, y: p.y * cellSize }))
+
+  const pts: Vec2[] = loop.map((p) => ({ x: p.x * cellSize, y: p.y * cellSize }))
+  const first = pts[0]!
+  const last = pts[pts.length - 1]!
+  if (first.x !== last.x || first.y !== last.y) pts.push({ ...first })
+
+  const n = pts.length
+  const m = Math.max(0, n - 1)
+  const r = clamp(rPx, 0, cellSize * 0.5 - 0.6)
+
+  const dir = (a: Vec2, b: Vec2): Vec2 => {
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const l = Math.hypot(dx, dy) || 1
+    return { x: dx / l, y: dy / l }
+  }
+  const cross = (a: Vec2, b: Vec2) => a.x * b.y - a.y * b.x
+  const isConvex = (i: number) => {
+    if (m < 3) return false
+    const prev = pts[(i - 1 + m) % m]!
+    const cur = pts[i % m]!
+    const next = pts[(i + 1) % m]!
+    return cross(dir(prev, cur), dir(cur, next)) > 0.5
+  }
+
+  const out: Vec2[] = []
+  for (let i = 0; i < m; i++) {
+    const a = pts[i]!
+    const b = pts[i + 1]!
+    const d = dir(a, b)
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+    const cutB = isConvex(i + 1) ? Math.min(r, segLen * 0.5 - 0.6) : 0
+    // Straight run up to where the next corner's fillet begins.
+    out.push({ x: b.x - d.x * cutB, y: b.y - d.y * cutB })
+    if (isConvex(i + 1)) {
+      const inD = d
+      const outD = dir(b, pts[(i + 2) % m]!)
+      const center = { x: b.x - inD.x * r + outD.x * r, y: b.y - inD.y * r + outD.y * r }
+      const a0 = Math.atan2(b.y - inD.y * r - center.y, b.x - inD.x * r - center.x)
+      let a1 = Math.atan2(b.y + outD.y * r - center.y, b.x + outD.x * r - center.x)
+      // Keep the short (convex) arc direction consistent with the canvas arc.
+      while (a1 - a0 > Math.PI) a1 -= Math.PI * 2
+      while (a1 - a0 < -Math.PI) a1 += Math.PI * 2
+      for (let k = 1; k <= arcSegs; k++) {
+        const t = k / arcSegs
+        const ang = a0 + (a1 - a0) * t
+        out.push({ x: center.x + Math.cos(ang) * r, y: center.y + Math.sin(ang) * r })
+      }
+    }
+  }
+  return out
+}
+
 // "Pressed pill" depth: clipped highlight/shadow/vignette/sheen on the current
 // path's face. Call after the polyomino path is set (it clips to it).
 export const applyDomedDepth = (
@@ -301,10 +365,13 @@ export const drawBlockKindOverlay = (
     ctx.globalCompositeOperation = 'screen'
     ctx.fillStyle = `rgba(255,120,40,${(0.16 + 0.12 * flick).toFixed(3)})`
     ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
-    ctx.strokeStyle = `rgba(255,180,90,${(0.65 + 0.3 * flick).toFixed(3)})`
-    ctx.shadowColor = 'rgba(255,140,60,0.85)'
-    ctx.shadowBlur = 6
-    ctx.lineWidth = 1.6
+    // Fracture seams between cells, drawn bold so the "shatters into pieces"
+    // read is obvious at a glance and from a distance.
+    ctx.strokeStyle = `rgba(255,214,150,${(0.85 + 0.15 * flick).toFixed(3)})`
+    ctx.shadowColor = 'rgba(255,150,70,0.95)'
+    ctx.shadowBlur = 9
+    ctx.lineWidth = Math.max(2.6, cellSize * 0.12)
+    ctx.lineCap = 'round'
     const cs = cellSize
     const inset = 1.5
     for (const c of cells) {
@@ -312,7 +379,18 @@ export const drawBlockKindOverlay = (
       const ry = ay + c.y * cs + inset
       ctx.strokeRect(rx, ry, cs - inset * 2, cs - inset * 2)
     }
+    // Dark cores down the centre of each seam give the bright strokes a crisp
+    // edge so they stay legible over light bodies.
     ctx.shadowBlur = 0
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.strokeStyle = 'rgba(90,30,0,0.45)'
+    ctx.lineWidth = Math.max(1, cellSize * 0.05)
+    for (const c of cells) {
+      const rx = ax + c.x * cs + inset
+      const ry = ay + c.y * cs + inset
+      ctx.strokeRect(rx, ry, cs - inset * 2, cs - inset * 2)
+    }
+    ctx.globalCompositeOperation = 'screen'
     ctx.restore()
     ctx.globalCompositeOperation = 'screen'
     ctx.strokeStyle = 'rgba(255,190,110,0.95)'

@@ -24,6 +24,13 @@ export type Projection = {
   horizonY: number
   nearScreenY: number
   nearWorldY: number
+  // Raw homography constants, exposed so the WebGL piece pass can reproduce
+  // project() exactly in a vertex shader.
+  cx: number
+  span: number
+  strength: number
+  pMin: number
+  pMax: number
 }
 
 // --- Tunables -------------------------------------------------------------
@@ -82,7 +89,19 @@ export const makeProjection = (view: ViewState, layout: ArenaLayout): Projection
     return { x, y }
   }
 
-  return { project, unproject, scaleAt, horizonY, nearScreenY, nearWorldY }
+  return {
+    project,
+    unproject,
+    scaleAt,
+    horizonY,
+    nearScreenY,
+    nearWorldY,
+    cx,
+    span,
+    strength,
+    pMin: P_MIN,
+    pMax: P_MAX,
+  }
 }
 
 // World Y that maps to the very top edge of the visible screen (screenY == 0).

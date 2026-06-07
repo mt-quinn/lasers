@@ -1,12 +1,39 @@
 import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from '../game/runState'
-import type { RunState } from '../game/runState'
+import type { RunState, BlockEntity } from '../game/runState'
 import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
 import { getArenaLayout } from '../game/layout'
 import { makeProjection } from './projection'
 import { renderLens } from './lensGL'
+import { renderPiecesGL, type GLPiece } from './piecesGL'
+import { renderBloom } from './bloom'
+
+// Render pieces as extruded 3D solids via WebGL (with a 2D-billboard fallback if
+// WebGL is unavailable). Toggle off to compare against the legacy 2D path.
+const USE_GL_PIECES = true
+
+// Selective bloom post-process over the final composite.
+const USE_BLOOM = true
+
+// Reusable atlas for the WebGL piece pass: each piece's flat 2D artwork is
+// rendered into a packed slot here once per frame, then sampled as a texture on
+// its 3D top face.
+let pieceAtlas: HTMLCanvasElement | null = null
+let pieceAtlasCtx: CanvasRenderingContext2D | null = null
+const getPieceAtlas = (w: number, h: number) => {
+  if (!pieceAtlas) {
+    pieceAtlas = document.createElement('canvas')
+    pieceAtlasCtx = pieceAtlas.getContext('2d')
+  }
+  if (pieceAtlas.width !== w || pieceAtlas.height !== h) {
+    pieceAtlas.width = w
+    pieceAtlas.height = h
+  }
+  return pieceAtlasCtx
+}
 import {
   drawRoundedPolyomino,
+  roundedOutlinePoints,
   applyDomedDepth,
   drawBlockKindOverlay,
   drawMirrorShape,
@@ -509,15 +536,369 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
+    // Draw a piece's full flat face (body fill + domed depth + rim + outline +
+    // routing-kind overlay + HP drain gauge) at world top-left (posX,posY) with
+    // NO perspective applied. `hueCx/hueCy` is the world-space center used to key
+    // the rainbow hue (kept separate from the draw anchor so an off-screen atlas
+    // render still matches the piece's in-scene color). Single source of truth,
+    // shared by the live 2D path and the WebGL atlas.
+    const drawPieceBody = (
+      ctx: CanvasRenderingContext2D,
+      b: BlockEntity,
+      posX: number,
+      posY: number,
+      hueCx: number,
+      hueCy: number,
+    ) => {
+      const hpPct = clamp(b.hp / b.hpMax, 0, 1)
+      const glow = 0.6
+      const pos = { x: posX, y: posY }
+      const pieceHue = hueAt(hueCx, hueCy)
+      let fillBase: string
+      let lum: number
+      if (b.isGold) {
+        fillBase = '#ffd700'
+        lum = relativeLuma(fillBase)
+      } else if (mi > 0) {
+        const mc = hslToRgb(pieceHue, 96, 62)
+        fillBase = `rgb(${mc.r} ${mc.g} ${mc.b})`
+        lum = (0.2126 * mc.r + 0.7152 * mc.g + 0.0722 * mc.b) / 255
+      } else {
+        fillBase = healthFill(1)
+        lum = relativeLuma(fillBase)
+      }
+
+      if (b.isGold) {
+        ctx.shadowColor = `rgba(255,215,0,${0.3 * glow})`
+        ctx.shadowBlur = 22 * glow
+      } else if (mi > 0) {
+        ctx.shadowColor = hsl(pieceHue, 90, 60, clamp(0.12 * glow + mPulse * 0.1, 0, 0.5))
+        ctx.shadowBlur = 16 * glow + mEnergy * 12
+      } else {
+        ctx.shadowColor = `rgba(255,120,210,${0.14 * glow})`
+        ctx.shadowBlur = 18 * glow
+      }
+
+      drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
+      ctx.fillStyle = fillBase
+      ctx.fill()
+
+      const ax = pos.x + b.localAabb.minX
+      const ay = pos.y + b.localAabb.minY
+      const w = b.localAabb.maxX - b.localAabb.minX
+      const h = b.localAabb.maxY - b.localAabb.minY
+
+      applyDomedDepth(ctx, ax, ay, w, h, 1.0)
+      if (b.isGold) {
+        ctx.save()
+        ctx.clip()
+        ctx.globalCompositeOperation = 'screen'
+        const shine = ctx.createLinearGradient(ax, ay, ax + w, ay + h * 0.5)
+        shine.addColorStop(0, 'rgba(255,255,200,0.4)')
+        shine.addColorStop(0.5, 'rgba(255,255,200,0.25)')
+        shine.addColorStop(1, 'rgba(255,255,200,0)')
+        ctx.fillStyle = shine
+        ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+        ctx.restore()
+      }
+
+      // Player-facing rim light (clipped to the piece shape).
+      ctx.save()
+      drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
+      ctx.clip()
+      ctx.globalCompositeOperation = 'screen'
+      const rim = ctx.createLinearGradient(0, ay + h * 0.58, 0, ay + h)
+      rim.addColorStop(0, 'rgba(255,255,255,0)')
+      rim.addColorStop(1, mi > 0 ? hsl(pieceHue, 85, 82, 0.24) : 'rgba(255,224,255,0.2)')
+      ctx.fillStyle = rim
+      ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
+      ctx.restore()
+
+      drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
+      ctx.lineWidth = 2
+      if (b.isGold) {
+        ctx.strokeStyle = 'rgba(184,134,11,0.85)'
+      } else {
+        ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
+      }
+      ctx.stroke()
+
+      if (!b.isGold && b.kind !== 'normal') {
+        drawBlockKindOverlay(
+          ctx,
+          b.kind,
+          {
+            ax,
+            ay,
+            w,
+            h,
+            cellSize: b.cellSize,
+            cornerRadius: b.cornerRadius,
+            loop: b.loop,
+            pos,
+            cells: b.cells,
+          },
+          { tNow, shieldFlashSec: b.shieldFlashSec, blockId: b.id },
+        )
+      }
+
+      // --- Health drain gauge (single source of the HP read) ---------------
+      if (hpPct < 0.999) {
+        const gax = ax
+        const gay = ay
+        const gw = w
+        const gh = h
+        const tier = healthTier(hpPct)
+        const vnx = 0
+        const vny = b.kind === 'armored' ? -1 : 1
+        const x0 = gax - 2
+        const y0 = gay - 2
+        const x1 = gax + gw + 2
+        const y1 = gay + gh + 2
+        let hollow: { x: number; y: number; w: number; h: number }
+        let intact: { x: number; y: number; w: number; h: number }
+        let cutAx: number
+        let cutAy: number
+        let cutBx: number
+        let cutBy: number
+        if (vnx < 0) {
+          const xc = gax + gw * (1 - hpPct)
+          hollow = { x: x0, y: y0, w: xc - x0, h: y1 - y0 }
+          intact = { x: xc, y: y0, w: x1 - xc, h: y1 - y0 }
+          cutAx = xc
+          cutAy = y0
+          cutBx = xc
+          cutBy = y1
+        } else if (vnx > 0) {
+          const xc = gax + gw * hpPct
+          hollow = { x: xc, y: y0, w: x1 - xc, h: y1 - y0 }
+          intact = { x: x0, y: y0, w: xc - x0, h: y1 - y0 }
+          cutAx = xc
+          cutAy = y0
+          cutBx = xc
+          cutBy = y1
+        } else if (vny < 0) {
+          const yc = gay + gh * (1 - hpPct)
+          hollow = { x: x0, y: y0, w: x1 - x0, h: yc - y0 }
+          intact = { x: x0, y: yc, w: x1 - x0, h: y1 - yc }
+          cutAx = x0
+          cutAy = yc
+          cutBx = x1
+          cutBy = yc
+        } else {
+          const yc = gay + gh * hpPct
+          hollow = { x: x0, y: yc, w: x1 - x0, h: y1 - yc }
+          intact = { x: x0, y: y0, w: x1 - x0, h: yc - y0 }
+          cutAx = x0
+          cutAy = yc
+          cutBx = x1
+          cutBy = yc
+        }
+
+        drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
+        ctx.save()
+        ctx.clip()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = 'rgba(6,5,12,0.62)'
+        ctx.fillRect(hollow.x, hollow.y, hollow.w, hollow.h)
+        if (tier.washFill) {
+          ctx.fillStyle = tier.washFill
+          ctx.fillRect(intact.x, intact.y, intact.w, intact.h)
+        }
+        if (tier.lineStroke) {
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = tier.lineStroke
+          ctx.shadowColor = tier.lineStroke
+          ctx.shadowBlur = tier.lineGlow
+          ctx.lineWidth = 2.5
+          ctx.beginPath()
+          ctx.moveTo(cutAx, cutAy)
+          ctx.lineTo(cutBx, cutBy)
+          ctx.stroke()
+          ctx.shadowBlur = 0
+        }
+        ctx.restore()
+      }
+    }
+
     // Blocks (base render; the drain-gauge HP overlay is drawn per piece below).
     // Depth-sort far -> near so nearer (lower) pieces overlap farther ones.
     const sortedBlocks = [...s.blocks].sort((a, b) => a.pos.y - b.pos.y)
-    for (const b of sortedBlocks) {
-      const hpPct = clamp(b.hp / b.hpMax, 0, 1)
-      // Base bloom is HP-independent now; the drain-gauge overlay below owns the
-      // health read (proportion + tier color), so the body just shows identity.
-      const glow = 0.6
 
+    // Identity color (0..1) for a piece, mirroring drawPieceBody's fillBase.
+    const parseRgbStr = (str: string) => {
+      const m = str.match(/rgb\((\d+)\s+(\d+)\s+(\d+)\)/)
+      return m ? { r: +m[1]!, g: +m[2]!, b: +m[3]! } : { r: 255, g: 255, b: 255 }
+    }
+    const glPieceColor = (b: BlockEntity, hx: number, hy: number) => {
+      if (b.isGold) return { r: 1, g: 215 / 255, b: 0 }
+      // Armored pieces have an invulnerable reflective underside; render the side
+      // walls (the bottom/front face the player sees) as steel so the armored
+      // look wraps down the body instead of stopping at the top plate.
+      if (b.kind === 'armored') return { r: 0.42, g: 0.47, b: 0.57 }
+      if (mi > 0) {
+        const c = hslToRgb(hueAt(hx, hy), 96, 62)
+        return { r: c.r / 255, g: c.g / 255, b: c.b / 255 }
+      }
+      const c = parseRgbStr(healthFill(1))
+      return { r: c.r / 255, g: c.g / 255, b: c.b / 255 }
+    }
+
+    // WebGL 3D pieces: render each piece's flat 2D art into a packed atlas, then
+    // map it onto an extruded, depth-sorted 3D solid. Falls back to the 2D
+    // billboard loop below if WebGL is unavailable.
+    const renderBlocksGL = (blocks: BlockEntity[]): boolean => {
+      const scale = Math.min(2, Math.max(1, s.view.dpr))
+      const M = 22 // glow margin around each piece (world px)
+      const SEP = 2 // atlas px gap so neighbours don't bleed under bilinear
+      const AW_MAX = 2048
+      type Slot = {
+        b: BlockEntity
+        bcx: number
+        bcy: number
+        sx: number
+        sy: number
+        sw: number
+        sh: number
+        minX: number
+        minY: number
+        cw: number
+        ch: number
+      }
+      const slots: Slot[] = []
+      let curX = SEP
+      let curY = SEP
+      let rowH = 0
+      let atlasW = 1
+      for (const b of blocks) {
+        const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
+        const minX = b.localAabb.minX
+        const minY = b.localAabb.minY
+        const w = b.localAabb.maxX - minX
+        const h = b.localAabb.maxY - minY
+        const cw = w + 2 * M
+        const ch = h + 2 * M
+        const sw = Math.ceil(cw * scale)
+        const sh = Math.ceil(ch * scale)
+        if (curX + sw + SEP > AW_MAX) {
+          curX = SEP
+          curY += rowH + SEP
+          rowH = 0
+        }
+        const bcx = b.pos.x + (minX + b.localAabb.maxX) * 0.5
+        const bcy = visualY + (minY + b.localAabb.maxY) * 0.5
+        slots.push({ b, bcx, bcy, sx: curX, sy: curY, sw, sh, minX, minY, cw, ch })
+        curX += sw + SEP
+        rowH = Math.max(rowH, sh)
+        atlasW = Math.max(atlasW, curX)
+      }
+      const atlasH = curY + rowH + SEP
+      const actx = getPieceAtlas(atlasW, atlasH)
+      if (!actx || !pieceAtlas) return false
+      actx.setTransform(1, 0, 0, 1, 0, 0)
+      actx.clearRect(0, 0, atlasW, atlasH)
+
+      const glPieces: GLPiece[] = []
+      for (const sl of slots) {
+        const { b, bcx, bcy } = sl
+        actx.save()
+        actx.setTransform(scale, 0, 0, scale, sl.sx, sl.sy)
+        drawPieceBody(actx, b, M - sl.minX, M - sl.minY, bcx, bcy)
+        actx.restore()
+
+        const visualX = b.pos.x
+        const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
+        const col = glPieceColor(b, bcx, bcy)
+        // Walls follow the rounded silhouette (matching the top art), nudged
+        // slightly inward toward the piece center so they tuck under the top face
+        // instead of poking out past the rounded corners.
+        const outline = roundedOutlinePoints(b.loop, b.cellSize, b.cornerRadius)
+        let ocx = 0
+        let ocy = 0
+        for (const p of outline) {
+          ocx += p.x
+          ocy += p.y
+        }
+        ocx /= outline.length || 1
+        ocy /= outline.length || 1
+        const INSET = 1.5
+        const loop = outline.map((p) => {
+          const dx = ocx - p.x
+          const dy = ocy - p.y
+          const dl = Math.hypot(dx, dy) || 1
+          return {
+            x: visualX + p.x + (dx / dl) * INSET,
+            y: visualY + p.y + (dy / dl) * INSET,
+          }
+        })
+        glPieces.push({
+          loop,
+          qx: visualX + sl.minX - M,
+          qy: visualY + sl.minY - M,
+          qw: sl.cw,
+          qh: sl.ch,
+          u0: sl.sx / atlasW,
+          v0: sl.sy / atlasH,
+          u1: (sl.sx + sl.sw) / atlasW,
+          v1: (sl.sy + sl.sh) / atlasH,
+          cr: col.r,
+          cg: col.g,
+          cb: col.b,
+          height: b.cellSize * 0.95,
+        })
+      }
+
+      // Contact shadows on the grid (drawn before the GL pieces composite over
+      // them) so the slabs feel placed in the field rather than floating.
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.filter = 'blur(4px)'
+      for (const sl of slots) {
+        const b = sl.b
+        const visualX = b.pos.x
+        const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
+        const pc = project(sl.bcx, sl.bcy)
+        ctx.save()
+        ctx.translate(pc.x + 5 * pc.scale, pc.y + 9 * pc.scale)
+        ctx.scale(pc.scale, pc.scale)
+        ctx.translate(-sl.bcx, -sl.bcy)
+        drawRoundedPolyomino(ctx, b.loop, { x: visualX, y: visualY }, b.cellSize, b.cornerRadius)
+        ctx.fillStyle = 'rgba(0,0,0,0.34)'
+        ctx.fill()
+        ctx.restore()
+      }
+      ctx.filter = 'none'
+      ctx.restore()
+
+      const out = renderPiecesGL(
+        pieceAtlas,
+        glPieces,
+        {
+          cx: proj.cx,
+          strength: proj.strength,
+          nearWorldY: proj.nearWorldY,
+          horizonY: proj.horizonY,
+          span: proj.span,
+          pMin: proj.pMin,
+          pMax: proj.pMax,
+        },
+        s.view.width,
+        s.view.height,
+        s.view.dpr,
+      )
+      if (!out) return false
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
+      ctx.drawImage(out, 0, 0, s.view.width, s.view.height)
+      ctx.restore()
+      return true
+    }
+
+    const glPiecesDrawn =
+      USE_GL_PIECES && sortedBlocks.length > 0 ? renderBlocksGL(sortedBlocks) : false
+
+    for (const b of glPiecesDrawn ? [] : sortedBlocks) {
       // Apply smooth drop animation offset (plus the per-block extra so fast
       // double-steppers ease instead of snapping).
       const visualPos = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset - b.dropAnimExtra }
@@ -542,231 +923,10 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.translate(-bcx, -bcy)
       }
 
-      // Color: the body is now a pure identity color (rainbow hue / gold). HP no
-      // longer rides saturation here — the drain-gauge overlay further down is the
-      // single source of the health read, so a damaged piece stays vivid until the
-      // gauge erodes/tints it.
-      const pieceHue = hueAt(bcx, bcy)
-      let fillBase: string
-      let lum: number
-      if (b.isGold) {
-        fillBase = '#ffd700'
-        lum = relativeLuma(fillBase)
-      } else if (mi > 0) {
-        // Music on: full-vividness rainbow hue keyed off screen position.
-        const mc = hslToRgb(pieceHue, 96, 62)
-        fillBase = `rgb(${mc.r} ${mc.g} ${mc.b})`
-        lum = (0.2126 * mc.r + 0.7152 * mc.g + 0.0722 * mc.b) / 255
-      } else {
-        // Music off: a fixed "full health" color from the original palette.
-        fillBase = healthFill(1)
-        lum = relativeLuma(fillBase)
-      }
-
-      if (b.isGold) {
-        // Gold blocks have a golden glow
-        ctx.shadowColor = `rgba(255,215,0,${0.3 * glow})`
-        ctx.shadowBlur = 22 * glow
-      } else if (mi > 0) {
-        // Rainbow rim that breathes with sustained energy (no beat flash).
-        ctx.shadowColor = hsl(pieceHue, 90, 60, clamp(0.12 * glow + mPulse * 0.1, 0, 0.5))
-        ctx.shadowBlur = 16 * glow + mEnergy * 12
-      } else {
-        ctx.shadowColor = `rgba(255,120,210,${0.14 * glow})`
-        ctx.shadowBlur = 18 * glow
-      }
-
-      drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
-
-      // Solid fill (health gradient is applied as a per-piece color, not as an internal gradient).
-      ctx.fillStyle = fillBase
-      ctx.fill()
-
-      // Tactile depth: make blocks read as slightly domed/protruding.
-      {
-        const ax = visualPos.x + b.localAabb.minX
-        const ay = visualPos.y + b.localAabb.minY
-        const w = b.localAabb.maxX - b.localAabb.minX
-        const h = b.localAabb.maxY - b.localAabb.minY
-        // Strong but still “face-only” so it reads like a pressed, domed pill.
-        applyDomedDepth(ctx, ax, ay, w, h, 1.0)
-        
-        // Add extra metallic shine for gold blocks
-        if (b.isGold) {
-          ctx.save()
-          ctx.clip()
-          ctx.globalCompositeOperation = 'screen'
-          const shine = ctx.createLinearGradient(ax, ay, ax + w, ay + h * 0.5)
-          shine.addColorStop(0, 'rgba(255,255,200,0.4)')
-          shine.addColorStop(0.5, 'rgba(255,255,200,0.25)')
-          shine.addColorStop(1, 'rgba(255,255,200,0)')
-          ctx.fillStyle = shine
-          ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
-          ctx.restore()
-        }
-      }
-
-      // Player-facing rim light + low-HP fracture (clipped to the piece shape).
-      {
-        const ax = visualPos.x + b.localAabb.minX
-        const ay = visualPos.y + b.localAabb.minY
-        const w = b.localAabb.maxX - b.localAabb.minX
-        const h = b.localAabb.maxY - b.localAabb.minY
-
-        // Rim light along the bottom (player-facing) edge: pieces catch the glow
-        // rising up the shaft, giving them a lit, sculpted edge.
-        ctx.save()
-        ctx.clip()
-        ctx.globalCompositeOperation = 'screen'
-        const rim = ctx.createLinearGradient(0, ay + h * 0.58, 0, ay + h)
-        rim.addColorStop(0, 'rgba(255,255,255,0)')
-        rim.addColorStop(1, mi > 0 ? hsl(pieceHue, 85, 82, 0.24) : 'rgba(255,224,255,0.2)')
-        ctx.fillStyle = rim
-        ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
-        ctx.restore()
-      }
-
-      ctx.lineWidth = 2
-      if (b.isGold) {
-        ctx.strokeStyle = 'rgba(184,134,11,0.85)'
-      } else {
-        ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
-      }
-      ctx.stroke()
-
-      // Routing-kind overlays so the player can read fast / armored / chrome at a
-      // glance (drawn over the standard body, inside the same perspective xform).
-      if (!b.isGold && b.kind !== 'normal') {
-        const ax = visualPos.x + b.localAabb.minX
-        const ay = visualPos.y + b.localAabb.minY
-        const w = b.localAabb.maxX - b.localAabb.minX
-        const h = b.localAabb.maxY - b.localAabb.minY
-        // Routing-kind overlay (fast / armored / chrome / shatter). Shared with
-        // the pause-menu legend so the key shows the real in-game appearance.
-        drawBlockKindOverlay(
-          ctx,
-          b.kind,
-          {
-            ax,
-            ay,
-            w,
-            h,
-            cellSize: b.cellSize,
-            cornerRadius: b.cornerRadius,
-            loop: b.loop,
-            pos: visualPos,
-            cells: b.cells,
-          },
-          { tNow, shieldFlashSec: b.shieldFlashSec, blockId: b.id },
-        )
-      }
-
-      // --- Health drain gauge (single source of the HP read) ---------------
-      // The intact (bright) fraction of the silhouette equals hp/hpMax: a dark
-      // "spent" region eats inward from the face the beam can damage, and the
-      // intact body recedes away from it. A tier color washes the intact region
-      // and a glowing molten line marks the cut, so even a tiny far-away piece
-      // reads its danger by color + how much of it has gone dark. Composed over
-      // the finished body so it works for every kind (normal / gold / armored /
-      // chrome / fast). A truly-full piece (hpPct ~ 1) shows nothing.
-      if (hpPct < 0.999) {
-        const gax = visualPos.x + b.localAabb.minX
-        const gay = visualPos.y + b.localAabb.minY
-        const gw = b.localAabb.maxX - b.localAabb.minX
-        const gh = b.localAabb.maxY - b.localAabb.minY
-        const tier = healthTier(hpPct)
-
-        // Erosion direction: the hollow grows inward from the damageable side.
-        // Most pieces erode from the bottom (the upward beam's impact side).
-        // Armored pieces have an armored UNDERSIDE, so they erode from the TOP
-        // instead — the body melts down toward the armored base, which is the
-        // last thing standing (a clean read of "the bottom is the tough part").
-        const vnx = 0
-        const vny = b.kind === 'armored' ? -1 : 1
-
-        // Outward-padded bbox (overdraw is safe — everything is clipped to the
-        // silhouette). Split it into hollow + intact rects along the erosion axis
-        // and place the cut line between them.
-        const x0 = gax - 2
-        const y0 = gay - 2
-        const x1 = gax + gw + 2
-        const y1 = gay + gh + 2
-        let hollow: { x: number; y: number; w: number; h: number }
-        let intact: { x: number; y: number; w: number; h: number }
-        let cutAx: number
-        let cutAy: number
-        let cutBx: number
-        let cutBy: number
-        if (vnx < 0) {
-          // Weak face = left: hollow eats from the left, intact kept on the right.
-          const xc = gax + gw * (1 - hpPct)
-          hollow = { x: x0, y: y0, w: xc - x0, h: y1 - y0 }
-          intact = { x: xc, y: y0, w: x1 - xc, h: y1 - y0 }
-          cutAx = xc
-          cutAy = y0
-          cutBx = xc
-          cutBy = y1
-        } else if (vnx > 0) {
-          // Weak face = right: hollow eats from the right, intact kept on the left.
-          const xc = gax + gw * hpPct
-          hollow = { x: xc, y: y0, w: x1 - xc, h: y1 - y0 }
-          intact = { x: x0, y: y0, w: xc - x0, h: y1 - y0 }
-          cutAx = xc
-          cutAy = y0
-          cutBx = xc
-          cutBy = y1
-        } else if (vny < 0) {
-          // Weak face = top: hollow eats from the top, intact kept on the bottom.
-          const yc = gay + gh * (1 - hpPct)
-          hollow = { x: x0, y: y0, w: x1 - x0, h: yc - y0 }
-          intact = { x: x0, y: yc, w: x1 - x0, h: y1 - yc }
-          cutAx = x0
-          cutAy = yc
-          cutBx = x1
-          cutBy = yc
-        } else {
-          // Weak face = bottom (default): hollow eats from the bottom, intact top.
-          const yc = gay + gh * hpPct
-          hollow = { x: x0, y: yc, w: x1 - x0, h: y1 - yc }
-          intact = { x: x0, y: y0, w: x1 - x0, h: yc - y0 }
-          cutAx = x0
-          cutAy = yc
-          cutBx = x1
-          cutBy = yc
-        }
-
-        drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
-        ctx.save()
-        ctx.clip()
-
-        // Spent/hollow region: dim whatever was underneath regardless of kind, so
-        // the lit remainder pops as the health read.
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.fillStyle = 'rgba(6,5,12,0.62)'
-        ctx.fillRect(hollow.x, hollow.y, hollow.w, hollow.h)
-
-        // Tier wash over the intact region (HURT / CRITICAL only).
-        if (tier.washFill) {
-          ctx.fillStyle = tier.washFill
-          ctx.fillRect(intact.x, intact.y, intact.w, intact.h)
-        }
-
-        // Molten cut line at the fill level (HEALTHY and below).
-        if (tier.lineStroke) {
-          ctx.globalCompositeOperation = 'screen'
-          ctx.strokeStyle = tier.lineStroke
-          ctx.shadowColor = tier.lineStroke
-          ctx.shadowBlur = tier.lineGlow
-          ctx.lineWidth = 2.5
-          ctx.beginPath()
-          ctx.moveTo(cutAx, cutAy)
-          ctx.lineTo(cutBx, cutBy)
-          ctx.stroke()
-          ctx.shadowBlur = 0
-        }
-
-        ctx.restore()
-      }
+      // All the per-piece polish (identity fill, domed depth, rim, outline,
+      // routing-kind overlay, HP drain gauge) lives in drawPieceBody, shared with
+      // the WebGL atlas so the 3D pieces sample the exact same artwork.
+      drawPieceBody(ctx, b, visualPos.x, visualPos.y, bcx, bcy)
       ctx.restore()
     }
 
@@ -2194,6 +2354,26 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
   })
+
+  // Selective bloom post. Runs after the full frame (2D scene + GL pieces) is on
+  // the canvas, with the transform back at device pixels. A high threshold + soft
+  // knee means only the laser core, the well, weld/heat highlights, motes and the
+  // glossy piece rims bloom -- mid-tones are left untouched so it stays tasteful.
+  if (USE_BLOOM) {
+    const glow = renderBloom(canvas, {
+      threshold: 0.7,
+      knee: 0.22,
+      intensity: 0.78,
+      iterations: 2,
+    })
+    if (glow) {
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.drawImage(glow, 0, 0)
+      ctx.restore()
+    }
+  }
 }
 
 

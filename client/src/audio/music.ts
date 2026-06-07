@@ -30,6 +30,27 @@ import type { MusicSignals } from '../game/runState'
 const AUDIUS_APP_NAME = 'laserburn'
 const AUDIUS_API_BASE = 'https://discoveryprovider.audius.co/v1'
 
+// Persisted music on/off preference. Survives refreshes so the player's last
+// choice sticks; a fresh browser (no key yet) defaults to "wanted".
+const MUSIC_WANT_KEY = 'laserburn.music.wantPlaying'
+
+const readWantPlaying = (): boolean => {
+  try {
+    const v = localStorage.getItem(MUSIC_WANT_KEY)
+    return v === null ? true : v === '1'
+  } catch {
+    return true
+  }
+}
+
+const writeWantPlaying = (on: boolean): void => {
+  try {
+    localStorage.setItem(MUSIC_WANT_KEY, on ? '1' : '0')
+  } catch {
+    // Ignore storage failures (private mode, quota); state stays in-memory.
+  }
+}
+
 // Tempo-matched soundtrack. Instead of a fixed playlist, each track is chosen to
 // match the board's current drop rate: the field steps on a deterministic
 // metronome (the sim's dropIntervalSec) and we pick a song whose BPM is a clean
@@ -150,7 +171,9 @@ class MusicEngine {
   // listener in App.tsx resumes/starts it on the player's first interaction
   // (the same drag that steers the beam), so audio begins without a dedicated
   // "press play" step. The toggle button still mutes/unmutes from there.
-  private wantPlaying = true
+  // Persisted across refreshes: once the player has chosen on/off it sticks.
+  // Defaults to "wanted" on a fresh browser (no stored preference yet).
+  private wantPlaying = readWantPlaying()
 
   // Attach the DOM <audio> element (rendered by React). Matching CubeKill, the
   // element lives in the document — detached `new Audio()` elements can fail to
@@ -314,6 +337,7 @@ class MusicEngine {
 
   setWantPlaying(on: boolean) {
     this.wantPlaying = on
+    writeWantPlaying(on)
     if (!on) {
       if (this.retryTimer != null) {
         clearTimeout(this.retryTimer)

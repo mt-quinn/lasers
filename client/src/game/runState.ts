@@ -78,6 +78,9 @@ export type HeatMote = {
   // Collection: once captured by the well, the mote flies (in screen space, from
   // the projected capture point) to the heat gauge and delivers `heat` on arrival.
   collecting: boolean
+  // Once the well's gravity has grabbed a mote (it entered the pull radius), it
+  // stays hooked and homes in regardless of distance.
+  hooked: boolean
   ct: number
   cdur: number
   // World-space point where it was captured (the renderer projects this as the
