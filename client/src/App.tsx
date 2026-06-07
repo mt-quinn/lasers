@@ -39,17 +39,17 @@ const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
   {
     kind: 'fast',
     name: 'Fast block',
-    desc: 'Drops faster than normal blocks — clear it before it reaches you.',
+    desc: 'Drops 2x as far every other time it drops.',
   },
   {
     kind: 'armored',
     name: 'Armored block',
-    desc: 'Armored underside deflects the beam. Bend the beam onto a side or the top to damage it.',
+    desc: 'A reflective bottom requires damaging it from the sides or top.',
   },
   {
     kind: 'shatter',
     name: 'Shatter block',
-    desc: 'Drops fast and breaks into a cluster of small blocks when destroyed.',
+    desc: 'A Fast block that spawns a cluster of normal blocks when destroyed.',
   },
   {
     kind: 'mirror',
@@ -59,7 +59,7 @@ const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
   {
     kind: 'splitter',
     name: 'Splitter',
-    desc: 'Splits the beam into several rays you can route into more targets.',
+    desc: 'Splits the beam into two at the angles indicated by the arrows. Both beams maintain full power.',
   },
 ]
 
