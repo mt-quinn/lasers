@@ -281,6 +281,11 @@ export type RunState = {
 
   // Lives: 3 max. Lose one when a block reaches the fail line; board clears and play continues.
   lives: number
+  // Fail-line grace: the drop-step (`depth`) at which a block was first detected
+  // past the fail line. The run only ends if a block is STILL past the line after
+  // a further descent step, giving the player one extra turn to clear it. -1 when
+  // nothing is currently past the line.
+  failGraceDepth: number
   // Short breather after losing a life (spawns paused).
   respiteSec: number
   // Life-loss presentation: wipe + banner that makes it clear the run continues.
@@ -405,6 +410,7 @@ export const createInitialRunState = (): RunState => {
     tutorialMovedEmitter: false,
     // Single life: "how deep" score-attack. One fail ends the run.
     lives: 1,
+    failGraceDepth: -1,
     respiteSec: 0,
     lifeLossFx: null,
     levelUpNotificationFx: null,

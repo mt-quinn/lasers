@@ -269,14 +269,20 @@ export const stepSim = (s: RunState, dt: number) => {
     s.dropTimerSec = s.dropIntervalSec
 
     // Snap logical positions forward immediately (physics/collision use this).
-    // Fast-droppers fall two cells per step (prioritization pressure) and get an
-    // extra cell of visual catch-up so they ease instead of snapping. Shatter
-    // pieces descend fast too (they're a fast-class threat that splits on death).
+    // Fast-class pieces (fast + shatter, which is a fast piece that splits on
+    // death) alternate 2 and 1 cells on successive beats instead of a constant 2.
+    // That averages 1.5 cells/step — still clearly faster than normal, but it
+    // removes the "always double-time" feel that could be unfair. The alternation
+    // keys off the global step parity so every fast piece moves in lockstep.
     s.depth += 1
+    const fastStepCells = s.depth % 2 === 0 ? 2 : 1
     for (const b of s.blocks) {
       if (b.kind === 'fast' || b.kind === 'shatter') {
-        b.pos.y += b.cellSize * 2
-        b.dropAnimExtra = b.cellSize
+        b.pos.y += b.cellSize * fastStepCells
+        // Extra visual catch-up only for the cells beyond the global 1-cell drop
+        // animation (so a 2-cell beat eases over two cells, a 1-cell beat reads
+        // exactly like a normal piece).
+        b.dropAnimExtra = b.cellSize * (fastStepCells - 1)
       } else {
         b.pos.y += b.cellSize
       }
@@ -377,12 +383,28 @@ export const stepSim = (s: RunState, dt: number) => {
     s.heat = Math.max(0, s.heat - HEAT_DECAY * dt)
   }
 
-  // Fail line sits just above the bottom rail. Single life: the first block to
-  // cross it ends the run ("how deep did you get").
+  // Fail line sits just above the bottom rail. Single life: a block crossing it
+  // ends the run ("how deep did you get") — but with one drop-step of grace. The
+  // first step a block is past the line only arms a grace marker; the run ends
+  // only if a block is STILL past the line after a further descent step, so the
+  // player gets one more turn to clear it (the UI line is unchanged).
   const failY = layout.failY
+  let anyPastFail = false
   for (const b of s.blocks) {
-    const bottom = b.pos.y + b.localAabb.maxY
-    if (bottom >= failY) {
+    if (b.pos.y + b.localAabb.maxY >= failY) {
+      anyPastFail = true
+      break
+    }
+  }
+  if (!anyPastFail) {
+    // Nothing past the line (player cleared it, or never reached it): disarm.
+    s.failGraceDepth = -1
+  } else {
+    if (s.failGraceDepth < 0) {
+      // First detection: arm the grace at the current step. Not fatal yet.
+      s.failGraceDepth = s.depth
+    } else if (s.depth > s.failGraceDepth) {
+      // A descent step has elapsed and a block is still past the line: end the run.
       s.lives = 0
       s.gameOver = true
       s.paused = true
@@ -948,6 +970,17 @@ export const stepSim = (s: RunState, dt: number) => {
               ignoreBlockId = -1
               break // resume outer tracing (re-detect the field)
             }
+            if (cblk && cblk.kind === 'armored' && stepHit.normal.y >= 0.45) {
+              // Armored underside acts as a fixed mirror: the beam bounces off it
+              // (no pierce, no damage). Free reflection (like a wall) so the armor
+              // always deflects regardless of the remaining bounce budget.
+              routedOptics = true
+              d = normalize(reflect(d, stepHit.normal))
+              o = add(stepHit.point, mul(stepHit.normal, EPS + beamRadius))
+              minT = EPS + beamRadius * 0.75
+              ignoreBlockId = -1
+              break // resume outer tracing (re-detect the field)
+            }
             if (piercesLeft <= 0) {
               rayLive = false
               break
@@ -1022,6 +1055,17 @@ export const stepSim = (s: RunState, dt: number) => {
           d = normalize(reflect(d, hit.normal))
           intensity *= s.stats.bounceFalloff
           bouncesLeft -= 1
+          o = add(hit.point, mul(hit.normal, EPS + beamRadius))
+          minT = EPS + beamRadius * 0.75
+          ignoreBlockId = -1
+          continue
+        }
+        if (cblk && cblk.kind === 'armored' && hit.normal.y >= 0.45) {
+          // Armored underside acts as a fixed mirror: the beam bounces off it
+          // (no pierce, no damage). Free reflection (like a wall) so the armor
+          // always deflects regardless of the remaining bounce budget.
+          routedOptics = true
+          d = normalize(reflect(d, hit.normal))
           o = add(hit.point, mul(hit.normal, EPS + beamRadius))
           minT = EPS + beamRadius * 0.75
           ignoreBlockId = -1

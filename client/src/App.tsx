@@ -21,6 +21,7 @@ import {
 import { clearGameState, loadGameState, saveGameState } from './game/gameState'
 import { musicEngine } from './audio/music'
 import { sfxEngine } from './audio/sfx'
+import { drawPieceSwatch, type SwatchKind } from './render/swatch'
 
 type HudSnapshot = {
   paused: boolean
@@ -28,6 +29,49 @@ type HudSnapshot = {
   depth: number
   score: number
   gameOver: boolean
+}
+
+// Legend shown in the pause menu: the special pieces/features and what each one
+// does, in plain language. Each row renders the REAL in-game artwork (via the
+// shared piece renderer) rather than a stand-in glyph, so it's instantly
+// recognizable. Block kinds are drawn as a 2x2 footprint.
+const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
+  {
+    kind: 'fast',
+    name: 'Fast block',
+    desc: 'Drops faster than normal blocks — clear it before it reaches you.',
+  },
+  {
+    kind: 'armored',
+    name: 'Armored block',
+    desc: 'Armored underside deflects the beam. Bend the beam onto a side or the top to damage it.',
+  },
+  {
+    kind: 'shatter',
+    name: 'Shatter block',
+    desc: 'Drops fast and breaks into a cluster of small blocks when destroyed.',
+  },
+  {
+    kind: 'mirror',
+    name: 'Mirror',
+    desc: 'Reflects the beam off its diagonal. Burns away under sustained fire.',
+  },
+  {
+    kind: 'splitter',
+    name: 'Splitter',
+    desc: 'Splits the beam into several rays you can route into more targets.',
+  },
+]
+
+// A single legend icon: draws the real piece artwork into a small canvas.
+const SWATCH_BOX = 44
+const PieceSwatch = ({ kind }: { kind: SwatchKind }) => {
+  const ref = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    const canvas = ref.current
+    if (canvas) drawPieceSwatch(canvas, kind, SWATCH_BOX)
+  }, [kind])
+  return <canvas ref={ref} className="menuKeyIcon" aria-hidden="true" />
 }
 
 // The menus surface only the stats that matter to an endless run: how deep
@@ -608,23 +652,20 @@ export default function App() {
                     </div>
                   </div>
 
-                  {highScores.length > 0 && (
-                    <div className="menuSection">
-                      <div className="menuSectionTitle">Top Scores</div>
-                      <ol className="menuScoreList">
-                        {highScores.slice(0, 5).map((e, i) => (
-                          <li key={`${e.ts}-${i}`} className="menuScoreRow">
-                            <span className="rank">{i + 1}</span>
-                            <span className="name">{e.name}</span>
-                            <span className="val">
-                              {e.score.toLocaleString()}
-                              <span className="depth">d{e.depth}</span>
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
+                  <div className="menuSection">
+                    <div className="menuSectionTitle">Key</div>
+                    <ul className="menuKey">
+                      {PIECE_KEY.map((item) => (
+                        <li key={item.name} className="menuKeyRow">
+                          <PieceSwatch kind={item.kind} />
+                          <span className="menuKeyText">
+                            <span className="menuKeyName">{item.name}</span>
+                            <span className="menuKeyDesc">{item.desc}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
 
                   <div className="menuActions">
                     <button type="button" className="menuBtn ghost" onClick={restart}>

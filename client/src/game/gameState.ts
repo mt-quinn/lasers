@@ -97,6 +97,7 @@ export const saveGameState = (state: RunState) => {
       gameOver: state.gameOver,
       tutorialMovedEmitter: state.tutorialMovedEmitter,
       lives: state.lives,
+      failGraceDepth: state.failGraceDepth,
       respiteSec: state.respiteSec,
       dropIntervalSec: state.dropIntervalSec,
       dropTimerSec: state.dropTimerSec,
@@ -158,6 +159,8 @@ export const loadGameState = (): RunState | null => {
     freshState.stats.dps = 20
     freshState.stats.maxPierces = 1
     if (!Number.isFinite(freshState.stats.pierceFalloff)) freshState.stats.pierceFalloff = 0.8
+    // MIGRATION: the fail-line grace marker may be missing on older saves.
+    if (!Number.isFinite(freshState.failGraceDepth)) freshState.failGraceDepth = -1
     // MIGRATION: ensure routing-kind fields exist on any merged blocks. (The old
     // per-block `vulnNormal` is gone — armored is now a fixed armored-underside,
     // so any leftover field on a saved block is simply ignored.)
