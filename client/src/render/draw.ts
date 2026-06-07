@@ -1421,25 +1421,27 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         c.beginPath()
         c.arc(cx, cy, R, 0, Math.PI * 2)
         c.fill()
-        // A few faint facet cut lines (kept subtle so they don't fight the arrows).
+        // Bright bevel ring delineating the big top face so it reads as a clear
+        // disc from a distance.
         c.globalCompositeOperation = 'screen'
-        c.strokeStyle = 'rgba(170,215,250,0.12)'
-        c.lineWidth = Math.max(1, size * 0.01)
-        for (let i = 0; i < 8; i++) {
-          const a = -Math.PI / 2 + ((i + 0.5) / 8) * Math.PI * 2
-          c.beginPath()
-          c.moveTo(cx + Math.cos(a) * R * 0.34, cy + Math.sin(a) * R * 0.34)
-          c.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R)
-          c.stroke()
-        }
+        c.lineWidth = Math.max(2, size * 0.05)
+        c.strokeStyle = 'rgba(150,205,250,0.45)'
+        c.beginPath()
+        c.arc(cx, cy, R * 0.9, 0, Math.PI * 2)
+        c.stroke()
         c.globalCompositeOperation = 'source-over'
+        c.lineWidth = Math.max(1.5, size * 0.022)
+        c.strokeStyle = 'rgba(10,28,48,0.55)'
+        c.beginPath()
+        c.arc(cx, cy, R * 0.82, 0, Math.PI * 2)
+        c.stroke()
 
         // Exit arrows (relative to straight-up beam): bold, high-contrast.
         const rot = (vx: number, vy: number, rad: number) => ({
           x: vx * Math.cos(rad) - vy * Math.sin(rad),
           y: vx * Math.sin(rad) + vy * Math.cos(rad),
         })
-        const rayLen = R * 0.9
+        const rayLen = R * 0.74
         const headLen = R * 0.34
         const headAng = Math.PI / 6
         const drawArrows = (style: string, lw: number) => {
@@ -1569,7 +1571,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
                 cx,
                 cy,
                 radius: f.r,
-                height: f.cellSize * PIECE_EXTRUDE * 0.85,
+                height: f.cellSize * PIECE_EXTRUDE * 0.55,
                 cr: 0.32,
                 cg: 0.6,
                 cb: 0.86,

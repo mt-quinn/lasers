@@ -327,7 +327,7 @@ export const renderFeaturesGL = (
       const nx0 = -dy
       const ny0 = dx // perpendicular unit
       const Lh = sz * 0.64 // half-length along the diagonal
-      const Wh = sz * 0.17 // half-width (thin blade)
+      const Wh = sz * 0.1 // half-width (thin blade)
       const corner = (sd: number, sn: number): V => ({
         x: cx + dx * Lh * sd + nx0 * Wh * sn,
         y: cy + dy * Lh * sd + ny0 * Wh * sn,
@@ -437,12 +437,15 @@ export const renderFeaturesGL = (
     // top facet with baked exit arrows.
     const SIDES = 8
     const R = f.radius
+    // A wide, low faceted disc: the big flat top face dominates the silhouette
+    // so the exit arrows stay legible even when the gem is far up the shaft
+    // (where perspective foreshortens everything vertically).
     const H = f.height
-    const rTop = R * 0.84 // large flat top so the exit arrows read clearly
+    const rTop = R * 0.92 // near-full flat top
     const rG = R
-    const rBase = R * 0.5
+    const rBase = R * 0.66
     const zTop = H
-    const zG = H * 0.62
+    const zG = H * 0.74 // shallow crown bevel
     const zBase = 0
     const a0 = -Math.PI / 2 // first vertex points up-screen
     const ringPt = (rad: number, i: number) => {

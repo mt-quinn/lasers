@@ -133,7 +133,7 @@ const drawMirrorSwatch = (ctx: CanvasRenderingContext2D, box: number) => {
   const nx = inv
   const ny = inv
   const Lh = box * 0.34
-  const Wh = box * 0.09
+  const Wh = box * 0.055
   const corner = (sd: number, sn: number, off: number) => ({
     x: cx + dx * Lh * sd + nx * Wh * sn,
     y: cy + dy * Lh * sd + ny * Wh * sn + off,
@@ -238,28 +238,27 @@ const drawSplitterSwatch = (ctx: CanvasRenderingContext2D, box: number) => {
   body.addColorStop(1, 'rgb(14 40 72)')
   ctx.fillStyle = body
   ctx.fill()
-  // A few faint facet cut lines near the rim.
+  // Bright bevel ring delineating the big top face.
   ctx.save()
-  oct(R, 0)
-  ctx.clip()
   ctx.globalCompositeOperation = 'screen'
-  ctx.strokeStyle = 'rgba(170,215,250,0.12)'
-  ctx.lineWidth = Math.max(1, box * 0.008)
-  for (let i = 0; i < SIDES; i++) {
-    const a = a0 + ((i + 0.5) / SIDES) * Math.PI * 2
-    ctx.beginPath()
-    ctx.moveTo(cx + Math.cos(a) * R * 0.34, cy + Math.sin(a) * R * 0.34)
-    ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R)
-    ctx.stroke()
-  }
+  ctx.lineWidth = Math.max(2, box * 0.04)
+  ctx.strokeStyle = 'rgba(150,205,250,0.45)'
+  ctx.beginPath()
+  ctx.arc(cx, cy, R * 0.9, 0, Math.PI * 2)
+  ctx.stroke()
   ctx.restore()
+  ctx.lineWidth = Math.max(1.5, box * 0.018)
+  ctx.strokeStyle = 'rgba(10,28,48,0.55)'
+  ctx.beginPath()
+  ctx.arc(cx, cy, R * 0.82, 0, Math.PI * 2)
+  ctx.stroke()
   // Exit arrows on the top facet: bold, high-contrast.
   const exits = [45, -45]
   const rot = (vx: number, vy: number, rad: number) => ({
     x: vx * Math.cos(rad) - vy * Math.sin(rad),
     y: vx * Math.sin(rad) + vy * Math.cos(rad),
   })
-  const rayLen = R * 0.88
+  const rayLen = R * 0.72
   const headLen = R * 0.34
   const headAng = Math.PI / 6
   const drawArrows = (style: string, lw: number) => {
