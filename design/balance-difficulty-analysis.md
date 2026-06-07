@@ -1,7 +1,7 @@
 # Balance & Difficulty Analysis (v1)
 
 This document analyzes the current prototype’s numbers (player DPS, upgrade economy, spawn rate, block HP) and proposes a baseline difficulty curve intended for real humans to play.
-
+  
 ## Summary of key issues found (before tuning)
 
 ### 1) Spawn rate ramp was far too aggressive
