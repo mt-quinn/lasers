@@ -31,6 +31,7 @@ type SavedRunState = Omit<
   | 'crescendo'
   | 'heat'
   | 'overdriveSec'
+  | 'overdriveArmed'
   | 'sinceStepSec'
   | 'lastBeatToken'
 >

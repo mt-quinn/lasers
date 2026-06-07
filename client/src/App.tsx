@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './app.css'
 import { createInitialRunState, type RunState } from './game/runState'
-import { stepSim } from './game/sim'
+import { stepSim, fireOverdrive } from './game/sim'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 // import { computeXpCap, getRarityColor } from './game/levelUp'  // Unused after upgrade system removal
@@ -22,6 +22,9 @@ import { clearGameState, loadGameState, saveGameState } from './game/gameState'
 import { musicEngine } from './audio/music'
 import { sfxEngine } from './audio/sfx'
 import { drawPieceSwatch, type SwatchKind } from './render/swatch'
+import { useMutation, useQuery } from 'convex/react'
+import { api } from '../convex/_generated/api'
+import { getOrCreatePlayerId, isConvexConfigured } from './game/playerId'
 
 type HudSnapshot = {
   paused: boolean
@@ -135,6 +138,17 @@ export default function App() {
   const [pendingScore, setPendingScore] = useState<number | null>(null)
   const handledGameOverRef = useRef(false)
 
+  // Anonymous identity + global leaderboard wiring. All of this no-ops cleanly
+  // when no Convex deployment is configured (queries skip, mutations unused),
+  // so the game still runs fully offline with just the local board.
+  const playerIdRef = useRef<string>(getOrCreatePlayerId())
+  const convexConfigured = useMemo(() => isConvexConfigured(), [])
+  const submitEndlessGlobal = useMutation(api.leaderboard.submitEndlessScore)
+  const globalEndlessScores = useQuery(
+    api.leaderboard.getTopEndlessScores,
+    convexConfigured && hud.gameOver ? {} : 'skip',
+  )
+
   const setPaused = useCallback((paused: boolean) => {
     stateRef.current.paused = paused
     setHud((h) => ({ ...h, paused }))
@@ -179,55 +193,109 @@ export default function App() {
     const onUi = (e: PointerEvent) =>
       e.target instanceof Element && e.target.closest('button') != null
 
-    let activePointer: number | null = null
+    // The STEERING pointer (the one finger dragging the well). A second finger
+    // that lands while steering is NOT allowed to grab the well — it's tracked
+    // as a tap candidate so you can keep steering with one finger and tap with
+    // another to unleash Overdrive in place.
+    let steerId: number | null = null
     let lastX = 0
     let lastY = 0
     let lastT = 0
     let vx = 0
     let vy = 0
+    // Down position/time of the STEERING pointer in SCREEN px, so its own quick
+    // press+release (single-finger tap-to-fire) can be told apart from steering.
+    let steerDownCX = 0
+    let steerDownCY = 0
+    let steerDownT = 0
+    // Secondary pointers (extra fingers) tracked as potential taps: id -> down
+    // screen pos/time + the farthest it has strayed (to reject drags).
+    const taps = new Map<number, { cx: number; cy: number; t: number; moved: number }>()
+    const TAP_MAX_MS = 250
+    const TAP_MAX_PX = 14
+
+    const isTapGesture = (cx: number, cy: number, t: number, downX: number, downY: number, downT: number) =>
+      t - downT <= TAP_MAX_MS && Math.hypot(cx - downX, cy - downY) <= TAP_MAX_PX
 
     const onPointerDown = (e: PointerEvent) => {
       const s = stateRef.current
       if (s.gameOver) return
       if (onUi(e)) return
-      const p = getPoint(e)
-      if (!p) return
-      activePointer = e.pointerId
-      // Teleport under the finger and cancel momentum.
-      s.well.pos.x = p.x
-      s.well.pos.y = p.y
-      s.well.vel.x = 0
-      s.well.vel.y = 0
-      s.well.grabbed = true
-      s.well.placed = true
-      lastX = p.x
-      lastY = p.y
-      lastT = e.timeStamp
-      vx = 0
-      vy = 0
+      if (steerId === null) {
+        // First finger: take steering control — teleport under it and grab.
+        const p = getPoint(e)
+        if (!p) return
+        steerId = e.pointerId
+        s.well.pos.x = p.x
+        s.well.pos.y = p.y
+        s.well.vel.x = 0
+        s.well.vel.y = 0
+        s.well.grabbed = true
+        s.well.placed = true
+        lastX = p.x
+        lastY = p.y
+        lastT = e.timeStamp
+        vx = 0
+        vy = 0
+        steerDownCX = e.clientX
+        steerDownCY = e.clientY
+        steerDownT = e.timeStamp
+        return
+      }
+      // Another finger while already steering: don't move the well or steal
+      // control — just watch for a clean tap to unleash Overdrive.
+      taps.set(e.pointerId, { cx: e.clientX, cy: e.clientY, t: e.timeStamp, moved: 0 })
     }
 
     const onPointerMove = (e: PointerEvent) => {
-      if (activePointer !== e.pointerId) return
-      const p = getPoint(e)
-      if (!p) return
       const s = stateRef.current
-      s.well.pos.x = p.x
-      s.well.pos.y = p.y
-      // Track pointer velocity (px/sec), lightly smoothed, for the throw.
-      const dt = Math.max(0.001, (e.timeStamp - lastT) / 1000)
-      vx = vx * 0.4 + ((p.x - lastX) / dt) * 0.6
-      vy = vy * 0.4 + ((p.y - lastY) / dt) * 0.6
-      lastX = p.x
-      lastY = p.y
-      lastT = e.timeStamp
+      if (e.pointerId === steerId) {
+        const p = getPoint(e)
+        if (!p) return
+        s.well.pos.x = p.x
+        s.well.pos.y = p.y
+        // Track pointer velocity (px/sec), lightly smoothed, for the throw.
+        const dt = Math.max(0.001, (e.timeStamp - lastT) / 1000)
+        vx = vx * 0.4 + ((p.x - lastX) / dt) * 0.6
+        vy = vy * 0.4 + ((p.y - lastY) / dt) * 0.6
+        lastX = p.x
+        lastY = p.y
+        lastT = e.timeStamp
+        return
+      }
+      // A secondary finger that strays too far stops counting as a tap.
+      const tap = taps.get(e.pointerId)
+      if (tap) {
+        const d = Math.hypot(e.clientX - tap.cx, e.clientY - tap.cy)
+        if (d > tap.moved) tap.moved = d
+      }
     }
 
     const onPointerUp = (e: PointerEvent) => {
-      if (activePointer !== e.pointerId) return
-      activePointer = null
       const s = stateRef.current
+      // Secondary finger lifting: a clean tap fires Overdrive IN PLACE — the
+      // steering finger keeps control and the well doesn't move.
+      const tap = taps.get(e.pointerId)
+      if (tap) {
+        taps.delete(e.pointerId)
+        const moved = Math.max(tap.moved, Math.hypot(e.clientX - tap.cx, e.clientY - tap.cy))
+        if (e.timeStamp - tap.t <= TAP_MAX_MS && moved <= TAP_MAX_PX) fireOverdrive(s)
+        return
+      }
+      if (e.pointerId !== steerId) return
+      steerId = null
       s.well.grabbed = false
+      // Single-finger tap-to-unleash: a quick press+release that didn't really
+      // move fires the surge where the finger landed (the well teleported there
+      // on press), and the gesture is consumed so the puck stays put.
+      if (
+        isTapGesture(e.clientX, e.clientY, e.timeStamp, steerDownCX, steerDownCY, steerDownT) &&
+        fireOverdrive(s)
+      ) {
+        s.well.vel.x = 0
+        s.well.vel.y = 0
+        return
+      }
       // A throw only if the finger was still moving at release; otherwise park.
       const sinceMove = (e.timeStamp - lastT) / 1000
       if (sinceMove > 0.05) {
@@ -238,15 +306,26 @@ export default function App() {
       s.well.vel.y = vy
     }
 
+    // Cancel (OS gesture, palm rejection, etc.): clean up without firing.
+    const onPointerCancel = (e: PointerEvent) => {
+      if (taps.delete(e.pointerId)) return
+      if (e.pointerId !== steerId) return
+      steerId = null
+      const s = stateRef.current
+      s.well.grabbed = false
+      s.well.vel.x = 0
+      s.well.vel.y = 0
+    }
+
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
-    window.addEventListener('pointercancel', onPointerUp)
+    window.addEventListener('pointercancel', onPointerCancel)
     return () => {
       window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
-      window.removeEventListener('pointercancel', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerCancel)
     }
   }, [])
 
@@ -510,7 +589,20 @@ export default function App() {
     if (qualifiesTop5(highScores, hud.score)) {
       setShowNamePrompt(true)
     }
-  }, [hud.gameOver, hud.depth, hud.score, highScores])
+
+    // Fire-and-forget global submit on every run end. The server upserts the
+    // player's best row, so resubmitting (and the later name-save submit) is
+    // safe. Uses the last saved name until the player enters a new one.
+    if (convexConfigured && hud.score > 0) {
+      submitEndlessGlobal({
+        playerId: playerIdRef.current,
+        name: loadLastPlayerName() || 'PLAYER',
+        score: hud.score,
+        depth: hud.depth,
+        savedAt: Date.now(),
+      }).catch(() => {})
+    }
+  }, [hud.gameOver, hud.depth, hud.score, highScores, convexConfigured, submitEndlessGlobal])
 
   const submitHighScore = useCallback(() => {
     if (pendingScoreDepth == null || pendingScore == null) return
@@ -526,7 +618,17 @@ export default function App() {
     // Update local bests immediately for the live HUD labels on subsequent runs.
     stateRef.current.bestDepthLocal = getBestDepth(next)
     stateRef.current.bestScoreLocal = getBestScore(next)
-  }, [highScores, nameDraft, pendingScoreDepth, pendingScore])
+    // Re-submit globally with the chosen name so the global row shows it too.
+    if (convexConfigured) {
+      submitEndlessGlobal({
+        playerId: playerIdRef.current,
+        name: nameDraft,
+        score: pendingScore,
+        depth: pendingScoreDepth,
+        savedAt: Date.now(),
+      }).catch(() => {})
+    }
+  }, [highScores, nameDraft, pendingScoreDepth, pendingScore, convexConfigured, submitEndlessGlobal])
 
   const skipHighScore = useCallback(() => {
     setShowNamePrompt(false)
@@ -736,6 +838,27 @@ export default function App() {
                       <ol className="menuScoreList">
                         {highScores.slice(0, 5).map((e, i) => (
                           <li key={`${e.ts}-${i}`} className="menuScoreRow">
+                            <span className="rank">{i + 1}</span>
+                            <span className="name">{e.name}</span>
+                            <span className="val">
+                              {e.score.toLocaleString()}
+                              <span className="depth">d{e.depth}</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
+                  {convexConfigured && globalEndlessScores && globalEndlessScores.length > 0 && (
+                    <div className="menuSection">
+                      <div className="menuSectionTitle">Global Top</div>
+                      <ol className="menuScoreList menuScoreListGlobal">
+                        {globalEndlessScores.slice(0, 10).map((e, i) => (
+                          <li
+                            key={`${e.playerId}-${i}`}
+                            className={`menuScoreRow${e.playerId === playerIdRef.current ? ' isMe' : ''}`}
+                          >
                             <span className="rank">{i + 1}</span>
                             <span className="name">{e.name}</span>
                             <span className="val">

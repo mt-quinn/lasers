@@ -1868,38 +1868,88 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       roundedRectPath(gx2, gy2, gw2, gh2, 10)
       ctx.stroke()
 
+      // Armed = topped out and banked, waiting for the player's tap. A slower,
+      // brighter "breathing" gold pulse so the gauge reads READY — distinct from
+      // the faster flicker of an in-progress surge.
+      const armed = s.overdriveArmed && !overdriveOn
+      const charged = overdriveOn || armed
+      const odPulse = overdriveOn ? 0.7 + 0.3 * Math.sin(s.timeSec * 18) : 1
+      const armPulse = 0.6 + 0.4 * Math.sin(s.timeSec * 6.5)
+      const pulseA = overdriveOn ? odPulse : armed ? armPulse : 1
+
       const fh = gh2 * heatFrac
       ctx.globalCompositeOperation = 'lighter'
-      // Heat fill: a warm "charge" that brightens as it fills; in Overdrive it
-      // flips to a pulsing white-gold.
-      const odPulse = overdriveOn ? 0.7 + 0.3 * Math.sin(s.timeSec * 18) : 1
-      const heatHue = overdriveOn ? 45 : 28
-      const heatA = (overdriveOn ? 0.55 : 0.2 + 0.25 * heatFrac) * odPulse
+      // Heat fill: a warm "charge" that brightens as it fills; charged (armed or
+      // mid-surge) it flips to a pulsing white-gold.
+      const heatHue = charged ? 45 : 28
+      const heatA = (overdriveOn ? 0.55 : armed ? 0.6 : 0.2 + 0.25 * heatFrac) * pulseA
       ctx.fillStyle = hsl(heatHue, 95, 58, heatA)
       roundedRectPath(gx2, gy2 + (gh2 - fh), gw2, fh, 10)
       ctx.fill()
-      ctx.fillStyle = hsl(heatHue, 98, overdriveOn ? 90 : 62 + 16 * heatFrac, 0.82 * odPulse)
+      ctx.fillStyle = hsl(heatHue, 98, charged ? 90 : 62 + 16 * heatFrac, 0.82 * pulseA)
       roundedRectPath(gx2 + 1, gy2 + (gh2 - fh) + 1, gw2 - 2, Math.max(0, fh - 2), 9)
       ctx.fill()
 
-      // Combo multiplier centered in the groove.
+      // Armed: a breathing glow ring hugging the whole groove so the charged
+      // meter pops even in peripheral vision while the eye is on the beam.
+      if (armed) {
+        ctx.save()
+        ctx.shadowColor = hsl(45, 100, 65, 0.9)
+        ctx.shadowBlur = 10 + 12 * armPulse
+        ctx.strokeStyle = hsl(48, 100, 72, 0.5 + 0.4 * armPulse)
+        ctx.lineWidth = 2
+        roundedRectPath(gx2, gy2, gw2, gh2, 10)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      // Groove label. Normal play: the combo multiplier chip. Armed: a vertical
+      // "TAP TO FIRE" running up the bar — it fits the tall, narrow gauge (a
+      // horizontal chip spills off the right screen edge) and fuses the
+      // ready-state with the call-to-action without covering the playfield.
       ctx.globalCompositeOperation = 'source-over'
-      const label = `×${comboMult.toFixed(1)}`
-      ctx.font = "950 13px 'Oxanium', system-ui, sans-serif"
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      const tx = barX + barW / 2
-      const ty = gy2 + gh2 * 0.55
-      const tw = ctx.measureText(label).width
-      ctx.fillStyle = 'rgba(0,0,0,0.22)'
-      roundedRectPath(tx - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(255,255,255,0.10)'
-      ctx.lineWidth = 1
-      roundedRectPath(tx - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
-      ctx.stroke()
-      ctx.fillStyle = 'rgba(255,246,213,0.92)'
-      ctx.fillText(label, tx, ty)
+      const cxBar = barX + barW / 2
+      if (armed) {
+        ctx.save()
+        ctx.translate(cxBar, gy2 + gh2 / 2)
+        ctx.rotate(-Math.PI / 2)
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        try {
+          ctx.letterSpacing = '3px'
+        } catch {
+          /* older engines: skip */
+        }
+        ctx.font = "900 15px 'Oxanium', system-ui, sans-serif"
+        // Dark ink on the bright gold fill (with a faint light halo so it stays
+        // crisp); a gentle alpha breath keeps it alive.
+        ctx.shadowColor = hsl(50, 100, 92, 0.55)
+        ctx.shadowBlur = 5
+        ctx.fillStyle = `rgba(36,22,0,${(0.82 + 0.18 * armPulse).toFixed(3)})`
+        ctx.fillText('TAP TO FIRE', 0, 0)
+        try {
+          ctx.letterSpacing = '0px'
+        } catch {
+          /* noop */
+        }
+        ctx.restore()
+      } else {
+        const label = `×${comboMult.toFixed(1)}`
+        ctx.font = "950 13px 'Oxanium', system-ui, sans-serif"
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        const ty = gy2 + gh2 * 0.55
+        const tw = ctx.measureText(label).width
+        ctx.fillStyle = 'rgba(0,0,0,0.22)'
+        roundedRectPath(cxBar - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+        ctx.lineWidth = 1
+        roundedRectPath(cxBar - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(255,246,213,0.92)'
+        ctx.fillText(label, cxBar, ty)
+      }
       ctx.restore()
     }
 
@@ -2637,6 +2687,26 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           ctx.stroke()
         }
         ctx.shadowBlur = 0
+      }
+
+      // Armed Overdrive: give the lens a subtle "charged" gold breath so it
+      // reads as hot/ready to the eye that's already on it — but NO text or
+      // rings sprawling over the board. The heat gauge carries the explicit
+      // "TAP TO FIRE" call-to-action.
+      if (s.overdriveArmed && s.overdriveSec <= 0) {
+        const pulse = 0.5 + 0.5 * Math.sin(s.timeSec * 5.5)
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        const rGlow = rCore * (1.5 + 0.45 * pulse)
+        const g = ctx.createRadialGradient(cx, cy, rCore * 0.4, cx, cy, rGlow)
+        g.addColorStop(0, hsl(47, 100, 72, 0.1 + 0.1 * pulse))
+        g.addColorStop(0.6, hsl(47, 100, 66, 0.1 + 0.14 * pulse))
+        g.addColorStop(1, hsl(45, 100, 60, 0))
+        ctx.fillStyle = g
+        ctx.beginPath()
+        ctx.arc(cx, cy, rGlow, 0, TWO_PI)
+        ctx.fill()
+        ctx.restore()
       }
 
       ctx.restore()

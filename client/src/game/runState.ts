@@ -369,10 +369,15 @@ export type RunState = {
   music: MusicSignals
 
   // Heat / Overdrive: a skill-expressed, self-resetting beam amplifier. Heat
-  // (0..1) fills as you chain kills and decays when you idle; topping it out
-  // fires Overdrive (a temporary beam surge + score multiplier) that drains it.
+  // (0..1) fills as you chain kills and decays when you idle. Topping it out no
+  // longer auto-fires — it ARMS (overdriveArmed). The player banks the charge
+  // and unleashes the surge on demand with a tap (see fireOverdrive), choosing
+  // the moment: cash it on a dense cluster, or clutch it to dig out a backlog.
   heat: number
   overdriveSec: number
+  // True once heat tops out and the surge is charged but not yet spent. Held
+  // (heat pinned at 1) until the player taps to fire. Transient (not saved).
+  overdriveArmed: boolean
 
   // XP orbs are kept purely as kill juice (the melt orb that flies to the corner
   // gauge). xp/level are vestigial now (power is fixed; no leveling).
@@ -520,6 +525,7 @@ export const createInitialRunState = (): RunState => {
     },
     heat: 0,
     overdriveSec: 0,
+    overdriveArmed: false,
     xp: 0,
     xpCap: 5,
     level: 0,

@@ -78,6 +78,27 @@ const WELL_RESTITUTION = 0.86
 // Below this speed (world px/s) a free puck snaps to rest.
 const WELL_SLEEP_SPEED = 6
 
+// Unleash a banked Overdrive surge. Called by the input layer when the player
+// taps with the meter armed (heat topped out). Returns true if a surge actually
+// fired so the caller can consume the gesture. The OVERDRIVE banner FX and the
+// crescendo bump fire HERE (on the player's beat), not when the meter filled.
+export const fireOverdrive = (s: RunState): boolean => {
+  if (s.gameOver) return false
+  if (!s.overdriveArmed || s.overdriveSec > 0) return false
+  s.overdriveArmed = false
+  s.overdriveSec = OVERDRIVE_DURATION
+  s.heat = 1
+  s.levelUpNotificationFx = { t: 0, displayDur: 1.0, fadeDur: 0.35 }
+  s.crescendo = clamp(s.crescendo + 0.5, 0, 1)
+  // A short triple-tap of haptics so the unleash lands physically on mobile.
+  const nav =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean })
+      : undefined
+  if (nav && typeof nav.vibrate === 'function') nav.vibrate([12, 22, 36])
+  return true
+}
+
 // Integrate the free-flying well puck: coast with friction, bounce off the world
 // playfield walls, settle when slow. While grabbed, App drives its position
 // directly and we just keep momentum cleared.
@@ -496,17 +517,18 @@ export const stepSim = (s: RunState, dt: number) => {
   }
 
   // Heat / Overdrive: fills from collected heat motes (delivered above), decays
-  // when idle, and on topping out fires a short surge that drains it back down.
+  // when idle, and on topping out ARMS a surge the player unleashes on demand.
   if (s.overdriveSec > 0) {
     s.overdriveSec = Math.max(0, s.overdriveSec - dt)
     // The meter visibly drains across the surge, then resets so it must rebuild.
     s.heat = s.overdriveSec > 0 ? clamp(s.overdriveSec / OVERDRIVE_DURATION, 0, 1) : 0
-  } else if (s.heat >= 1) {
+    if (s.overdriveSec <= 0) s.overdriveArmed = false
+  } else if (s.overdriveArmed || s.heat >= 1) {
+    // Charged: hold at full and wait for the player to tap (fireOverdrive).
+    // Banking the surge is the whole decision — cash it on a dense cluster, or
+    // clutch it to punch through a backlog at the fail line.
+    s.overdriveArmed = true
     s.heat = 1
-    s.overdriveSec = OVERDRIVE_DURATION
-    // Reuse the center banner FX slot to announce OVERDRIVE.
-    s.levelUpNotificationFx = { t: 0, displayDur: 1.0, fadeDur: 0.35 }
-    s.crescendo = clamp(s.crescendo + 0.5, 0, 1)
   } else {
     s.heat = Math.max(0, s.heat - HEAT_DECAY * dt)
   }
