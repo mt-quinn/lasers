@@ -80,6 +80,10 @@ let pOut: WebGLProgram | null = null
 let quad: WebGLBuffer | null = null
 
 let srcTex: WebGLTexture | null = null
+// Half-res scratch the scene is downsampled into before upload: a cheap GPU blit
+// that quarters the texture-upload bandwidth (the bloom is blurred regardless).
+let dsCanvas: HTMLCanvasElement | null = null
+let dsCtx: CanvasRenderingContext2D | null = null
 // Two half-res ping-pong targets.
 let fboA: WebGLFramebuffer | null = null
 let texA: WebGLTexture | null = null
@@ -239,12 +243,29 @@ export const renderBloom = (
   g.disable(g.BLEND)
   g.disable(g.DEPTH_TEST)
 
-  // Upload the composited scene. Flip Y on upload so the canvas (top-left origin)
-  // lines up with GL texture space (bottom-left origin); without this the glow
-  // comes back vertically mirrored and ghosts the scene.
+  // Downsample the scene to half res (cheap GPU blit) before upload so we move a
+  // quarter of the pixels across the bus; the working targets are half res too,
+  // so there's no quality loss.
+  if (!dsCanvas) {
+    dsCanvas = document.createElement('canvas')
+    dsCtx = dsCanvas.getContext('2d')
+  }
+  if (dsCanvas.width !== hw || dsCanvas.height !== hh) {
+    dsCanvas.width = hw
+    dsCanvas.height = hh
+  }
+  const upload: HTMLCanvasElement = dsCanvas
+  if (dsCtx) {
+    dsCtx.clearRect(0, 0, hw, hh)
+    dsCtx.drawImage(source, 0, 0, W, H, 0, 0, hw, hh)
+  }
+
+  // Upload the (downsampled) scene. Flip Y on upload so the canvas (top-left
+  // origin) lines up with GL texture space (bottom-left origin); without this the
+  // glow comes back vertically mirrored and ghosts the scene.
   g.bindTexture(g.TEXTURE_2D, srcTex)
   g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL, 1)
-  g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, source)
+  g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, dsCtx ? upload : source)
 
   // Bright pass: source (full res) -> fboA (half res).
   g.bindFramebuffer(g.FRAMEBUFFER, fboA)

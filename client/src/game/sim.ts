@@ -727,17 +727,20 @@ export const stepSim = (s: RunState, dt: number) => {
       const tx = -n.y
       const ty = n.x
       for (let i = 0; i < emitN; i++) {
-        const alongN = 80 + Math.random() * 220
-        const alongT = (Math.random() * 2 - 1) * (70 + Math.random() * 180)
-        const jitter = 2.5
+        // Larger, longer-throw sparks for a beefier welding burst (the streak
+        // length is velocity-driven and the widths are size-driven, so scaling
+        // these grows the whole effect proportionally).
+        const alongN = 120 + Math.random() * 320
+        const alongT = (Math.random() * 2 - 1) * (100 + Math.random() * 250)
+        const jitter = 3
         s.sparks.push({
           x: point.x + (Math.random() * 2 - 1) * jitter,
           y: point.y + (Math.random() * 2 - 1) * jitter,
-          vx: n.x * alongN + tx * alongT + (Math.random() * 2 - 1) * 35,
-          vy: n.y * alongN + ty * alongT + (Math.random() * 2 - 1) * 35,
+          vx: n.x * alongN + tx * alongT + (Math.random() * 2 - 1) * 45,
+          vy: n.y * alongN + ty * alongT + (Math.random() * 2 - 1) * 45,
           age: 0,
-          life: 0.12 + Math.random() * 0.22,
-          size: 0.9 + Math.random() * 2.4,
+          life: 0.14 + Math.random() * 0.26,
+          size: 1.5 + Math.random() * 3.6,
           heat: 1,
         })
       }

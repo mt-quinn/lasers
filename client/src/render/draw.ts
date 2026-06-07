@@ -15,6 +15,10 @@ const USE_GL_PIECES = true
 // Selective bloom post-process over the final composite.
 const USE_BLOOM = true
 
+// Piece extrusion height as a fraction of cell size. Shared by the GL piece pass
+// and the screen-space FX (sparks) so on-piece effects sit on the 3D top face.
+const PIECE_EXTRUDE = 0.95
+
 // Reusable atlas for the WebGL piece pass: each piece's flat 2D artwork is
 // rendered into a packed slot here once per frame, then sampled as a texture on
 // its 3D top face.
@@ -30,6 +34,23 @@ const getPieceAtlas = (w: number, h: number) => {
     pieceAtlas.height = h
   }
   return pieceAtlasCtx
+}
+
+// Reusable scratch canvas for the contact-shadow pass: all silhouettes are drawn
+// here unblurred, then composited onto the scene with a single blur (instead of
+// blurring each piece's fill separately, which is a canvas-filter perf trap).
+let shadowCanvas: HTMLCanvasElement | null = null
+let shadowCanvasCtx: CanvasRenderingContext2D | null = null
+const getShadowCanvas = (w: number, h: number) => {
+  if (!shadowCanvas) {
+    shadowCanvas = document.createElement('canvas')
+    shadowCanvasCtx = shadowCanvas.getContext('2d')
+  }
+  if (shadowCanvas.width !== w || shadowCanvas.height !== h) {
+    shadowCanvas.width = w
+    shadowCanvas.height = h
+  }
+  return shadowCanvasCtx
 }
 import {
   drawRoundedPolyomino,
@@ -719,6 +740,37 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         }
         ctx.restore()
       }
+
+      // Welding hot-spot: the beam contact point glows and grows on the affected
+      // piece. Baked into the body (clipped to the shape) so it rides the 3D top
+      // face in the GL pass exactly aligned with the art; the bloom pass haloes
+      // the white-hot core. World hit point -> atlas-local via the block origin.
+      for (const wg of s.weldGlows) {
+        if (wg.blockId !== b.id) continue
+        const wt = clamp(wg.age / Math.max(0.0001, wg.life), 0, 1)
+        const wa = (1 - wt) * (0.35 + 0.55 * wg.intensity)
+        if (wa <= 0) continue
+        const lx = posX + (wg.x - b.pos.x)
+        const ly = posY + (wg.y - b.pos.y)
+        const gHue = hueAt(wg.x, wg.y)
+        const r0 = 1.5 + 2.2 * wg.intensity
+        const rInside = (9 + 13 * wg.intensity) * (wg.bloom || 1)
+        ctx.save()
+        drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
+        ctx.clip()
+        ctx.globalCompositeOperation = 'lighter'
+        const wgGrad = ctx.createRadialGradient(lx, ly, r0, lx, ly, rInside)
+        wgGrad.addColorStop(0, `rgba(255,255,255,${0.95 * wa})`)
+        wgGrad.addColorStop(0.22, heat(gHue, 255, 210, 120, 80, 70, 0.78 * wa))
+        wgGrad.addColorStop(0.55, heat(gHue, 255, 120, 40, 85, 58, 0.55 * wa))
+        wgGrad.addColorStop(0.9, heat(gHue, 255, 45, 25, 88, 48, 0.28 * wa))
+        wgGrad.addColorStop(1, heat(gHue, 255, 35, 25, 88, 45, 0))
+        ctx.fillStyle = wgGrad
+        ctx.beginPath()
+        ctx.arc(lx, ly, rInside, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      }
     }
 
     // Blocks (base render; the drain-gauge HP overlay is drawn per piece below).
@@ -844,31 +896,40 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           cr: col.r,
           cg: col.g,
           cb: col.b,
-          height: b.cellSize * 0.95,
+          height: b.cellSize * PIECE_EXTRUDE,
         })
       }
 
       // Contact shadows on the grid (drawn before the GL pieces composite over
-      // them) so the slabs feel placed in the field rather than floating.
-      ctx.save()
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.filter = 'blur(4px)'
-      for (const sl of slots) {
-        const b = sl.b
-        const visualX = b.pos.x
-        const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
-        const pc = project(sl.bcx, sl.bcy)
+      // them) so the slabs feel placed in the field rather than floating. Drawn
+      // unblurred into a scratch canvas, then composited with ONE blur pass.
+      const sdpr = s.view.dpr
+      const sctx = getShadowCanvas(ctx.canvas.width, ctx.canvas.height)
+      if (sctx) {
+        sctx.setTransform(sdpr, 0, 0, sdpr, 0, 0)
+        sctx.clearRect(0, 0, s.view.width, s.view.height)
+        sctx.fillStyle = 'rgba(0,0,0,0.34)'
+        for (const sl of slots) {
+          const b = sl.b
+          const visualX = b.pos.x
+          const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
+          const pc = project(sl.bcx, sl.bcy)
+          sctx.save()
+          sctx.translate(pc.x + 5 * pc.scale, pc.y + 9 * pc.scale)
+          sctx.scale(pc.scale, pc.scale)
+          sctx.translate(-sl.bcx, -sl.bcy)
+          drawRoundedPolyomino(sctx, b.loop, { x: visualX, y: visualY }, b.cellSize, b.cornerRadius)
+          sctx.fill()
+          sctx.restore()
+        }
         ctx.save()
-        ctx.translate(pc.x + 5 * pc.scale, pc.y + 9 * pc.scale)
-        ctx.scale(pc.scale, pc.scale)
-        ctx.translate(-sl.bcx, -sl.bcy)
-        drawRoundedPolyomino(ctx, b.loop, { x: visualX, y: visualY }, b.cellSize, b.cornerRadius)
-        ctx.fillStyle = 'rgba(0,0,0,0.34)'
-        ctx.fill()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.filter = `blur(${(4 * sdpr).toFixed(2)}px)`
+        ctx.drawImage(shadowCanvas as HTMLCanvasElement, 0, 0)
+        ctx.filter = 'none'
         ctx.restore()
       }
-      ctx.filter = 'none'
-      ctx.restore()
 
       const out = renderPiecesGL(
         pieceAtlas,
@@ -1636,16 +1697,30 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const hgh = layout.xpGauge.h
       const gaugeTx = layout.xpGauge.x + hgw / 2
       const gaugeTy = layout.xpGauge.y + (hgh - hgh * clamp(s.heat, 0, 1))
+      ctx.lineCap = 'round'
       for (const m of s.heatMotes) {
         const mHue = hueAt(m.x, m.y)
         if (m.collecting) {
-          // Fly from the projected capture point to the screen-space gauge.
+          // Fly from the projected capture point to the screen-space gauge, with a
+          // short comet tail pointing back along the flight path.
           const tt = Math.pow(clamp(m.ct / m.cdur, 0, 1), 0.7)
           const fromS = project(m.cfx, m.cfy)
           const px = fromS.x + (gaugeTx - fromS.x) * tt
           const py = fromS.y + (gaugeTy - fromS.y) * tt
           const z = lerp(fromS.scale, 1, tt)
           const r = (2.2 + 1.8 * (1 - tt)) * z + 1.4
+          const dxs = gaugeTx - fromS.x
+          const dys = gaugeTy - fromS.y
+          const dl = Math.hypot(dxs, dys) || 1
+          const tlen = (14 + 26 * (1 - tt)) * z
+          const bx = px - (dxs / dl) * tlen
+          const by = py - (dys / dl) * tlen
+          ctx.strokeStyle = heat(mHue, 255, 150, 70, 85, 60, 0.5)
+          ctx.lineWidth = Math.max(1, r * 1.1)
+          ctx.beginPath()
+          ctx.moveTo(bx, by)
+          ctx.lineTo(px, py)
+          ctx.stroke()
           ctx.fillStyle = heat(mHue, 255, 180, 90, 85, 66, 0.32)
           ctx.beginPath()
           ctx.arc(px, py, r * 2.4, 0, Math.PI * 2)
@@ -1654,96 +1729,93 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           ctx.beginPath()
           ctx.arc(px, py, r, 0, Math.PI * 2)
           ctx.fill()
+          ctx.fillStyle = `rgba(255,250,240,0.9)`
+          ctx.beginPath()
+          ctx.arc(px, py, Math.max(0.7, r * 0.5), 0, Math.PI * 2)
+          ctx.fill()
         } else {
-          // Loose motes ride the board grid: same drop-animation offset as pieces.
-          const flick = 0.78 + 0.22 * Math.sin(tNow * 7 + m.seed)
+          // Loose ember: a flickering hot cinder with a velocity-aligned tail. At
+          // rest it twinkles like a coal; once the well hooks it the tail stretches
+          // into a bright streak racing inward (the bloom pass haloes the head).
+          const flick = 0.7 + 0.3 * Math.sin(tNow * (8 + (m.seed % 5)) + m.seed)
           const sp = project(m.x, m.y - s.dropAnimOffset)
-          const a = 0.9 * flick
-          const r = m.size * 0.9 * sp.scale + 1.0
-          ctx.fillStyle = heat(mHue, 255, 150, 70, 82, 60, 0.26 * a)
+          const z = sp.scale
+          const a = (m.hooked ? 1 : 0.9) * flick
+          const r = m.size * 0.85 * z + 0.9
+          // LOD: far up the board a mote is only a few px; the halo/tail/twinkle
+          // are imperceptible there, so collapse to a single ember dot (the bloom
+          // pass still glows it). Keeps full detail for near motes.
+          if (z < 0.32) {
+            ctx.fillStyle = heat(mHue, 255, 205, 115, 85, 66, 0.95 * a)
+            ctx.beginPath()
+            ctx.arc(sp.x, sp.y, Math.max(0.8, r * 1.15), 0, Math.PI * 2)
+            ctx.fill()
+            continue
+          }
+          const speed = Math.hypot(m.vx, m.vy)
+          const dirx = speed > 1e-3 ? m.vx / speed : 0
+          const diry = speed > 1e-3 ? m.vy / speed : 0
+          const tailLen = Math.min(36, speed * 0.026 + (m.hooked ? 9 : 1.5))
+          const back = project(m.x - dirx * tailLen, m.y - diry * tailLen - s.dropAnimOffset)
+
+          // Soft outer glow.
+          ctx.fillStyle = heat(mHue, 255, 150, 70, 82, 60, 0.22 * a)
           ctx.beginPath()
-          ctx.arc(sp.x, sp.y, r * 2.6, 0, Math.PI * 2)
+          ctx.arc(sp.x, sp.y, r * 2.8, 0, Math.PI * 2)
           ctx.fill()
-          ctx.fillStyle = heat(mHue, 255, 210, 120, 85, 68, 0.95 * a)
+
+          // Comet tail: warm wide pass + bright thin core.
+          ctx.strokeStyle = heat(mHue, 255, 120, 50, 85, 58, 0.4 * a)
+          ctx.lineWidth = Math.max(1, r * 1.3)
           ctx.beginPath()
-          ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.fillStyle = `rgba(255,250,240,${(0.7 * a).toFixed(3)})`
+          ctx.moveTo(back.x, back.y)
+          ctx.lineTo(sp.x, sp.y)
+          ctx.stroke()
+          ctx.strokeStyle = heat(mHue, 255, 210, 120, 88, 70, 0.72 * a)
+          ctx.lineWidth = Math.max(0.8, r * 0.6)
           ctx.beginPath()
-          ctx.arc(sp.x, sp.y, Math.max(0.8, r * 0.45), 0, Math.PI * 2)
+          ctx.moveTo(back.x, back.y)
+          ctx.lineTo(sp.x, sp.y)
+          ctx.stroke()
+
+          // White-hot head.
+          ctx.fillStyle = `rgba(255,250,240,${(0.92 * a).toFixed(3)})`
+          ctx.beginPath()
+          ctx.arc(sp.x, sp.y, Math.max(0.8, r * 0.7), 0, Math.PI * 2)
           ctx.fill()
+
+          // Twinkle cross on the flicker peaks.
+          if (flick > 0.9) {
+            const sLen = r * 3.2
+            const sa = ((flick - 0.9) / 0.1) * a
+            ctx.strokeStyle = `rgba(255,240,210,${(0.5 * sa).toFixed(3)})`
+            ctx.lineWidth = Math.max(0.6, r * 0.18)
+            ctx.beginPath()
+            ctx.moveTo(sp.x - sLen, sp.y)
+            ctx.lineTo(sp.x + sLen, sp.y)
+            ctx.moveTo(sp.x, sp.y - sLen)
+            ctx.lineTo(sp.x, sp.y + sLen)
+            ctx.stroke()
+          }
         }
       }
       ctx.restore()
     }
 
-    // Welding hit FX: glow + sparks at beam contact points.
-    if (s.weldGlows.length > 0 || s.sparks.length > 0) {
+    // Welding hit FX sparks at beam contact points. (The on-piece hot-spot glow
+    // is baked into the piece body in drawPieceBody so it rides the 3D top face;
+    // here we only fling the sparks, lifted onto that top face.)
+    if (s.sparks.length > 0) {
       ctx.save()
       ctx.globalCompositeOperation = 'lighter'
 
-      // Glows (radial gradients)
-      for (const g of s.weldGlows) {
-        const b = s.blocks.find((bb) => bb.id === g.blockId)
-        const t = clamp(g.age / Math.max(0.0001, g.life), 0, 1)
-        const aBase = (1 - t) * (0.35 + 0.55 * g.intensity)
-        const a = b ? aBase : aBase * 0.22
-
-        // Perspective: align to the owning block so the clipped glow matches the
-        // projected piece; fall back to the hit point if the block is gone.
-        let wcx = g.x
-        let wcy = g.y
-        if (b) {
-          const vp = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset }
-          wcx = vp.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
-          wcy = vp.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
-        }
-        const wgp = project(wcx, wcy)
-        ctx.save()
-        ctx.translate(wgp.x, wgp.y)
-        ctx.scale(wgp.scale, wgp.scale)
-        ctx.translate(-wcx, -wcy)
-
-        // Smaller, metal-like hot spot. Growth should be mostly inside the piece.
-        const r0 = 1.5 + 2.2 * g.intensity
-        const baseInside = 9 + 13 * g.intensity
-        const rInside = baseInside * (g.bloom || 1)
-
-        // Heat tint follows the piece's live rainbow hue (and reverts to baked
-        // orange/red when music is off). Core stays white-hot for impact read.
-        const gHue = hueAt(g.x, g.y)
-        const gradInside = ctx.createRadialGradient(g.x, g.y, r0, g.x, g.y, rInside)
-        gradInside.addColorStop(0, `rgba(255,255,255,${0.95 * a})`)
-        gradInside.addColorStop(0.22, heat(gHue, 255, 210, 120, 80, 70, 0.78 * a))
-        gradInside.addColorStop(0.55, heat(gHue, 255, 120, 40, 85, 58, 0.55 * a))
-        gradInside.addColorStop(0.9, heat(gHue, 255, 45, 25, 88, 48, 0.28 * a))
-        gradInside.addColorStop(1, heat(gHue, 255, 35, 25, 88, 45, 0))
-
-        if (b) {
-          ctx.save()
-          // Clip glow to the block shape so it reads like the metal is glowing.
-          // Apply drop animation offset to match visual block position
-          const visualPos = { x: b.pos.x, y: b.pos.y - s.dropAnimOffset }
-          drawRoundedPolyomino(ctx, b.loop, visualPos, b.cellSize, b.cornerRadius)
-          ctx.clip()
-          ctx.fillStyle = gradInside
-          ctx.beginPath()
-          ctx.arc(g.x, g.y, rInside, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.restore()
-        }
-
-        // Subtle external halo (reduced outside-piece glow; NOT scaled by bloom).
-        const rHalo = baseInside + 6 + 4 * g.intensity
-        const gradHalo = ctx.createRadialGradient(g.x, g.y, baseInside * 0.6, g.x, g.y, rHalo)
-        gradHalo.addColorStop(0, heat(gHue, 255, 150, 60, 82, 62, 0.07 * a))
-        gradHalo.addColorStop(0.6, heat(gHue, 255, 60, 40, 86, 50, 0.035 * a))
-        gradHalo.addColorStop(1, heat(gHue, 255, 60, 40, 86, 50, 0))
-        ctx.fillStyle = gradHalo
-        ctx.beginPath()
-        ctx.arc(g.x, g.y, rHalo, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.restore() // weld glow perspective transform
+      // Lift FX off the plane onto the piece top face (sparks spawn at beam/piece
+      // contacts). The GL shader raises a point of height z up-screen by z*scale.
+      const fxLift = (sortedBlocks[0]?.cellSize ?? 40) * PIECE_EXTRUDE
+      const projLifted = (x: number, y: number) => {
+        const pp = project(x, y)
+        pp.y -= fxLift * pp.scale
+        return pp
       }
 
       // Sparks
@@ -1764,10 +1836,11 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
           : heat(hueAt(p.x, p.y), 255, 120, 210, 85, 65, 0.35 * a)
 
         const tail = 0.018 + 0.022 * p.heat
-        // Project the streak endpoints and scale its weight with depth.
+        // Project the streak endpoints (lifted onto the piece top face) and scale
+        // its weight with depth.
         const z = scaleAt(p.y)
-        const head = project(p.x, p.y)
-        const back = project(p.x - p.vx * tail, p.y - p.vy * tail)
+        const head = projLifted(p.x, p.y)
+        const back = projLifted(p.x - p.vx * tail, p.y - p.vy * tail)
 
         ctx.lineCap = 'round'
         ctx.lineWidth = Math.max(1, p.size) * z
