@@ -2212,7 +2212,7 @@ export const drawFrame = (
     // white score it multiplies) — it brightens with a quick lift on each kill and
     // fades as the window lapses. No pill: it matches the HUD's text-readout style.
     {
-      const insetR = dialCX - dialR - 10
+      const insetR = dialCX - dialR - 20
       const ty = capY + capH / 2 + 0.5
       const scoreStr = s.score.toLocaleString()
       ctx.save()
@@ -2256,7 +2256,7 @@ export const drawFrame = (
       ctx.shadowColor = 'rgba(0,0,0,0.5)'
       ctx.shadowBlur = 3
       ctx.fillStyle = hsl(46, 30, 84, 0.62)
-      ctx.fillText(label, dialCX - dialR - 10, capY - 12)
+      ctx.fillText(label, dialCX - dialR - 20, capY - 12)
       ctx.restore()
     }
 
