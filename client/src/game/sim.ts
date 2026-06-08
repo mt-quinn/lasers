@@ -174,10 +174,10 @@ const updateWellPuck = (s: RunState, dt: number) => {
 // Charge is presented to the player on a 0..100 scale (the bar fills to 100),
 // so a mote's internal 0..1 value reads as a clean "+N" on pickup.
 const CHARGE_DISPLAY = 100
-const GAUGE_FX_DUR = 0.75
+const GAUGE_FX_DUR = 1.0
 
-const pushGaugeFx = (s: RunState, text: string, kind: GaugeFx['kind'], x?: number, y?: number) => {
-  s.gaugeFx.push({ id: s.nextGaugeFxId++, t: 0, dur: GAUGE_FX_DUR, text, kind, x, y })
+const pushGaugeFx = (s: RunState, text: string, kind: GaugeFx['kind'], x?: number, y?: number, world?: boolean) => {
+  s.gaugeFx.push({ id: s.nextGaugeFxId++, t: 0, dur: GAUGE_FX_DUR, text, kind, x, y, world })
   // Cap so a dense surge can't grow the list unbounded.
   if (s.gaugeFx.length > 24) s.gaugeFx.splice(0, s.gaugeFx.length - 24)
 }
@@ -584,7 +584,7 @@ export const stepSim = (s: RunState, dt: number) => {
           if (s.heat >= 1 && s.overdriveSec <= 0) {
             const bonus = overflowScore(s, m)
             s.score += bonus
-            pushGaugeFx(s, `+${bonus}`, 'score', well.pos.x, well.pos.y)
+            pushGaugeFx(s, `+${bonus}`, 'score', well.pos.x, well.pos.y, true)
             dead.push(m.id)
             continue
           }

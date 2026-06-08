@@ -104,10 +104,13 @@ export type GaugeFx = {
   dur: number
   text: string
   kind: 'charge' | 'score' | 'bank'
-  // Optional screen-space anchor. When set, the floater pops here (e.g. over the
-  // well, for overflow score absorbed by the black hole) instead of at the gauge.
+  // Optional anchor. When set, the floater pops here (e.g. over the well, for
+  // overflow score absorbed by the black hole) instead of at the gauge.
   x?: number
   y?: number
+  // When true, (x,y) are WORLD coords the renderer must project (the well lives
+  // in world space); otherwise they're raw screen-space px.
+  world?: boolean
 }
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'

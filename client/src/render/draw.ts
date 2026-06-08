@@ -1877,9 +1877,8 @@ export const drawFrame = (
     const cutRight = s.view.width
     const cutBottom = layout.failY
     const bottomY = barY + barH
-    // Horizontal leg height: just enough for inline stats with padding.
+    // Horizontal leg height: just enough for the inline score readout with padding.
     const capH = 36
-    // Wider horizontal leg so DPS/♥ can sit further left with the same left padding.
     const capW = 184
     const capX = barX + barW - capW
     const capY = bottomY - capH
@@ -1959,8 +1958,9 @@ export const drawFrame = (
     // XP groove + fill (kept above the dial so nothing overlaps).
     {
       const gx2 = barX + 7
-      // More top padding so the XP track doesn't feel jammed against the top of the container.
-      const gy2 = barY + 18
+      // Extra top padding reserves a clean header band for the charge % readout
+      // above the groove (so it never crowds the bar or the 25% markers).
+      const gy2 = barY + 22
       const gw2 = barW - 14
       const gh2 = Math.max(26, dialTop - gy2)
       const groove = ctx.createLinearGradient(0, gy2, 0, gy2 + gh2)
@@ -2009,16 +2009,34 @@ export const drawFrame = (
         ctx.fill()
       }
 
-      // Segment the groove into 4 pips so partial charge ("almost there") reads
-      // at a glance instead of as one ambiguous float.
+      // Segment the groove into 4 pips at 25/50/75% so partial charge reads at a
+      // glance. Engraved look: a dark cut with a 1px light bevel beneath, plus
+      // bright nubs biting in from both edges so the divisions stay distinct over
+      // the fill instead of washing out.
       ctx.globalCompositeOperation = 'source-over'
-      ctx.strokeStyle = 'rgba(0,0,0,0.34)'
-      ctx.lineWidth = 1
+      const nub = 4
       for (let i = 1; i < 4; i++) {
-        const ty2 = gy2 + (gh2 * i) / 4
+        const ty2 = Math.round(gy2 + (gh2 * i) / 4) + 0.5
+        // Engraved groove line: dark cut + light bevel highlight below it.
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+        ctx.lineWidth = 1
         ctx.beginPath()
-        ctx.moveTo(gx2 + 1.5, ty2)
-        ctx.lineTo(gx2 + gw2 - 1.5, ty2)
+        ctx.moveTo(gx2 + 2, ty2)
+        ctx.lineTo(gx2 + gw2 - 2, ty2)
+        ctx.stroke()
+        ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+        ctx.beginPath()
+        ctx.moveTo(gx2 + 2, ty2 + 1)
+        ctx.lineTo(gx2 + gw2 - 2, ty2 + 1)
+        ctx.stroke()
+        // Edge nubs: short, bright ticks biting inward from each side.
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(gx2, ty2)
+        ctx.lineTo(gx2 + nub, ty2)
+        ctx.moveTo(gx2 + gw2 - nub, ty2)
+        ctx.lineTo(gx2 + gw2, ty2)
         ctx.stroke()
       }
       ctx.globalCompositeOperation = 'lighter'
@@ -2036,10 +2054,11 @@ export const drawFrame = (
         ctx.restore()
       }
 
-      // Groove label. Normal play: the combo multiplier chip. Armed: a vertical
-      // "TAP TO FIRE" running up the bar — it fits the tall, narrow gauge (a
-      // horizontal chip spills off the right screen edge) and fuses the
-      // ready-state with the call-to-action without covering the playfield.
+      // Groove label. Normal play: the charge level (0-100%), so the "+N" mote
+      // floaters visibly accrue toward it (the combo multiplier moved to the
+      // score leg, where it reads as the score multiplier it is). Armed: a
+      // vertical "TAP TO FIRE" running up the bar — it fits the tall, narrow
+      // gauge and fuses the ready-state with the call-to-action.
       ctx.globalCompositeOperation = 'source-over'
       const cxBar = barX + barW / 2
       if (armed) {
@@ -2067,21 +2086,38 @@ export const drawFrame = (
         }
         ctx.restore()
       } else {
-        const label = `×${comboMult.toFixed(1)}`
-        ctx.font = "950 13px 'Oxanium', system-ui, sans-serif"
-        ctx.textAlign = 'center'
+        // Bespoke charge readout: a clean number seated in the header band ABOVE
+        // the groove (out of the 25% marker zone). Sized to fit the narrow 34px
+        // bar with comfortable padding — the digits carry the value, with a small
+        // raised "%" superscript. (At 100% the bar arms and shows TAP TO FIRE, so
+        // this only ever renders 1-2 digits.)
+        const pct = Math.round(heatFrac * 100)
+        const numStr = `${pct}`
+        const hy = barY + 12
+        const numFont = "800 13px 'Oxanium', system-ui, sans-serif"
+        const pctFont = "800 8px 'Oxanium', system-ui, sans-serif"
+        const gap = 1.5
+        ctx.save()
         ctx.textBaseline = 'middle'
-        const ty = gy2 + gh2 * 0.55
-        const tw = ctx.measureText(label).width
-        ctx.fillStyle = 'rgba(0,0,0,0.22)'
-        roundedRectPath(cxBar - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
-        ctx.fill()
-        ctx.strokeStyle = 'rgba(255,255,255,0.10)'
-        ctx.lineWidth = 1
-        roundedRectPath(cxBar - tw / 2 - 8, ty - 10, tw + 16, 20, 10)
-        ctx.stroke()
-        ctx.fillStyle = 'rgba(255,246,213,0.92)'
-        ctx.fillText(label, cxBar, ty)
+        ctx.shadowColor = 'rgba(0,0,0,0.6)'
+        ctx.shadowBlur = 3
+        ctx.font = numFont
+        const numW = ctx.measureText(numStr).width
+        ctx.font = pctFont
+        const pctW = ctx.measureText('%').width
+        const total = numW + gap + pctW
+        const startX = cxBar - total / 2
+        const lift = 16 + 30 * heatFrac
+        // Number — warms and brightens as the charge climbs.
+        ctx.textAlign = 'left'
+        ctx.font = numFont
+        ctx.fillStyle = hsl(44, 92, 56 + lift, 0.72 + 0.28 * heatFrac)
+        ctx.fillText(numStr, startX, hy)
+        // "%" — smaller, dimmer, raised as a superscript for a polished look.
+        ctx.font = pctFont
+        ctx.fillStyle = hsl(44, 70, 66 + lift * 0.4, 0.55 + 0.3 * heatFrac)
+        ctx.fillText('%', startX + numW + gap, hy - 3)
+        ctx.restore()
       }
       ctx.restore()
     }
@@ -2090,30 +2126,43 @@ export const drawFrame = (
     // a pickup's worth — and that combo/gold make motes worth more. Color codes
     // the state: gold charge, cool-cyan banked-to-next, bright-gold overflow score.
     if (s.gaugeFx.length > 0) {
-      const fxCx = barX + barW / 2
-      const fxTop = barY + 22
       ctx.save()
       ctx.globalCompositeOperation = 'lighter'
-      ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.font = "900 13px 'Oxanium', system-ui, sans-serif"
       for (const fx of s.gaugeFx) {
         const p = clamp(fx.t / fx.dur, 0, 1)
         const a = (1 - p) * 0.95
-        const rise = 24 * p
-        const jitter = ((fx.id % 5) - 2) * 7
         const col =
           fx.kind === 'score'
             ? hsl(45, 100, 70, a)
             : fx.kind === 'bank'
-              ? hsl(190, 92, 70, a)
-              : hsl(48, 96, 76, a)
+              ? hsl(190, 92, 72, a)
+              : hsl(48, 96, 78, a)
         ctx.fillStyle = col
-        // Anchored floaters (e.g. overflow score absorbed by the well) pop at
-        // their own screen point; the rest rise from the gauge.
-        const ax = fx.x != null ? fx.x : fxCx
-        const ay = fx.y != null ? fx.y : fxTop
-        ctx.fillText(fx.text, ax + jitter, ay - rise)
+        if (fx.x != null && fx.y != null) {
+          // Anchored (overflow score absorbed by the well): projected + lifted
+          // above the hole so it clears the player's finger.
+          ctx.font = "900 13px 'Oxanium', system-ui, sans-serif"
+          ctx.textAlign = 'center'
+          const jitter = ((fx.id % 5) - 2) * 7
+          let ax = fx.x
+          let ay = fx.y
+          if (fx.world) {
+            const wp = project(fx.x, fx.y)
+            ax = wp.x
+            ay = wp.y - 44
+          }
+          ctx.fillText(fx.text, ax + jitter, ay - 30 * p)
+        } else {
+          // Gauge stream: a staggered ledger rising just LEFT of the bar. Five
+          // vertical slots keyed off the id keep rapid pickups from piling onto
+          // each other, and right-alignment keeps them clear of the bar/markers.
+          ctx.font = "800 12px 'Oxanium', system-ui, sans-serif"
+          ctx.textAlign = 'right'
+          const slot = fx.id % 5
+          const baseY = barY + 20 + slot * 13
+          ctx.fillText(fx.text, barX - 8, baseY - 34 * p)
+        }
       }
       ctx.restore()
     }
@@ -2157,35 +2206,57 @@ export const drawFrame = (
       ctx.restore()
     }
 
-    // Score in the horizontal leg (left of the depth dial).
+    // Score readout in the leg. The score is the hero, right-anchored at the dial
+    // so it never leaps. The combo multiplier is restrained gold text grouped
+    // immediately to the LEFT of the score (gold = its identity, distinct from the
+    // white score it multiplies) — it brightens with a quick lift on each kill and
+    // fades as the window lapses. No pill: it matches the HUD's text-readout style.
     {
-      const insetL = capX + 10
       const insetR = dialCX - dialR - 10
-      const tx = (insetL + insetR) / 2
       const ty = capY + capH / 2 + 0.5
+      const scoreStr = s.score.toLocaleString()
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
-      ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillStyle = 'rgba(255,246,213,0.96)'
-      ctx.font = "900 15px 'Oxanium', system-ui, sans-serif"
-      ctx.fillText(s.score.toLocaleString(), tx, ty)
+      // Score (hero).
+      ctx.textAlign = 'right'
+      ctx.font = "900 17px 'Oxanium', system-ui, sans-serif"
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'
+      ctx.shadowBlur = 3
+      ctx.fillStyle = 'rgba(255,248,232,0.98)'
+      ctx.fillText(scoreStr, insetR, ty)
+      const scoreW = ctx.measureText(scoreStr).width
+      ctx.shadowBlur = 0
+      // Combo multiplier — gold text just left of the score.
+      if (comboMult > 1) {
+        const fresh = clamp((s.comboTimerSec - 3.55) / 0.45, 0, 1)
+        const fade = clamp(s.comboTimerSec / 0.5, 0, 1)
+        const label = `×${comboMult.toFixed(1)}`
+        ctx.textAlign = 'right'
+        ctx.font = "800 14px 'Oxanium', system-ui, sans-serif"
+        ctx.shadowColor = hsl(46, 100, 60, (0.5 + 0.4 * fresh) * fade)
+        ctx.shadowBlur = 5 + 6 * fresh
+        ctx.fillStyle = hsl(46, 100, 62 + 12 * fresh, (0.85 + 0.15 * fresh) * fade)
+        ctx.fillText(label, insetR - scoreW - 9, ty)
+        ctx.shadowBlur = 0
+      }
       ctx.restore()
     }
 
-    // Best score readout (only once a local best or live score exists).
+    // Best score readout: a small, dim line above the leg (its original home), so
+    // the leg's proportions stay clean.
     if (s.bestScoreLocal > 0 || s.score > 0) {
       const bestLive = Math.max(s.bestScoreLocal, s.score)
       const label = `BEST ${bestLive.toLocaleString()}`
-      const x = barX - 10
-      const y = capY - 14
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
-      ctx.font = "950 14px 'Oxanium', system-ui, sans-serif"
+      ctx.font = "800 12px 'Oxanium', system-ui, sans-serif"
       ctx.textAlign = 'right'
       ctx.textBaseline = 'alphabetic'
-      ctx.fillStyle = 'rgba(255,246,213,0.92)'
-      ctx.fillText(label, x, y)
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'
+      ctx.shadowBlur = 3
+      ctx.fillStyle = hsl(46, 30, 84, 0.62)
+      ctx.fillText(label, dialCX - dialR - 10, capY - 12)
       ctx.restore()
     }
 
@@ -3011,22 +3082,68 @@ export const drawFrame = (
         ctx.restore()
       }
 
-      // Armed Overdrive: give the lens a subtle "charged" gold breath so it
-      // reads as hot/ready to the eye that's already on it — but NO text or
-      // rings sprawling over the board. The heat gauge carries the explicit
-      // "TAP TO FIRE" call-to-action.
+      // Armed Overdrive: the well is where the eye and finger already are, so it
+      // carries the primary "ready, tap to release" signal. A breathing gold
+      // halo + a steady charged ring + a contracting "tap-target" pulse that
+      // repeatedly converges on the core — an unmistakable affordance that this
+      // is now a button — all in the gold Overdrive identity. (The gauge's "TAP
+      // TO FIRE" and the screen rim reinforce it; this is the focal one.)
       if (s.overdriveArmed && s.overdriveSec <= 0) {
-        const pulse = 0.5 + 0.5 * Math.sin(s.timeSec * 5.5)
+        const GOLD = 46
+        const breath = 0.5 + 0.5 * Math.sin(s.timeSec * 4.2)
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
-        const rGlow = rCore * (1.5 + 0.45 * pulse)
-        const g = ctx.createRadialGradient(cx, cy, rCore * 0.4, cx, cy, rGlow)
-        g.addColorStop(0, hsl(47, 100, 72, 0.1 + 0.1 * pulse))
-        g.addColorStop(0.6, hsl(47, 100, 66, 0.1 + 0.14 * pulse))
-        g.addColorStop(1, hsl(45, 100, 60, 0))
+
+        // Charged halo (bigger + brighter than the idle corona).
+        const rGlow = rCore * (2.4 + 0.5 * breath)
+        const g = ctx.createRadialGradient(cx, cy, rCore * 0.6, cx, cy, rGlow)
+        g.addColorStop(0, hsl(GOLD, 100, 74, 0.22 + 0.16 * breath))
+        g.addColorStop(0.5, hsl(GOLD, 100, 66, 0.16 + 0.14 * breath))
+        g.addColorStop(1, hsl(GOLD, 100, 58, 0))
         ctx.fillStyle = g
         ctx.beginPath()
         ctx.arc(cx, cy, rGlow, 0, TWO_PI)
+        ctx.fill()
+
+        // Steady charged ring hugging the event horizon — a solid "loaded" band.
+        ctx.lineWidth = 2.2
+        ctx.strokeStyle = hsl(GOLD, 100, 76, 0.55 + 0.35 * breath)
+        ctx.shadowColor = hsl(GOLD, 100, 64, 0.9)
+        ctx.shadowBlur = 8
+        ctx.beginPath()
+        ctx.arc(cx, cy, rCore * 1.7, 0, TWO_PI)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+
+        // Tap-target pulse: a ring that converges on the core and fades, on a
+        // steady ~1s beat. Reads as "press here".
+        const tp = (s.timeSec % 1.05) / 1.05
+        const tpR = rCore * (3.4 - 1.7 * tp)
+        const tpA = 0.6 * (1 - tp) * (1 - tp)
+        ctx.lineWidth = 2 + 1.6 * (1 - tp)
+        ctx.strokeStyle = hsl(GOLD, 100, 80, tpA)
+        ctx.beginPath()
+        ctx.arc(cx, cy, tpR, 0, TWO_PI)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      // Firing: the well is the hot muzzle — a bright gold flare that blooms on
+      // the tap and winds down with the surge (s.heat == overdriveSec/duration).
+      if (s.overdriveSec > 0) {
+        const drain = clamp(s.heat, 0, 1)
+        const onset = clamp((drain - 0.86) / 0.14, 0, 1)
+        const fl = 0.5 + 0.5 * Math.sin(s.timeSec * 16)
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        const rF = rCore * (2.6 + 1.4 * drain + 1.2 * onset)
+        const g = ctx.createRadialGradient(cx, cy, rCore * 0.5, cx, cy, rF)
+        g.addColorStop(0, hsl(48, 100, 86, (0.3 + 0.4 * drain) * (0.7 + 0.3 * fl) + 0.5 * onset))
+        g.addColorStop(0.5, hsl(46, 100, 70, (0.18 + 0.3 * drain) * (0.7 + 0.3 * fl)))
+        g.addColorStop(1, hsl(44, 100, 60, 0))
+        ctx.fillStyle = g
+        ctx.beginPath()
+        ctx.arc(cx, cy, rF, 0, TWO_PI)
         ctx.fill()
         ctx.restore()
       }
@@ -3049,6 +3166,102 @@ export const drawFrame = (
       ctx.fillStyle = 'rgba(255,246,213,0.96)'
       ctx.fillText(label, cxx, cyy)
       ctx.restore()
+    }
+
+    // Overdrive screen-state: a peripheral energy frame (transparent center, so
+    // the playfield stays fully legible). Armed = a calm breathing gold rim
+    // ("loaded"); firing = the same frame ignited brighter with living corner
+    // flares + a crisp edge line, winding down as the surge drains. The center is
+    // never washed — character lives at the edges, not over the action.
+    {
+      const odOn = s.overdriveSec > 0
+      const odArmed = s.overdriveArmed && !odOn
+      if (odOn || odArmed) {
+        const W = s.view.width
+        const H = s.view.height
+        const cx = W * 0.5
+        const cy = H * 0.52
+        const rIn = Math.min(W, H) * 0.46
+        const rOut = Math.max(W, H) * 0.86
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+
+        if (odArmed) {
+          // Loaded: a calm, slow gold breath hugging the edges.
+          const breath = 0.5 + 0.5 * Math.sin(s.timeSec * 3.2)
+          const a = 0.12 + 0.12 * breath
+          const g = ctx.createRadialGradient(cx, cy, rIn, cx, cy, rOut)
+          g.addColorStop(0, hsl(46, 100, 60, 0))
+          g.addColorStop(0.72, hsl(46, 100, 58, a * 0.45))
+          g.addColorStop(1, hsl(44, 100, 62, a))
+          ctx.fillStyle = g
+          ctx.fillRect(0, 0, W, H)
+        } else {
+          // FIRING — deliberately distinct from the calm gold "armed" breath:
+          // hotter/whiter, with motion (a one-shot shockwave bursting from the
+          // well on the tap, then a fast-pulsing white-hot edge that cools as the
+          // surge drains). s.heat == overdriveSec/duration -> wind-down envelope.
+          const drain = clamp(s.heat, 0, 1)
+          const fireProg = 1 - drain // 0 at the instant of fire -> 1 at surge end
+          const onset = clamp((drain - 0.8) / 0.2, 0, 1)
+          const fastPulse = 0.5 + 0.5 * Math.sin(s.timeSec * 14)
+
+          // Edge bloom — WHITE-hot (low saturation, high lightness) so it reads as
+          // a hotter temperature than the gold armed state, not just "more gold".
+          const a = 0.2 + 0.34 * drain
+          const g = ctx.createRadialGradient(cx, cy, rIn, cx, cy, rOut)
+          g.addColorStop(0, hsl(50, 100, 80, 0))
+          g.addColorStop(0.58, hsl(49, 90, 72, a * 0.45 * (0.8 + 0.2 * fastPulse)))
+          g.addColorStop(1, hsl(48, 95, 78, Math.min(0.9, a + 0.35 * onset)))
+          ctx.fillStyle = g
+          ctx.fillRect(0, 0, W, H)
+
+          // Living corner flares (out of phase) keep the frame alive.
+          const corners: Array<[number, number, number]> = [
+            [0, 0, 0],
+            [W, 0, 1.6],
+            [0, H, 3.1],
+            [W, H, 4.7],
+          ]
+          const cr = Math.min(W, H) * 0.66
+          for (const [qx, qy, ph] of corners) {
+            const sh = 0.5 + 0.5 * Math.sin(s.timeSec * 7 + ph)
+            const ca = (0.12 + 0.26 * drain) * (0.4 + 0.6 * sh) + 0.3 * onset
+            const cg = ctx.createRadialGradient(qx, qy, 0, qx, qy, cr)
+            cg.addColorStop(0, hsl(50, 95, 85, Math.min(0.72, ca)))
+            cg.addColorStop(0.5, hsl(47, 100, 66, ca * 0.4))
+            cg.addColorStop(1, hsl(45, 100, 58, 0))
+            ctx.fillStyle = cg
+            ctx.fillRect(0, 0, W, H)
+          }
+
+          // Crisp inset border, fast-pulsing white-gold, cooling as it drains.
+          ctx.strokeStyle = hsl(50, 100, 86, Math.min(0.95, (0.34 + 0.3 * fastPulse) * drain + 0.55 * onset))
+          ctx.lineWidth = 3
+          ctx.strokeRect(3.5, 3.5, W - 7, H - 7)
+
+          // One-shot ignition shockwave: a bright ring bursting OUT from the well
+          // (the muzzle) the instant you tap — the unmistakable "fire" moment.
+          const shock = clamp(fireProg / 0.13, 0, 1)
+          if (shock < 1) {
+            const oc = s.well.placed ? project(s.well.pos.x, s.well.pos.y) : { x: cx, y: cy }
+            const maxR = Math.hypot(W, H) * 0.62
+            const sr = shock * maxR
+            const sa = (1 - shock) * (1 - shock)
+            ctx.strokeStyle = hsl(49, 100, 78, 0.55 * sa)
+            ctx.lineWidth = 3 + 14 * (1 - shock)
+            ctx.beginPath()
+            ctx.arc(oc.x, oc.y, sr, 0, Math.PI * 2)
+            ctx.stroke()
+            ctx.strokeStyle = hsl(52, 100, 94, 0.7 * sa)
+            ctx.lineWidth = 2
+            ctx.beginPath()
+            ctx.arc(oc.x, oc.y, sr * 1.05, 0, Math.PI * 2)
+            ctx.stroke()
+          }
+        }
+        ctx.restore()
+      }
     }
 
     // Power-up flash: a compact neon badge that pops in, holds briefly, then
@@ -3082,7 +3295,9 @@ export const drawFrame = (
         const cx = s.view.width * 0.5
         const cy = s.view.height * 0.3 + riseY
         const scale = 0.72 + 0.28 * back
-        const hue = mi > 0 ? mHue : 300
+        // Overdrive's identity color is gold (matches the ignition frame),
+        // distinct from the music-reactive rest of the scene.
+        const hue = 45
 
         ctx.save()
         ctx.globalCompositeOperation = 'source-over'
@@ -3090,23 +3305,8 @@ export const drawFrame = (
         ctx.translate(cx, cy)
         ctx.scale(scale, scale)
 
-        // Eyebrow: "BEAM LEVEL N" — small, letterspaced, neon.
-        ctx.textBaseline = 'alphabetic'
-        ctx.shadowColor = hsl(hue, 100, 60, 0.7 * alpha)
-        ctx.shadowBlur = 8
-        try {
-          ctx.letterSpacing = '4px'
-        } catch {
-          // Older engines: harmless to skip.
-        }
-        ctx.font = '800 13px Oxanium'
-        ctx.fillStyle = hsl(hue, 95, 82, 0.92 * alpha)
-        ctx.fillText('HEAT MAXED', 2, -16)
-        try {
-          ctx.letterSpacing = '0px'
-        } catch {
-          /* noop */
-        }
+        // No eyebrow text — the screen-wide ignition frame carries the "this is a
+        // big deal" signal, so the banner is a single iconic word.
 
         // Main: "OVERDRIVE" — white-hot core with a hue bloom.
         ctx.textBaseline = 'middle'

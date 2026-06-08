@@ -24,16 +24,11 @@ type SavedRunState = Omit<
   | 'nextMoteId'
   | 'lifeLossFx'
   | 'levelUpNotificationFx'
-  // Transient control + combo state (recomputed live each run).
+  // Transient control state (recomputed live each run).
   | 'well'
-  | 'combo'
-  | 'comboBest'
-  | 'comboTimerSec'
+  // Purely-visual surge amplitude; recomputed from play.
   | 'crescendo'
-  | 'heat'
-  | 'heatNext'
-  | 'overdriveSec'
-  | 'overdriveArmed'
+  // In-flight feedback FX (not worth persisting).
   | 'gaugeFx'
   | 'nextGaugeFxId'
   | 'sinceStepSec'
@@ -129,6 +124,16 @@ export const saveGameState = (state: RunState) => {
       // Score persists with the run so a refresh keeps depth and score in sync.
       score: state.score,
       bestScoreLocal: state.bestScoreLocal,
+      // Heat / Overdrive + combo persist so a refresh keeps the player's earned
+      // charge and chain instead of resetting them. (Loose motes and visual FX
+      // stay transient.)
+      heat: state.heat,
+      heatNext: state.heatNext,
+      overdriveSec: state.overdriveSec,
+      overdriveArmed: state.overdriveArmed,
+      combo: state.combo,
+      comboBest: state.comboBest,
+      comboTimerSec: state.comboTimerSec,
       // Daily seed state so a refresh resumes the same board mid-run.
       dailySeed: state.dailySeed,
       dateKey: state.dateKey,
