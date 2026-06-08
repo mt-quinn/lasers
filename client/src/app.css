@@ -1036,6 +1036,45 @@
   white-space: nowrap;
 }
 
+/* Auto-marquee: a clip window whose track holds the text (twice when it needs
+   to scroll). The font/color come from the line class (npTitle/npArtist/npAlbum)
+   applied to the clip; the track inherits it. */
+.mqClip {
+  min-width: 0;
+  overflow: hidden;
+}
+.mqTrack {
+  display: flex;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+.mqTrack.scrolling {
+  animation-name: mqScroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.mqItem {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.mqTrack.scrolling .mqItem {
+  padding-right: 36px; /* matches GAP in <Marquee> */
+}
+@keyframes mqScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--mq-shift)));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mqTrack.scrolling {
+    animation: none;
+  }
+}
+
 /* Mobile "Tap to resume" prompt — a full-screen centered scrim that dims and
    blocks the whole game (which is frozen while it's up). Any tap on it is a
    valid activation gesture that unlocks the AudioContext. */
