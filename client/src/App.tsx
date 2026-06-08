@@ -918,6 +918,7 @@ export default function App() {
     fresh.view = prev.view
     fresh.input = prev.input
     fresh.bestDepthLocal = getBestDepth(highScores)
+    fresh.bestScoreLocal = getBestScore(highScores)
     Object.assign(prev, fresh)
     handledGameOverRef.current = false
     setHud({
