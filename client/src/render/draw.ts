@@ -13,6 +13,11 @@ import { renderFeaturesGL, type GLFeature } from './featuresGL'
 // WebGL is unavailable). Toggle off to compare against the legacy 2D path.
 const USE_GL_PIECES = true
 
+// Contact shadows under pieces/features. Even at half resolution the per-frame
+// silhouette redraw + Canvas2D blur + upscale composite is a measurable cost, so
+// it's the first quality sacrifice when the framerate is tight. Off = no shadows.
+const DRAW_CONTACT_SHADOWS = false
+
 // Piece extrusion height as a fraction of cell size. Shared by the GL piece pass
 // and the screen-space FX (sparks) so on-piece effects sit on the 3D top face.
 const PIECE_EXTRUDE = 0.95
@@ -706,7 +711,6 @@ export const drawFrame = (
       hueCy: number,
     ) => {
       const hpPct = clamp(b.hp / b.hpMax, 0, 1)
-      const glow = 0.6
       const pos = { x: posX, y: posY }
       // Bake the silhouette once and reuse it for the rim/speckle clips and the
       // outline stroke below (instead of re-tracing the polyomino each time).
@@ -729,16 +733,12 @@ export const drawFrame = (
         lum = relativeLuma(fillBase)
       }
 
-      if (b.isGold) {
-        ctx.shadowColor = `rgba(255,200,90,${0.34 * glow})`
-        ctx.shadowBlur = 24 * glow
-      } else if (mi > 0) {
-        ctx.shadowColor = hsl(pieceHue, 90, 60, clamp(0.12 * glow + mPulse * 0.1, 0, 0.5))
-        ctx.shadowBlur = 16 * glow + mEnergy * 12
-      } else {
-        ctx.shadowColor = `rgba(120,200,235,${0.16 * glow})`
-        ctx.shadowBlur = 18 * glow
-      }
+      // Per-piece glow disabled for performance: a Canvas2D shadowBlur on every
+      // piece every frame (baked + uploaded) was the dominant per-piece cost and
+      // scaled badly as pieces filled the screen. Removing it also lets the atlas
+      // tile margin shrink (smaller texture upload). Pieces keep their depth from
+      // the 3D extruded walls + rim light + domed shading.
+      ctx.shadowBlur = 0
 
       drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
       ctx.fillStyle = fillBase
@@ -783,42 +783,8 @@ export const drawFrame = (
       ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
       ctx.restore()
 
-      // Mineral speckle: a deterministic scatter of fine dark grains + a few
-      // bright flecks (seeded by piece id, so it's static and never shimmers),
-      // clipped to the shape. Turns the flat matter face into rock/ice. Skipped
-      // for gold (a polished gem) and armored/chrome (their plates cover it).
-      if (!b.isGold && b.kind !== 'armored' && b.kind !== 'chrome') {
-        ctx.save()
-        if (shapePath) ctx.clip(shapePath)
-        let seed = (b.id * 2654435761) >>> 0
-        const rnd = () => {
-          seed = (seed * 1664525 + 1013904223) >>> 0
-          return seed / 4294967296
-        }
-        const n = 5 + b.cells.length * 3
-        ctx.globalCompositeOperation = 'multiply'
-        for (let i = 0; i < n; i++) {
-          const px = ax + rnd() * w
-          const py = ay + rnd() * h
-          const rr = 0.6 + rnd() * 1.6
-          ctx.fillStyle = `rgba(26,50,66,${(0.05 + rnd() * 0.1).toFixed(3)})`
-          ctx.beginPath()
-          ctx.arc(px, py, rr, 0, Math.PI * 2)
-          ctx.fill()
-        }
-        ctx.globalCompositeOperation = 'screen'
-        const nb = Math.ceil(n * 0.4)
-        for (let i = 0; i < nb; i++) {
-          const px = ax + rnd() * w
-          const py = ay + rnd() * h
-          const rr = 0.5 + rnd() * 1.1
-          ctx.fillStyle = `rgba(220,240,250,${(0.04 + rnd() * 0.07).toFixed(3)})`
-          ctx.beginPath()
-          ctx.arc(px, py, rr, 0, Math.PI * 2)
-          ctx.fill()
-        }
-        ctx.restore()
-      }
+      // Mineral speckle removed for performance: ~20+ per-piece arc fills every
+      // frame (baked + uploaded) for a texture that read as near-invisible.
 
       ctx.lineWidth = 2
       if (b.isGold) {
@@ -985,7 +951,9 @@ export const drawFrame = (
     // billboard loop below if WebGL is unavailable.
     const renderBlocksGL = (blocks: BlockEntity[]): boolean => {
       const scale = Math.min(2, Math.max(1, s.view.dpr))
-      const M = 22 // glow margin around each piece (world px)
+      const M = 4 // tile margin around each piece (world px). Was 22 for the piece
+      // glow; with the glow removed only a few px are needed for the 2px outline
+      // stroke + bilinear edge, which shrinks every atlas tile and its upload.
       const SEP = 2 // atlas px gap so neighbours don't bleed under bilinear
       const AW_MAX = 2048
       type Slot = {
@@ -1096,8 +1064,10 @@ export const drawFrame = (
       // them) so the slabs feel placed in the field rather than floating. Drawn
       // unblurred into a scratch canvas, then composited with ONE blur pass.
       const sdpr = s.view.dpr
-      const shadow = getShadowPair(ctx.canvas.width, ctx.canvas.height)
-      if (shadow.actx && shadow.bctx) {
+      const shadow = DRAW_CONTACT_SHADOWS
+        ? getShadowPair(ctx.canvas.width, ctx.canvas.height)
+        : null
+      if (shadow && shadow.actx && shadow.bctx) {
         const sactx = shadow.actx
         const sbctx = shadow.bctx
         sactx.setTransform(sdpr * shadow.scale, 0, 0, sdpr * shadow.scale, 0, 0)
@@ -1773,8 +1743,10 @@ export const drawFrame = (
 
           // Contact shadows under the features (single batched, half-res blur).
           const sdpr = s.view.dpr
-          const shadow = getShadowPair(ctx.canvas.width, ctx.canvas.height)
-          if (shadow.actx && shadow.bctx) {
+          const shadow = DRAW_CONTACT_SHADOWS
+            ? getShadowPair(ctx.canvas.width, ctx.canvas.height)
+            : null
+          if (shadow && shadow.actx && shadow.bctx) {
             const sactx = shadow.actx
             const sbctx = shadow.bctx
             sactx.setTransform(sdpr * shadow.scale, 0, 0, sdpr * shadow.scale, 0, 0)
