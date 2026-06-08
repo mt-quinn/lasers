@@ -566,6 +566,13 @@ export default function App() {
           score: s.score,
           gameOver: s.gameOver,
         })
+        // Publish the live music hue so the DOM menus (pause / game over) can ride
+        // the soundtrack like the canvas does. Frozen to the cold cyan accent when
+        // nothing is playing. Throttled with the HUD bucket (hue drifts slowly).
+        document.documentElement.style.setProperty(
+          '--accent-hue',
+          (s.music.playing ? s.music.hue : 200).toFixed(1),
+        )
       }
 
       // Auto-save game state every 2 seconds (20 buckets)

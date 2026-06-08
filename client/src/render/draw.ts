@@ -1949,7 +1949,9 @@ export const drawFrame = (
     ctx.fillStyle = bg
     lPath(outerR)
     ctx.fill()
-    ctx.strokeStyle = 'rgba(143, 224, 255, 0.16)'
+    // Panel edge: subtly rides the music hue when playing (cold cyan when off),
+    // so the HUD frame breathes with the rest of the scene without losing legibility.
+    ctx.strokeStyle = mi > 0 ? hsl(mHue, 70, 78, 0.2) : 'rgba(143, 224, 255, 0.16)'
     ctx.lineWidth = 1.25
     lPath(outerR)
     ctx.stroke()
@@ -2232,11 +2234,14 @@ export const drawFrame = (
         const fresh = clamp((s.comboTimerSec - 3.55) / 0.45, 0, 1)
         const fade = clamp(s.comboTimerSec / 0.5, 0, 1)
         const label = `×${comboMult.toFixed(1)}`
+        // Reactive: ride the music hue (like the rest of the scene); fall back to
+        // the gold accent when music is off.
+        const comboHue = mi > 0 ? mHue : 46
         ctx.textAlign = 'right'
         ctx.font = "800 14px 'Oxanium', system-ui, sans-serif"
-        ctx.shadowColor = hsl(46, 100, 60, (0.5 + 0.4 * fresh) * fade)
+        ctx.shadowColor = hsl(comboHue, 100, 60, (0.5 + 0.4 * fresh) * fade)
         ctx.shadowBlur = 5 + 6 * fresh
-        ctx.fillStyle = hsl(46, 100, 62 + 12 * fresh, (0.85 + 0.15 * fresh) * fade)
+        ctx.fillStyle = hsl(comboHue, 100, 62 + 12 * fresh, (0.85 + 0.15 * fresh) * fade)
         ctx.fillText(label, insetR - scoreW - 9, ty)
         ctx.shadowBlur = 0
       }
@@ -2776,15 +2781,18 @@ export const drawFrame = (
       {
         const c = d.music
         const on = ui.musicOn
+        // The music button literally controls the soundtrack, so its lit accent
+        // rides the live music hue (falls back to the cold cyan when paused/silent).
+        const noteHue = mi > 0 ? mHue : 196
         ctx.save()
         if (on) {
-          ctx.fillStyle = 'rgba(28,60,86,0.6)'
+          ctx.fillStyle = hsl(noteHue, 55, 22, 0.6)
           ctx.beginPath()
           ctx.arc(c.cx, c.cy, d.btnR, 0, Math.PI * 2)
           ctx.fill()
-          ctx.shadowColor = 'rgba(110,210,255,0.6)'
+          ctx.shadowColor = hsl(noteHue, 100, 72, 0.6)
           ctx.shadowBlur = 14
-          ctx.strokeStyle = 'rgba(120,226,255,0.85)'
+          ctx.strokeStyle = hsl(noteHue, 100, 76, 0.85)
           ctx.lineWidth = 1
           ctx.beginPath()
           ctx.arc(c.cx, c.cy, d.btnR - 0.5, 0, Math.PI * 2)
@@ -2802,7 +2810,7 @@ export const drawFrame = (
         }
         ctx.restore()
 
-        const note = on ? '#eafaff' : 'rgba(255,246,213,0.42)'
+        const note = on ? hsl(noteHue, 100, 95) : 'rgba(255,246,213,0.42)'
         drawGlyph(c.cx, c.cy, () => {
           // Note stem + flag (stroked path) + two beam heads (filled circles).
           ctx.strokeStyle = note

@@ -1,3 +1,9 @@
+:root {
+  /* Live soundtrack hue, published from the render loop (App.tsx). Defaults to
+     the cold cyan accent so menus look right before/without music. */
+  --accent-hue: 200;
+}
+
 .lg-viewport {
   height: 100dvh;
   min-height: 100dvh;
@@ -183,7 +189,7 @@
   justify-content: center;
   padding: 1rem;
   background:
-    radial-gradient(circle at 50% 18%, rgba(70, 180, 232, 0.16), transparent 60%),
+    radial-gradient(circle at 50% 18%, hsl(var(--accent-hue) 78% 59% / 0.16), transparent 60%),
     rgba(4, 5, 12, 0.55);
   backdrop-filter: blur(9px);
 }
@@ -198,7 +204,7 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 0 0 1px rgba(0, 0, 0, 0.4),
     0 30px 90px rgba(0, 0, 0, 0.7),
-    0 0 70px rgba(70, 180, 232, 0.16);
+    0 0 70px hsl(var(--accent-hue) 78% 59% / 0.16);
   padding: 1.1rem 1.2rem 1rem;
   /* The game-over leaderboard is paginated to a fixed page size, so the panel's
      content is bounded and normally fits without scrolling. max-height +
@@ -238,8 +244,8 @@
   color: rgba(255, 246, 213, 0.85);
 }
 .lbTab.active {
-  background: rgba(70, 180, 232, 0.2);
-  border-color: rgba(143, 224, 255, 0.5);
+  background: hsl(var(--accent-hue) 78% 59% / 0.2);
+  border-color: hsl(var(--accent-hue) 100% 78% / 0.5);
   color: rgba(240, 250, 255, 0.98);
 }
 
@@ -252,7 +258,7 @@
 /* Pinned "your row" when it's off the current page. */
 .menuScoreRow.pinned {
   margin-top: 0.25rem;
-  border: 1px dashed rgba(143, 224, 255, 0.4);
+  border: 1px dashed hsl(var(--accent-hue) 100% 78% / 0.4);
 }
 
 .lbPager {
@@ -279,7 +285,7 @@
   transition: background 0.15s ease, opacity 0.15s ease;
 }
 .lbPagerBtn:hover:not(:disabled) {
-  background: rgba(70, 180, 232, 0.22);
+  background: hsl(var(--accent-hue) 78% 59% / 0.22);
 }
 .lbPagerBtn:disabled {
   opacity: 0.3;
@@ -298,13 +304,13 @@
 
 /* Highlight the local player's own row in the global board. */
 .menuScoreRow.isMe {
-  background: rgba(70, 180, 232, 0.16);
+  background: hsl(var(--accent-hue) 78% 59% / 0.16);
   border-radius: 0.4rem;
   color: rgba(255, 255, 255, 0.98);
 }
 .menuScoreRow.isMe .rank {
   opacity: 0.85;
-  color: rgba(143, 224, 255, 0.95);
+  color: hsl(var(--accent-hue) 100% 78% / 0.95);
 }
 
 /* Thin luminous bar across the top edge of the panel. */
@@ -316,8 +322,8 @@
   right: 12%;
   height: 2px;
   border-radius: 2px;
-  background: linear-gradient(90deg, transparent, rgba(143, 224, 255, 0.9), rgba(255, 214, 107, 0.9), transparent);
-  box-shadow: 0 0 14px rgba(143, 224, 255, 0.5);
+  background: linear-gradient(90deg, transparent, hsl(var(--accent-hue) 100% 78% / 0.9), rgba(255, 214, 107, 0.9), transparent);
+  box-shadow: 0 0 14px hsl(var(--accent-hue) 100% 78% / 0.5);
 }
 
 @keyframes menuPop {
@@ -337,7 +343,7 @@
   letter-spacing: 0.34em;
   font-size: 0.62rem;
   font-weight: 600;
-  color: rgba(143, 224, 255, 0.72);
+  color: hsl(var(--accent-hue) 100% 78% / 0.78);
   text-align: center;
 }
 
@@ -551,8 +557,8 @@
 }
 
 .menuInput:focus {
-  border-color: rgba(143, 224, 255, 0.7);
-  box-shadow: 0 0 0 3px rgba(70, 180, 232, 0.18);
+  border-color: hsl(var(--accent-hue) 100% 78% / 0.7);
+  box-shadow: 0 0 0 3px hsl(var(--accent-hue) 78% 59% / 0.18);
 }
 
 .menuActions {
