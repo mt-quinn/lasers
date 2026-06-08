@@ -138,8 +138,10 @@ void main() {
     vec3 col = t.rgb * light + spec;
     gl_FragColor = vec4(col, t.a);
   } else {
-    // Cool-shifted shadow + warm lit face for richer material color.
-    float light = 0.52 + 0.7 * dif;
+    // Cool-shifted shadow + lit face for richer material color. A slightly
+    // higher ambient floor keeps faces angled away from the low key from
+    // crushing to black.
+    float light = 0.55 + 0.62 * dif;
     vec3 col = vColor * light;
     // Glossy specular streak on the lit bevel.
     float spec = pow(max(0.0, dot(N, Hh)), 16.0) * 0.35;
@@ -241,11 +243,14 @@ const init = (): boolean => {
   }
 }
 
-// Light from upper-left, in front of the plane (+z toward the camera).
+// Key light from the player/well side: low and in front of the plane (+y is
+// toward the near plane where the emitter/well sit, +z toward the camera), with
+// a slight left bias. This keys the player-facing faces so the slabs read as lit
+// by the singularity below rather than a generic top-left studio light.
 const LIGHT: [number, number, number] = (() => {
-  const x = -0.35
-  const y = -0.5
-  const z = 0.79
+  const x = -0.22
+  const y = 0.42
+  const z = 0.88
   const l = Math.hypot(x, y, z)
   return [x / l, y / l, z / l]
 })()
