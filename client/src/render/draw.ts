@@ -4,6 +4,7 @@ import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
 import { getArenaLayout } from '../game/layout'
 import { makeProjection } from './projection'
+import { PALETTE, gradeHue } from './theme'
 import { renderLens } from './lensGL'
 import { renderPiecesGL, type GLPiece } from './piecesGL'
 import { renderFeaturesGL, type GLFeature } from './featuresGL'
@@ -116,6 +117,28 @@ const getLensOut = (wDev: number, hDev: number) => {
   return { out: lensOut, octx: lensOutCtx }
 }
 
+// Parallax starfield for the void backdrop. Generated once (deterministic), then
+// drawn each frame with a slow downward drift (reinforcing the descent) and a
+// per-star twinkle. Layered by `z` (0 far .. 1 near) for cheap depth. The GL
+// black-hole lens snapshots the background, so these get lensed for free.
+type Star = { x: number; y: number; z: number; ph: number; sp: number }
+let starfield: Star[] | null = null
+const getStarfield = (): Star[] => {
+  if (!starfield) {
+    starfield = []
+    let s = 0x9e3779b9 >>> 0
+    const rnd = () => {
+      s = (s * 1664525 + 1013904223) >>> 0
+      return s / 4294967296
+    }
+    for (let i = 0; i < 130; i++) {
+      const z = rnd()
+      starfield.push({ x: rnd(), y: rnd(), z, ph: rnd() * 6.283, sp: 0.006 + z * 0.02 })
+    }
+  }
+  return starfield
+}
+
 const withDpr = (ctx: CanvasRenderingContext2D, dpr: number, fn: () => void) => {
   ctx.save()
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -170,11 +193,13 @@ const lerpColor = (a: string, b: string, t: number) => {
 // This fits the existing purple/pink scheme while remaining readable.
 export const healthFill = (hpPct: number) => {
   const t = clamp(hpPct, 0, 1)
-  // Stops (low -> high):
-  const c0 = '#ff3b5c' // low: hot red
-  const c1 = '#ff6bd6' // mid-low: neon pink
-  const c2 = '#c7a2ff' // mid-high: lilac
-  const c3 = '#e7ddff' // high: icy lavender
+  // "Singularity" health ramp: cold solid matter at full HP, heating to danger
+  // as it dies (cold cyan -> teal -> energy amber -> danger red). Full health
+  // is the dormant (music-off) matter identity color.
+  const c0 = '#ff3b30' // low: danger red
+  const c1 = '#ff9d3d' // mid-low: energy amber ("getting hurt")
+  const c2 = '#7fc2de' // mid-high: cooling teal
+  const c3 = '#bfe6f2' // high: cold mineral (matterFull)
   if (t < 0.33) return lerpColor(c0, c1, t / 0.33)
   if (t < 0.66) return lerpColor(c1, c2, (t - 0.33) / 0.33)
   return lerpColor(c2, c3, (t - 0.66) / 0.34)
@@ -234,7 +259,10 @@ export const drawFrame = (
       `hsla(${(((h % 360) + 360) % 360).toFixed(1)},${sPct.toFixed(1)}%,${lPct.toFixed(1)}%,${a})`
     // Per-element rainbow hue keyed off screen position (same spread the blocks
     // use), so heat FX on a piece match that piece's color.
-    const hueAt = (x: number, y: number) => mHue + y * 0.16 + x * 0.1
+    // The board's per-position hue spread widens with musical energy, so the
+    // color gradient across the pieces blooms on big moments and tightens in
+    // quiet passages — reactivity you feel, not just see.
+    const hueAt = (x: number, y: number) => mHue + (y * 0.16 + x * 0.1) * (1 + mEnergy * 0.6)
     // Blend a baked "heat" color (white-hot orange/red) toward the live rainbow
     // hue by the music mix. When music is off it returns the original color, so
     // the molten/weld look is unchanged in the non-reactive baseline.
@@ -274,13 +302,33 @@ export const drawFrame = (
       const W = s.view.width
       const H = s.view.height
 
-      // Framing gradient: deep indigo void, a touch warmer toward the bottom.
+      // Framing gradient: deep blue-black void, a touch lighter toward the
+      // bottom so the playfield reads as a pool of light.
       const base = ctx.createLinearGradient(0, 0, 0, H)
-      base.addColorStop(0, '#0a0820')
-      base.addColorStop(0.55, '#0b0a1f')
-      base.addColorStop(1, '#0d0b22')
+      base.addColorStop(0, PALETTE.voidTop)
+      base.addColorStop(0.55, PALETTE.voidMid)
+      base.addColorStop(1, PALETTE.voidNear)
       ctx.fillStyle = base
       ctx.fillRect(0, 0, W, H)
+
+      // Parallax starfield drifting slowly downward through the void.
+      {
+        const stars = getStarfield()
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        for (const st of stars) {
+          const xx = st.x * W
+          const yy = ((st.y + tNow * st.sp) % 1) * H
+          const tw = 0.5 + 0.5 * Math.sin(tNow * (0.6 + st.z) + st.ph)
+          const a = (0.05 + 0.16 * st.z) * (0.45 + 0.55 * tw)
+          const r = 0.4 + st.z * 1.1
+          ctx.fillStyle = `rgba(200,225,245,${a.toFixed(3)})`
+          ctx.beginPath()
+          ctx.arc(xx, yy, r, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        ctx.restore()
+      }
 
       // Corner vignette: darken the edges so the playfield reads as a pool of
       // light. Deliberate (not a faint shimmer) — pure framing, no animation.
@@ -300,7 +348,7 @@ export const drawFrame = (
         const apX = (lx + rx) * 0.5
         const apY = 2
         const apR = Math.max(60, (rx - lx) * 1.05)
-        const apHue = mi > 0 ? mHue : 256
+        const apHue = mi > 0 ? mHue : PALETTE.horizonHue
         const pulse = 0.32 + 0.5 * mBass + 0.12 * Math.sin(tNow * 0.8)
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
@@ -344,7 +392,7 @@ export const drawFrame = (
 
       // Base look settles to on-brand purple when music is off (mi == 0); when
       // playing it leans into the live rainbow hue.
-      const baseHue = 278 + (mHue - 278) * mi
+      const baseHue = PALETTE.latticeHue + (mHue - PALETTE.latticeHue) * mi
       const baseAlpha = 0.11 + mEnergy * 0.07
 
       // Distinct "floor" beneath the grid: fill the projected ground-plane quad
@@ -357,7 +405,7 @@ export const drawFrame = (
         const fl = project(0, farWorldY)
         const fr = project(W, farWorldY)
         const floor = ctx.createLinearGradient(0, fl.y, 0, nl.y)
-        const floorHue = 250 + (mHue - 250) * mi
+        const floorHue = PALETTE.floorHue + (mHue - PALETTE.floorHue) * mi
         floor.addColorStop(0, hsl(floorHue + 8, 55, 6, 0.0)) // fade out at horizon
         floor.addColorStop(0.18, hsl(floorHue + 8, 58, 8, 0.55))
         floor.addColorStop(1, hsl(floorHue, 62, 13, 0.8)) // near the player
@@ -410,9 +458,13 @@ export const drawFrame = (
         const bin = Math.min(spectrum.length - 1, Math.floor(depthFrac * spectrum.length))
         const band = (spectrum[bin] ?? 0) * mi
         const near = a.scale // ~1 near .. small far
-        const alpha = clamp(baseAlpha + near * (0.06 + 0.18 * band), 0, 0.5)
+        // Atmospheric perspective: far rungs fade and desaturate toward the void
+        // so the shaft reads as real receding depth, not a flat ramp.
+        const atmos = 0.42 + 0.58 * near
+        const alpha = clamp((baseAlpha + near * (0.06 + 0.18 * band)) * atmos, 0, 0.5)
         const lwidth = 0.8 + near * 1.4 + band * 1.6
-        ctx.strokeStyle = hsl(baseHue + depthFrac * 40 * mi, 82, 58 + band * 14, alpha)
+        const sat = (82 - depthFrac * 46) + band * 10
+        ctx.strokeStyle = hsl(baseHue + depthFrac * 40 * mi, sat, 58 + band * 14, alpha)
         ctx.lineWidth = lwidth
         ctx.beginPath()
         ctx.moveTo(a.x, a.y)
@@ -425,7 +477,7 @@ export const drawFrame = (
       // descent, so the beam visibly ricochets off solid structure instead of
       // an invisible edge. Still inside the 'lighter' pass for an additive glow.
       {
-        const wallHue = 258 + (mHue - 258) * mi
+        const wallHue = PALETTE.wallHue + (mHue - PALETTE.wallHue) * mi
         for (const xW of [0, W]) {
           const a = project(xW, proj.nearWorldY)
           const b = project(xW, farWorldY)
@@ -523,7 +575,7 @@ export const drawFrame = (
       const fa = project(0, failY)
       const fb = project(s.view.width, failY)
       const pulse = 0.6 + 0.4 * Math.sin(tNow * 4)
-      const DH = 38 // amber
+      const DH = PALETTE.dangerHue // reserved danger red
       ctx.save()
       ctx.lineCap = 'round'
       // Danger glow (additive), intensity + blur ride the proximity pulse.
@@ -565,7 +617,7 @@ export const drawFrame = (
     const critPulse = 0.5 + 0.5 * Math.sin(tNow * 7)
     const healthTier = (hpPct: number): { washFill: string; lineStroke: string; lineGlow: number } => {
       if (hpPct > 0.66) return { washFill: '', lineStroke: '', lineGlow: 0 }
-      if (hpPct > 0.4) return { washFill: '', lineStroke: 'rgba(150,255,130,0.85)', lineGlow: 6 }
+      if (hpPct > 0.4) return { washFill: '', lineStroke: 'rgba(170,232,250,0.85)', lineGlow: 6 }
       if (hpPct > 0.18)
         return { washFill: 'rgba(255,176,64,0.34)', lineStroke: 'rgba(255,196,92,0.95)', lineGlow: 9 }
       return {
@@ -596,10 +648,13 @@ export const drawFrame = (
       let fillBase: string
       let lum: number
       if (b.isGold) {
-        fillBase = '#ffd700'
+        // Valuable = the one WARM piece (reward lives on the energy axis). Molten
+        // gold gem, distinct from cold matter by temperature.
+        fillBase = PALETTE.valuableBody
         lum = relativeLuma(fillBase)
       } else if (mi > 0) {
-        const mc = hslToRgb(pieceHue, 96, 62)
+        // Graded music-reactive identity color (color-graded rainbow, not raw HSL).
+        const mc = gradeHue(pieceHue)
         fillBase = `rgb(${mc.r} ${mc.g} ${mc.b})`
         lum = (0.2126 * mc.r + 0.7152 * mc.g + 0.0722 * mc.b) / 255
       } else {
@@ -608,13 +663,13 @@ export const drawFrame = (
       }
 
       if (b.isGold) {
-        ctx.shadowColor = `rgba(255,215,0,${0.3 * glow})`
-        ctx.shadowBlur = 22 * glow
+        ctx.shadowColor = `rgba(255,200,90,${0.34 * glow})`
+        ctx.shadowBlur = 24 * glow
       } else if (mi > 0) {
         ctx.shadowColor = hsl(pieceHue, 90, 60, clamp(0.12 * glow + mPulse * 0.1, 0, 0.5))
         ctx.shadowBlur = 16 * glow + mEnergy * 12
       } else {
-        ctx.shadowColor = `rgba(255,120,210,${0.14 * glow})`
+        ctx.shadowColor = `rgba(120,200,235,${0.16 * glow})`
         ctx.shadowBlur = 18 * glow
       }
 
@@ -632,10 +687,19 @@ export const drawFrame = (
         ctx.save()
         ctx.clip()
         ctx.globalCompositeOperation = 'screen'
-        const shine = ctx.createLinearGradient(ax, ay, ax + w, ay + h * 0.5)
-        shine.addColorStop(0, 'rgba(255,255,200,0.4)')
-        shine.addColorStop(0.5, 'rgba(255,255,200,0.25)')
-        shine.addColorStop(1, 'rgba(255,255,200,0)')
+        // Animated specular band sweeping diagonally across the gem so the
+        // valuable piece glints and reads as molten metal, not a flat tile.
+        const sweep = ((tNow * 0.33 + (b.id % 7) * 0.13) % 1)
+        const g0x = ax - w
+        const g1x = ax + w * 2
+        const shine = ctx.createLinearGradient(g0x, ay - h, g1x, ay + h * 2)
+        const lo = Math.max(0.0001, sweep - 0.16)
+        const hi = Math.min(0.9999, sweep + 0.16)
+        shine.addColorStop(0, 'rgba(255,240,190,0)')
+        shine.addColorStop(lo, 'rgba(255,240,190,0)')
+        shine.addColorStop(clamp(sweep, lo, hi), 'rgba(255,250,214,0.6)')
+        shine.addColorStop(hi, 'rgba(255,240,190,0)')
+        shine.addColorStop(1, 'rgba(255,240,190,0)')
         ctx.fillStyle = shine
         ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
         ctx.restore()
@@ -648,10 +712,48 @@ export const drawFrame = (
       ctx.globalCompositeOperation = 'screen'
       const rim = ctx.createLinearGradient(0, ay + h * 0.58, 0, ay + h)
       rim.addColorStop(0, 'rgba(255,255,255,0)')
-      rim.addColorStop(1, mi > 0 ? hsl(pieceHue, 85, 82, 0.24) : 'rgba(255,224,255,0.2)')
+      rim.addColorStop(1, mi > 0 ? hsl(pieceHue, 85, 82, 0.24) : 'rgba(200,235,250,0.2)')
       ctx.fillStyle = rim
       ctx.fillRect(ax - 2, ay - 2, w + 4, h + 4)
       ctx.restore()
+
+      // Mineral speckle: a deterministic scatter of fine dark grains + a few
+      // bright flecks (seeded by piece id, so it's static and never shimmers),
+      // clipped to the shape. Turns the flat matter face into rock/ice. Skipped
+      // for gold (a polished gem) and armored/chrome (their plates cover it).
+      if (!b.isGold && b.kind !== 'armored' && b.kind !== 'chrome') {
+        ctx.save()
+        drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
+        ctx.clip()
+        let seed = (b.id * 2654435761) >>> 0
+        const rnd = () => {
+          seed = (seed * 1664525 + 1013904223) >>> 0
+          return seed / 4294967296
+        }
+        const n = 5 + b.cells.length * 3
+        ctx.globalCompositeOperation = 'multiply'
+        for (let i = 0; i < n; i++) {
+          const px = ax + rnd() * w
+          const py = ay + rnd() * h
+          const rr = 0.6 + rnd() * 1.6
+          ctx.fillStyle = `rgba(26,50,66,${(0.05 + rnd() * 0.1).toFixed(3)})`
+          ctx.beginPath()
+          ctx.arc(px, py, rr, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        ctx.globalCompositeOperation = 'screen'
+        const nb = Math.ceil(n * 0.4)
+        for (let i = 0; i < nb; i++) {
+          const px = ax + rnd() * w
+          const py = ay + rnd() * h
+          const rr = 0.5 + rnd() * 1.1
+          ctx.fillStyle = `rgba(220,240,250,${(0.04 + rnd() * 0.07).toFixed(3)})`
+          ctx.beginPath()
+          ctx.arc(px, py, rr, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        ctx.restore()
+      }
 
       drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
       ctx.lineWidth = 2
@@ -801,13 +903,13 @@ export const drawFrame = (
       return m ? { r: +m[1]!, g: +m[2]!, b: +m[3]! } : { r: 255, g: 255, b: 255 }
     }
     const glPieceColor = (b: BlockEntity, hx: number, hy: number) => {
-      if (b.isGold) return { r: 1, g: 215 / 255, b: 0 }
+      if (b.isGold) return { r: 245 / 255, g: 194 / 255, b: 74 / 255 }
       // Armored pieces have an invulnerable reflective underside; render the side
       // walls (the bottom/front face the player sees) as steel so the armored
       // look wraps down the body instead of stopping at the top plate.
       if (b.kind === 'armored') return { r: 0.42, g: 0.47, b: 0.57 }
       if (mi > 0) {
-        const c = hslToRgb(hueAt(hx, hy), 96, 62)
+        const c = gradeHue(hueAt(hx, hy))
         return { r: c.r / 255, g: c.g / 255, b: c.b / 255 }
       }
       const c = parseRgbStr(healthFill(1))
@@ -1843,13 +1945,13 @@ export const drawFrame = (
     ctx.clip()
     const outerR = 18
     const bg = ctx.createLinearGradient(0, barY, 0, bottomY)
-    bg.addColorStop(0, 'rgba(12, 10, 28, 0.62)')
-    bg.addColorStop(1, 'rgba(10, 8, 22, 0.48)')
+    bg.addColorStop(0, 'rgba(9, 12, 22, 0.72)')
+    bg.addColorStop(1, 'rgba(6, 8, 16, 0.58)')
     ctx.fillStyle = bg
     lPath(outerR)
     ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)'
-    ctx.lineWidth = 1.5
+    ctx.strokeStyle = 'rgba(143, 224, 255, 0.16)'
+    ctx.lineWidth = 1.25
     lPath(outerR)
     ctx.stroke()
     ctx.restore()
@@ -1965,7 +2067,7 @@ export const drawFrame = (
       const cx = dialCX
       const cy = dialCY
       const rr = dialR
-      const dialHue = mi > 0 ? mHue : 320
+      const dialHue = mi > 0 ? mHue : PALETTE.latticeHue
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
       const disc = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr)
@@ -2155,20 +2257,6 @@ export const drawFrame = (
           ctx.beginPath()
           ctx.arc(sp.x, sp.y, Math.max(0.8, r * 0.7), 0, Math.PI * 2)
           ctx.fill()
-
-          // Twinkle cross on the flicker peaks.
-          if (flick > 0.9) {
-            const sLen = r * 3.2
-            const sa = ((flick - 0.9) / 0.1) * a
-            ctx.strokeStyle = `rgba(255,240,210,${(0.5 * sa).toFixed(3)})`
-            ctx.lineWidth = Math.max(0.6, r * 0.18)
-            ctx.beginPath()
-            ctx.moveTo(sp.x - sLen, sp.y)
-            ctx.lineTo(sp.x + sLen, sp.y)
-            ctx.moveTo(sp.x, sp.y - sLen)
-            ctx.lineTo(sp.x, sp.y + sLen)
-            ctx.stroke()
-          }
         }
       }
       ctx.restore()
@@ -2378,23 +2466,29 @@ export const drawFrame = (
       const glowAlpha = Math.min(0.7, (0.16 + (overdrive ? 0.16 : 0)) * alpha * (1 + mPulse * 0.6))
       const coreAlpha = Math.min(1, (0.78 + (overdrive ? 0.15 : 0)) * alpha)
 
-      // Outer glow ribbon.
+      // Outer glow ribbon. A faint lateral shimmer (heat-haze) wobbles the glow
+      // edge so the beam reads as superheated air; the core/spine below stay
+      // crisp on the unjittered path so aim never looks fuzzy.
       const glowHalf = sc.map((z) => s.stats.beamGlowWidth * beamSwell * 0.5 * z)
+      const hazeScr = scr.map((p, i) => ({
+        x: p.x + Math.sin(tNow * 7 + line.pts[i]!.y * 0.05 + i * 0.9) * 1.2 * sc[i]!,
+        y: p.y,
+      }))
       ctx.fillStyle = overdrive
-        ? hsl(45, 100, 60, glowAlpha)
+        ? hsl(PALETTE.energyGoldHue, 100, 60, glowAlpha)
         : mi > 0
           ? hsl(mHue, 95, 62, glowAlpha)
-          : `rgba(255,60,60,${glowAlpha.toFixed(3)})`
-      buildRibbon(scr, glowHalf)
+          : hsl(PALETTE.energyHue, 100, 56, glowAlpha)
+      buildRibbon(hazeScr, glowHalf)
       ctx.fill()
 
       // Core ribbon (restroke same path) — kept bright (high lightness).
       const coreHalf = sc.map((z) => s.stats.beamWidth * 0.5 * odWidth * z)
       ctx.fillStyle = overdrive
-        ? hsl(48, 100, 82, coreAlpha)
+        ? hsl(PALETTE.energyGoldHue, 100, 82, coreAlpha)
         : mi > 0
           ? hsl(mHue, 90, 72, coreAlpha)
-          : `rgba(255,90,90,${coreAlpha.toFixed(3)})`
+          : hsl(PALETTE.energyHue, 100, 72, coreAlpha)
       buildRibbon(scr, coreHalf)
       ctx.fill()
 
@@ -2405,7 +2499,7 @@ export const drawFrame = (
         ? `rgba(255,252,240,${Math.min(1, 0.8 * alpha).toFixed(3)})`
         : mi > 0
           ? hsl(mHue, 100, 93, Math.min(1, 0.62 * alpha))
-          : `rgba(255,210,210,${(0.62 * alpha).toFixed(3)})`
+          : `rgba(255,244,224,${(0.62 * alpha).toFixed(3)})`
       buildRibbon(scr, spineHalf)
       ctx.fill()
 
@@ -2447,7 +2541,7 @@ export const drawFrame = (
       const knobR = 14 * kp.scale
       const knobX = kp.x
       const knobY = kp.y
-      const emHue = mi > 0 ? mHue : 286
+      const emHue = mi > 0 ? mHue : PALETTE.energyHue
       // Charge breathes with energy; the muzzle is the source the beam erupts from.
       const charge = 0.55 + 0.45 * Math.sin(tNow * 3.2) * (0.4 + 0.6 * mEnergy)
       ctx.save()
@@ -2636,7 +2730,7 @@ export const drawFrame = (
       // Event-horizon shadow radius. The whole black hole scales off this — and
       // off the perspective depth so it shrinks as it travels up the board.
       const rCore = (16 + (grabbed ? 2 : 0)) * wScale
-      const hue = mi > 0 ? mHue : 285
+      const hue = mi > 0 ? mHue : PALETTE.energyHue
       const surge = clamp(s.crescendo, 0, 1)
 
       const TWO_PI = Math.PI * 2
@@ -2803,29 +2897,59 @@ export const drawFrame = (
       ell(rCore, rCore, 0)
       ctx.fill()
 
-      // Orbiting light: a swirl of hot streaks spiralling around the core — the
-      // beam's energy caught and bent by the lens. Thematic "this is bending
-      // light" tell, not a clean UI ring.
+      // Accretion disk: a warm, tilted, flattened glow ring around the event
+      // horizon — the matter you've shredded spiralling in. This is what makes
+      // the well read as the warm energy SOURCE everything orbits, not a UI dot.
+      const diskTilt = -0.42
+      const diskFlat = 0.42
       if (active) {
+        ctx.save()
         ctx.globalCompositeOperation = 'lighter'
+        ctx.translate(cx, cy)
+        ctx.rotate(diskTilt)
+        ctx.scale(1, diskFlat)
+        const rIn = rCore * 1.02
+        const rOut = rCore * 2.7
+        const ring = ctx.createRadialGradient(0, 0, rIn, 0, 0, rOut)
+        ring.addColorStop(0, hsl(hue, 100, 72, 0))
+        ring.addColorStop(0.4, hsl(hue, 100, 66, (0.16 + 0.26 * surge) * flick))
+        ring.addColorStop(1, hsl(hue, 100, 60, 0))
+        ctx.fillStyle = ring
+        ctx.beginPath()
+        ctx.arc(0, 0, rOut, 0, TWO_PI)
+        ctx.fill()
+        ctx.restore()
+      }
+
+      // Orbiting light: hot streaks spiralling inward along the tilted disk plane
+      // — the beam's energy caught and bent by the lens. A subtle Doppler tint
+      // (cooler/brighter on the approaching arc) sells the rotation.
+      if (active) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.translate(cx, cy)
+        ctx.rotate(diskTilt)
+        ctx.scale(1, diskFlat)
         ctx.lineCap = 'round'
         ctx.shadowColor = hsl(hue, 100, 60, 0.85)
         ctx.shadowBlur = 6
-        const N = 7
+        const N = 9
         const baseRot = tNowS * 2.1
         for (let i = 0; i < N; i++) {
-          const ph = (tNowS * 0.85 + i * 0.37) % 1 // 0..1 infall progress
-          const rr = rCore * (1.62 + (1.02 - 1.62) * ph) // spirals inward
+          const ph = (tNowS * 0.85 + i * 0.31) % 1 // 0..1 infall progress
+          const rr = rCore * (1.95 + (1.05 - 1.95) * ph) // spirals inward
           const a0 = baseRot + (i / N) * TWO_PI + ph * 1.4 // trailing swirl
           const arcLen = (0.5 + 0.5 * (1 - ph)) * (0.7 + 0.3 * Math.sin(tNowS * 5 + i))
           const fade = (1 - ph) * flick
-          ctx.lineWidth = 1.2 + 1.8 * (1 - ph)
-          ctx.strokeStyle = hsl((hue + 12 * Math.sin(i * 1.3)) % 360, 100, 70 + ph * 16, (0.22 + 0.5 * fade))
+          const dop = Math.cos(a0) // -1..1 approaching/receding
+          ctx.lineWidth = 1.2 + 1.9 * (1 - ph)
+          ctx.strokeStyle = hsl(hue + dop * 8, 100, 66 + ph * 16 + dop * 8, 0.2 + 0.5 * fade)
           ctx.beginPath()
-          ctx.arc(cx, cy, rr, a0, a0 + arcLen)
+          ctx.arc(0, 0, rr, a0, a0 + arcLen)
           ctx.stroke()
         }
         ctx.shadowBlur = 0
+        ctx.restore()
       }
 
       // Armed Overdrive: give the lens a subtle "charged" gold breath so it

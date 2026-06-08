@@ -1,17 +1,34 @@
-@import url('https://fonts.googleapis.com/css2?family=Oxanium:wght@500;700&family=Nunito:wght@400;600;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Oxanium:wght@500;700;900&family=Space+Grotesk:wght@500;600;700&family=Nunito:wght@400;600;700;900&display=swap');
 
 :root {
   font-family: 'Nunito', system-ui, -apple-system, BlinkMacSystemFont,
     'SF Pro Text', system-ui, sans-serif;
   line-height: 1.2;
   font-weight: 400;
-  color: #f5f3ff;
-  background-color: #070816;
+  color: #eaf4fb;
+  background-color: #06070f;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   /* Expose safe-area insets to JS via computed styles. */
   --safe-area-bottom: env(safe-area-inset-bottom);
   --safe-area-top: env(safe-area-inset-top);
+
+  /* ---------------------------------------------------------------------
+     "Singularity" palette — DOM mirror of render/theme.ts. Keep in sync.
+     Void / structure / matter / energy + reserved danger.
+     --------------------------------------------------------------------- */
+  --lb-void-top: #06070f;
+  --lb-void-mid: #080a16;
+  --lb-void-near: #0b0e1e;
+  --lb-structure: #46b4e8; /* cool steel-cyan lattice */
+  --lb-structure-dim: rgba(70, 180, 232, 0.16);
+  --lb-matter: #bfe6f2; /* cold mineral */
+  --lb-energy: #ffd66b; /* warm gold — primary action / your power */
+  --lb-energy-amber: #ff9d3d;
+  --lb-info: #8fe0ff; /* cool structural accent */
+  --lb-danger: #ff3b30; /* reserved: death only */
+  --lb-text: #eaf4fb;
+  --lb-text-dim: rgba(234, 244, 251, 0.62);
 }
 
 *,
@@ -36,9 +53,9 @@ body {
   -webkit-user-select: none;
   user-select: none;
   background:
-    radial-gradient(circle at 10% 0%, rgba(130, 90, 255, 0.35), transparent 55%),
-    radial-gradient(circle at 90% 100%, rgba(255, 120, 200, 0.25), transparent 55%),
-    linear-gradient(180deg, #060615, #03030c 70%, #07081a);
+    radial-gradient(circle at 12% 0%, rgba(70, 180, 232, 0.20), transparent 55%),
+    radial-gradient(circle at 88% 100%, rgba(255, 157, 61, 0.12), transparent 55%),
+    linear-gradient(180deg, #06070f, #04050c 70%, #080a16);
 }
 
 button,

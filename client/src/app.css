@@ -28,9 +28,9 @@
   padding: 0.50rem 0.60rem;
   border-radius: 1.05rem;
   background:
-    radial-gradient(circle at 12% 0%, rgba(255, 120, 210, 0.16), transparent 55%),
-    radial-gradient(circle at 85% 100%, rgba(140, 100, 255, 0.14), transparent 60%),
-    linear-gradient(180deg, rgba(12, 10, 28, 0.70), rgba(10, 8, 22, 0.58));
+    radial-gradient(circle at 12% 0%, rgba(255, 157, 61, 0.14), transparent 55%),
+    radial-gradient(circle at 85% 100%, rgba(70, 180, 232, 0.14), transparent 60%),
+    linear-gradient(180deg, rgba(9, 12, 22, 0.72), rgba(6, 8, 16, 0.6));
   border: 1px solid rgba(255, 255, 255, 0.10);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.35),
@@ -39,15 +39,15 @@
 }
 
 .hudTitle {
-  font-family: 'Oxanium', system-ui, sans-serif;
+  font-family: 'Space Grotesk', 'Oxanium', system-ui, sans-serif;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   font-size: 0.82rem;
   line-height: 1.05;
-  color: #fff1b8;
+  color: #ffe9c2;
   text-shadow:
     0 2px 0 rgba(0, 0, 0, 0.45),
-    0 0 16px rgba(120, 90, 255, 0.35);
+    0 0 16px rgba(70, 180, 232, 0.32);
   white-space: normal;
   display: flex;
   flex-direction: column;
@@ -120,7 +120,7 @@
 }
 
 .hudBtn.primary {
-  background: linear-gradient(135deg, #b98cff, #ff7cd6);
+  background: linear-gradient(135deg, #ffd66b, #ff9d3d);
   color: rgba(10, 5, 18, 0.95);
   border: 1px solid rgba(255, 245, 200, 0.45);
 }
@@ -128,7 +128,7 @@
 .btn {
   border-radius: 999px;
   border: 1px solid rgba(255, 245, 200, 0.45);
-  background: linear-gradient(135deg, #b98cff, #ff7cd6);
+  background: linear-gradient(135deg, #ffd66b, #ff9d3d);
   color: rgba(10, 5, 18, 0.95);
   padding: 0.38rem 0.85rem;
   font-size: 0.72rem;
@@ -160,11 +160,11 @@
   overflow: hidden;
   /* The arena backdrop is now painted on the canvas (Event-Horizon Descent);
      keep a plain dark fill here just so the rounded corners match. */
-  background: #08071a;
+  background: #06070f;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.06),
     0 18px 50px rgba(0, 0, 0, 0.65),
-    0 0 70px rgba(120, 90, 255, 0.18);
+    0 0 70px rgba(70, 180, 232, 0.16);
 }
 
 /* Control dock: one glass cluster matching the HUD L's fill + 1px stroke. */
@@ -183,8 +183,8 @@
   justify-content: center;
   padding: 1rem;
   background:
-    radial-gradient(circle at 50% 18%, rgba(140, 100, 255, 0.16), transparent 60%),
-    rgba(4, 3, 12, 0.55);
+    radial-gradient(circle at 50% 18%, rgba(70, 180, 232, 0.16), transparent 60%),
+    rgba(4, 5, 12, 0.55);
   backdrop-filter: blur(9px);
 }
 
@@ -192,13 +192,13 @@
   position: relative;
   width: min(380px, 90vw);
   border-radius: 1.4rem;
-  background: linear-gradient(180deg, rgba(20, 16, 40, 0.92), rgba(12, 9, 26, 0.92));
+  background: linear-gradient(180deg, rgba(13, 17, 30, 0.92), rgba(8, 10, 20, 0.92));
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 0 0 1px rgba(0, 0, 0, 0.4),
     0 30px 90px rgba(0, 0, 0, 0.7),
-    0 0 70px rgba(120, 90, 255, 0.18);
+    0 0 70px rgba(70, 180, 232, 0.16);
   padding: 1.1rem 1.2rem 1rem;
   /* The game-over leaderboard is paginated to a fixed page size, so the panel's
      content is bounded and normally fits without scrolling. max-height +
@@ -238,9 +238,9 @@
   color: rgba(255, 246, 213, 0.85);
 }
 .lbTab.active {
-  background: rgba(140, 100, 255, 0.2);
-  border-color: rgba(185, 140, 255, 0.5);
-  color: rgba(255, 250, 240, 0.98);
+  background: rgba(70, 180, 232, 0.2);
+  border-color: rgba(143, 224, 255, 0.5);
+  color: rgba(240, 250, 255, 0.98);
 }
 
 /* Fixed height for the page so the panel doesn't jump between pages. */
@@ -252,7 +252,7 @@
 /* Pinned "your row" when it's off the current page. */
 .menuScoreRow.pinned {
   margin-top: 0.25rem;
-  border: 1px dashed rgba(185, 140, 255, 0.4);
+  border: 1px dashed rgba(143, 224, 255, 0.4);
 }
 
 .lbPager {
@@ -279,7 +279,7 @@
   transition: background 0.15s ease, opacity 0.15s ease;
 }
 .lbPagerBtn:hover:not(:disabled) {
-  background: rgba(140, 100, 255, 0.22);
+  background: rgba(70, 180, 232, 0.22);
 }
 .lbPagerBtn:disabled {
   opacity: 0.3;
@@ -298,13 +298,13 @@
 
 /* Highlight the local player's own row in the global board. */
 .menuScoreRow.isMe {
-  background: rgba(185, 140, 255, 0.16);
+  background: rgba(70, 180, 232, 0.16);
   border-radius: 0.4rem;
   color: rgba(255, 255, 255, 0.98);
 }
 .menuScoreRow.isMe .rank {
   opacity: 0.85;
-  color: rgba(214, 184, 255, 0.95);
+  color: rgba(143, 224, 255, 0.95);
 }
 
 /* Thin luminous bar across the top edge of the panel. */
@@ -316,8 +316,8 @@
   right: 12%;
   height: 2px;
   border-radius: 2px;
-  background: linear-gradient(90deg, transparent, rgba(185, 140, 255, 0.9), rgba(255, 124, 214, 0.9), transparent);
-  box-shadow: 0 0 14px rgba(185, 140, 255, 0.55);
+  background: linear-gradient(90deg, transparent, rgba(143, 224, 255, 0.9), rgba(255, 214, 107, 0.9), transparent);
+  box-shadow: 0 0 14px rgba(143, 224, 255, 0.5);
 }
 
 @keyframes menuPop {
@@ -332,29 +332,29 @@
 }
 
 .menuKicker {
-  font-family: 'Oxanium', system-ui, sans-serif;
+  font-family: 'Space Grotesk', 'Oxanium', system-ui, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.34em;
   font-size: 0.62rem;
-  font-weight: 800;
-  color: rgba(200, 180, 255, 0.7);
+  font-weight: 600;
+  color: rgba(143, 224, 255, 0.72);
   text-align: center;
 }
 
 .menuTitle {
   margin-top: 0.18rem;
-  font-family: 'Oxanium', system-ui, sans-serif;
-  font-weight: 950;
-  font-size: 1.7rem;
+  font-family: 'Space Grotesk', 'Oxanium', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 1.75rem;
   line-height: 1;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   text-align: center;
-  background: linear-gradient(180deg, #fff4d6, #c8a6ff 60%, #ff8fd6);
+  background: linear-gradient(180deg, #fff6e6, #ffd66b);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 3px 14px rgba(120, 90, 255, 0.4));
+  filter: drop-shadow(0 3px 16px rgba(255, 157, 61, 0.32));
 }
 
 /* Hero score block. */
@@ -551,8 +551,8 @@
 }
 
 .menuInput:focus {
-  border-color: rgba(185, 140, 255, 0.7);
-  box-shadow: 0 0 0 3px rgba(140, 100, 255, 0.18);
+  border-color: rgba(143, 224, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(70, 180, 232, 0.18);
 }
 
 .menuActions {
@@ -602,14 +602,14 @@
 }
 
 .menuBtn.primary {
-  background: linear-gradient(135deg, #b98cff, #ff7cd6);
+  background: linear-gradient(135deg, #ffd66b, #ff9d3d);
   color: rgba(12, 6, 22, 0.95);
   border: 1px solid rgba(255, 245, 200, 0.35);
-  box-shadow: 0 8px 22px rgba(180, 90, 220, 0.35);
+  box-shadow: 0 8px 22px rgba(255, 157, 61, 0.3);
 }
 
 .menuBtn.primary:hover {
-  box-shadow: 0 10px 28px rgba(180, 90, 220, 0.5);
+  box-shadow: 0 10px 28px rgba(255, 157, 61, 0.45);
 }
 
 .menuBtn.danger {
