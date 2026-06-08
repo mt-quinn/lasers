@@ -1,7 +1,7 @@
 import { clamp } from './math'
 import type { BlockEntity, BlockKind, BoardFeature, MirrorFeature, PrismFeature, RunState } from './runState'
 import { buildCellLoop, computeLocalAabbPx } from './outline'
-import { SHAPES } from './shapes'
+import { SHAPES, type ShapeDef } from './shapes'
 import { getArenaLayout } from './layout'
 import { screenTopWorldY } from '../render/projection'
 import { spawnRng, type Rng } from './rng'
@@ -335,7 +335,7 @@ export const spawnBlock = (s: RunState, rng: Rng, schedSec: number) => {
   const cornerRadius = cellSize * 0.5 - 0.6
 
   // Routing-focused kind (scheduled introduction; early game is normal-only).
-  const kind = rollBlockKind(t, rng)
+  let kind = rollBlockKind(t, rng)
 
   // Shape weighting: simpler early, bigger later. Chrome is always a single cell
   // so its reflective phase is brief — it dies fast and can't wall the muzzle.
@@ -349,14 +349,23 @@ export const spawnBlock = (s: RunState, rng: Rng, schedSec: number) => {
   // Shatter must be multi-cell so it actually fragments into a cluster (a 1x1
   // would just become a single block), so never let it roll the Dot.
   const shatterPool = pool.filter((sh) => sh.id !== 'Dot')
+  // Armored must be at least 2 cells TALL: a 1-cell-thick horizontal piece (I3/I4)
+  // makes a tediously long target whose only damageable faces are a sliver of
+  // top/sides, so route-around play degenerates. Restrict to taller shapes.
+  const shapeHeight = (sh: ShapeDef) => shapeCellBounds(normalizeCellsToOrigin(sh.cells)).h
+  const armoredPool = pool.filter((sh) => shapeHeight(sh) >= 2)
   const shape =
     kind === 'chrome'
       ? (SHAPES.find((sh) => sh.id === 'Dot') ?? randOf(pool, rng))
       : kind === 'shatter'
         ? randOf(shatterPool.length > 0 ? shatterPool : pool, rng)
-        : randOf(pool, rng)
+        : kind === 'armored'
+          ? randOf(armoredPool.length > 0 ? armoredPool : pool, rng)
+          : randOf(pool, rng)
   const cells = normalizeCellsToOrigin(shape.cells)
   const bounds = shapeCellBounds(cells)
+  // Defensive: never leave a 1-cell-tall piece armored (annoying target).
+  if (kind === 'armored' && bounds.h < 2) kind = 'normal'
   const wPx = bounds.w * cellSize
   const hPx = bounds.h * cellSize
  
