@@ -50,7 +50,7 @@ export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to ke
 // motes) ALWAYS pays — building charge, overflowing to score when full, or
 // banking toward the next charge during a surge — and so a surge can't fund its
 // own sequel (its debris is worth a fraction).
-const HEAT_PER_KILL = 0.085 // base charge per kill (scaled by combo + piece value); tuned so the FIRST charge is ~12-15s of clean play
+const HEAT_PER_KILL = 0.057 // base charge per kill (scaled by combo + piece value); reduced ~1/3 so overdrive takes meaningfully longer to fill
 // No always-on decay anymore (that made the early build a losing rate-race vs a
 // constant leak). Charge is sticky while you're actively fighting; it only
 // bleeds once your combo has fully lapsed — i.e. you've genuinely disengaged.

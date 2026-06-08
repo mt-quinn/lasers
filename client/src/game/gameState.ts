@@ -82,11 +82,9 @@ const isValidSavedState = (x: unknown): x is SavedRunState => {
 
 export const saveGameState = (state: RunState) => {
   try {
-    // Don't save if game is over - let the player start fresh
-    if (state.gameOver) {
-      localStorage.removeItem(GAME_STATE_KEY)
-      return
-    }
+    // Note: we DO persist the game-over snapshot now (gameOver + score-commit
+    // guards), so a refresh lands straight on the game-over screen instead of
+    // reloading a pre-death autosave and replaying into a second game over.
 
     // Extract only the fields we want to persist
     const toSave: SavedRunState = {
@@ -97,6 +95,8 @@ export const saveGameState = (state: RunState) => {
       blocksSpawned: state.blocksSpawned,
       bestDepthLocal: state.bestDepthLocal,
       gameOver: state.gameOver,
+      globalSubmitted: state.globalSubmitted,
+      localSaved: state.localSaved,
       tutorialMovedEmitter: state.tutorialMovedEmitter,
       lives: state.lives,
       failGraceDepth: state.failGraceDepth,

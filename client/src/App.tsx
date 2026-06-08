@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import './app.css'
 import { createInitialRunState, type RunState } from './game/runState'
 import { stepSim, fireOverdrive } from './game/sim'
@@ -9,11 +10,13 @@ import { getArenaLayout } from './game/layout'
 import { makeProjection } from './render/projection'
 import {
   addHighScore,
+  entriesForDate,
   getBestDepth,
   getBestScore,
   loadHighScores,
   loadLastPlayerName,
-  qualifiesTop5,
+  localDates,
+  qualifiesForDate,
   saveHighScores,
   saveLastPlayerName,
   type HighScoreEntry,
@@ -36,10 +39,41 @@ type HudSnapshot = {
   gameOver: boolean
 }
 
-// Game-over leaderboard: rows shown per page. Kept small so the panel stays
-// within the viewport (no scrolling) regardless of how many entries exist;
-// the player flips through pages with the prev/next chevrons.
+// Game-over leaderboard: rows shown for the selected day. Kept small so the
+// panel stays within the viewport (no scrolling); the board is navigated by
+// DATE (prev/next day) rather than by score page, and the player's own row is
+// pinned below when it falls outside this top slice.
 const GAMEOVER_LB_PAGE_SIZE = 5
+
+// How far back the date stepper can travel (days). A generous floor that avoids
+// stepping forever into empty history.
+const MAX_DATE_BACK_DAYS = 365
+
+// Shift a YYYY-MM-DD key by whole days, returning the new key (local calendar).
+const stepDateKey = (dateKey: string, deltaDays: number): string => {
+  const [y, m, d] = dateKey.split('-').map((n) => parseInt(n, 10))
+  const dt = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
+  dt.setDate(dt.getDate() + deltaDays)
+  const yy = dt.getFullYear()
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+// Compact, human label for the date stepper: Today / Yesterday / "Jun 8" (with
+// the year appended only when it isn't the current one).
+const formatDateLabel = (dateKey: string, todayKey: string): string => {
+  if (dateKey === todayKey) return 'Today'
+  if (dateKey === stepDateKey(todayKey, -1)) return 'Yesterday'
+  const [y, m, d] = dateKey.split('-').map((n) => parseInt(n, 10))
+  const dt = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
+  const sameYear = (y ?? 0) === new Date().getFullYear()
+  return dt.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: '2-digit' }),
+  })
+}
 
 // Legend shown in the pause menu: the special pieces/features and what each one
 // does, in plain language. Each row renders the REAL in-game artwork (via the
@@ -106,6 +140,10 @@ export default function App() {
   // the on-canvas control dock reads musicOn to draw its state, and the pointer
   // handlers call these to toggle on a tap.
   const musicOnRef = useRef(false)
+  // Read by the window-level pointer handlers so a tap while the music panel is
+  // open is consumed only by the panel's outside-tap scrim (it must not also
+  // re-trigger the canvas dock button or steer the well).
+  const musicPanelOpenRef = useRef(false)
   const dockActionsRef = useRef<{ togglePause: () => void; toggleMusic: () => void }>({
     togglePause: () => {},
     toggleMusic: () => {},
@@ -139,10 +177,30 @@ export default function App() {
     pauseBtnBottomPx: computePauseBtnBottomPx(),
     depth: stateRef.current.depth,
     score: stateRef.current.score,
-    gameOver: false,
+    // Honor a restored game-over so the screen shows instantly on refresh.
+    gameOver: stateRef.current.gameOver,
   }))
+  // True only for the very first game-over render after a refresh that restored a
+  // game-over'd run — used to skip the death wind-down (jump straight to the modal).
+  const restoredGameOverRef = useRef(stateRef.current.gameOver)
 
   const [musicOn, setMusicOn] = useState<boolean>(() => musicEngine.isWantPlaying())
+  // Music control panel: a small popover (Pause / Next / Volume) opened from the
+  // in-game canvas music button or the bottom-right button on the pause / game-over
+  // screens. `musicPanelPos` is the fixed px anchor (computed per trigger).
+  const [musicPanelOpen, setMusicPanelOpen] = useState(false)
+  const [musicPanelPos, setMusicPanelPos] = useState<{ left: number; bottom: number }>({
+    left: 16,
+    bottom: 84,
+  })
+  const [volumeOpen, setVolumeOpen] = useState(false)
+  const [volume, setVolume] = useState<number>(() => musicEngine.getVolume())
+  // Track shown by the now-playing card while the panel is open (the live current
+  // track, independent of the auto-pop timer).
+  const [panelTrack, setPanelTrack] = useState<TrackInfo | null>(null)
+  // Artwork URL that failed to load (404 / not an image). When the card's art
+  // matches this, we drop the art box entirely and let the card shrink.
+  const [brokenArtSrc, setBrokenArtSrc] = useState<string | null>(null)
   // "Now playing" corner card: shows briefly when a new song starts.
   const [nowPlaying, setNowPlaying] = useState<TrackInfo | null>(null)
   const [npLeaving, setNpLeaving] = useState(false)
@@ -160,13 +218,19 @@ export default function App() {
   ).current
   const [highScores, setHighScores] = useState<HighScoreEntry[]>(() => loadHighScores())
   const [nameDraft, setNameDraft] = useState<string>(() => loadLastPlayerName())
+  // `qualifiesBest` = this run earned a top-N local spot (offer the inline name
+  // save). `savedThisRun` collapses that row once saved. `gameOverReady` gates the
+  // modal so the run gets a brief wind-down beat before it appears.
   const [showNamePrompt, setShowNamePrompt] = useState(false)
+  const [savedThisRun, setSavedThisRun] = useState(false)
+  const [gameOverReady, setGameOverReady] = useState(false)
   const [pendingScoreDepth, setPendingScoreDepth] = useState<number | null>(null)
   const [pendingScore, setPendingScore] = useState<number | null>(null)
   const handledGameOverRef = useRef(false)
-  // Game-over leaderboard view: which board, and which page within it.
+  // Game-over leaderboard view: which board, and which day is being viewed. Both
+  // the local and global boards are keyed by `viewDate` and stepped together.
   const [lbTab, setLbTab] = useState<'daily' | 'local'>('daily')
-  const [lbPage, setLbPage] = useState(0)
+  const [viewDate, setViewDate] = useState<string>(() => getTodayDateKey())
 
   // Anonymous identity + global leaderboard wiring. All of this no-ops cleanly
   // when no Convex deployment is configured (queries skip, mutations unused),
@@ -178,7 +242,13 @@ export default function App() {
   const submitDailyGlobal = useMutation(api.leaderboard.submitDailyScore)
   const globalDailyScores = useQuery(
     api.leaderboard.getTopDailyScoresForDate,
-    convexConfigured && hud.gameOver ? { dateKey: todayKey } : 'skip',
+    convexConfigured && hud.gameOver ? { dateKey: viewDate } : 'skip',
+  )
+  // Earliest day the global board has any record for, so backward date paging
+  // stops at the start of recorded history rather than scrolling indefinitely.
+  const earliestGlobalDate = useQuery(
+    api.leaderboard.getEarliestDailyDate,
+    convexConfigured && hud.gameOver ? {} : 'skip',
   )
 
   const setPaused = useCallback((paused: boolean) => {
@@ -270,6 +340,10 @@ export default function App() {
 
     const onPointerDown = (e: PointerEvent) => {
       const s = stateRef.current
+      // While the music panel is open, the overlay scrim owns this tap (it just
+      // dismisses the panel). Ignore it here so the dock button doesn't re-toggle
+      // and the well doesn't get grabbed.
+      if (musicPanelOpenRef.current) return
       if (s.gameOver) return
       if (onUi(e)) return
       const hit = dockHit(e)
@@ -437,20 +511,102 @@ export default function App() {
     }
   }, [])
 
-  const toggleMusic = useCallback(() => {
-    // Drive the engine synchronously inside the click handler so audio.play()
-    // keeps the user-activation it needs (calling it inside a setState updater
-    // runs it during React's render phase — outside the gesture — and StrictMode
-    // double-invokes updaters, so the side effect must live out here).
+  // Music transport (panel buttons). Driven synchronously inside the click
+  // handler so audio.play()/ctx.resume() keep the user-activation they need.
+  const toggleMusicPlayback = useCallback(() => {
     const next = !musicEngine.isWantPlaying()
     musicEngine.setWantPlaying(next)
     setMusicOn(next)
   }, [])
 
+  const nextTrack = useCallback(() => {
+    void musicEngine.next()
+    setMusicOn(true)
+    // Reflect the freshly-picked track in the now-playing card right away.
+    const np = musicEngine.getNowPlaying()
+    if (np) setPanelTrack(np.info)
+  }, [])
+
+  const changeVolume = useCallback((v: number) => {
+    musicEngine.setVolume(v)
+    setVolume(v)
+  }, [])
+
+  const closeMusicPanel = useCallback(() => {
+    setMusicPanelOpen(false)
+    setVolumeOpen(false)
+  }, [])
+
+  // Open (or toggle) the panel, anchored to whichever button triggered it.
+  // `anchor` is the fixed px box the panel should float above.
+  const openMusicPanel = useCallback(
+    (left: number, bottom: number) => {
+      setMusicPanelPos({ left, bottom })
+      setPanelTrack(musicEngine.getNowPlaying()?.info ?? null)
+      setVolume(musicEngine.getVolume())
+      setMusicPanelOpen(true)
+    },
+    [],
+  )
+
+  // In-game trigger: the canvas music button (bottom-left dock). Anchor the panel
+  // just above it, centered, clamped to the viewport.
+  const PANEL_W = 244
+  const toggleDockMusicPanel = useCallback(() => {
+    if (musicPanelOpen) {
+      closeMusicPanel()
+      return
+    }
+    const canvas = canvasRef.current
+    const s = stateRef.current
+    let left = 16
+    let bottom = 84
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect()
+      const d = getArenaLayout(s.view).dock
+      const cx = rect.left + d.music.cx
+      const btnTop = rect.top + d.music.cy - d.btnR
+      left = Math.min(
+        Math.max(8, cx - PANEL_W / 2),
+        window.innerWidth - PANEL_W - 8,
+      )
+      bottom = Math.max(8, window.innerHeight - btnTop + 12)
+    }
+    openMusicPanel(left, bottom)
+  }, [musicPanelOpen, closeMusicPanel, openMusicPanel])
+
+  // Bottom-right trigger used on the pause / game-over overlays.
+  const toggleCornerMusicPanel = useCallback(() => {
+    if (musicPanelOpen) {
+      closeMusicPanel()
+      return
+    }
+    const left = Math.max(8, window.innerWidth - PANEL_W - 16)
+    openMusicPanel(left, 84)
+  }, [musicPanelOpen, closeMusicPanel, openMusicPanel])
+
+  // Close the music panel when the game transitions between play / pause /
+  // game-over so a panel anchored to a now-gone trigger never lingers.
+  useEffect(() => {
+    closeMusicPanel()
+  }, [hud.paused, hud.gameOver, closeMusicPanel])
+
+  // While the music panel is open, keep the now-playing card current: a track
+  // that begins or changes after the panel opened (e.g. it was still loading, or
+  // the player hit Next) gets reflected without waiting for the auto-pop tick.
+  useEffect(() => {
+    if (!musicPanelOpen) return
+    const refresh = () => setPanelTrack(musicEngine.getNowPlaying()?.info ?? null)
+    refresh()
+    const id = window.setInterval(refresh, 500)
+    return () => window.clearInterval(id)
+  }, [musicPanelOpen])
+
   // Feed the latest dock state/handlers to the []-dep RAF + pointer effects via
   // refs (so the on-canvas dock can draw + respond without re-subscribing).
   musicOnRef.current = musicOn
-  dockActionsRef.current.toggleMusic = toggleMusic
+  musicPanelOpenRef.current = musicPanelOpen
+  dockActionsRef.current.toggleMusic = toggleDockMusicPanel
   dockActionsRef.current.togglePause = () => {
     if (stateRef.current.gameOver) return
     if (stateRef.current.levelUpActive) return
@@ -582,7 +738,7 @@ export default function App() {
         }
       }
 
-      if (!s.paused && !audioGateRef.current) stepSim(s, dtSec)
+      if (!s.paused && !s.gameOver && !audioGateRef.current) stepSim(s, dtSec)
 
       // Sample the soundtrack every frame (even while paused) so the visuals
       // keep breathing, then push the live signals onto the run state. Also feed
@@ -700,72 +856,163 @@ export default function App() {
     clearGameState()
   }, [computePauseBtnBottomPx, highScores])
 
+  // Game-over wind-down: give the run a short beat (the death FX settle) before
+  // the modal appears, instead of slamming it in the instant the run ends.
+  // useLayoutEffect so the "not ready" state is committed before paint and the
+  // modal never flashes for a frame.
+  useLayoutEffect(() => {
+    if (!hud.gameOver) {
+      setGameOverReady(false)
+      return
+    }
+    // Restored game-over (page refresh): skip the wind-down and show it instantly.
+    if (restoredGameOverRef.current) {
+      restoredGameOverRef.current = false
+      setGameOverReady(true)
+      return
+    }
+    setGameOverReady(false)
+    const tid = window.setTimeout(() => setGameOverReady(true), 1300)
+    return () => window.clearTimeout(tid)
+  }, [hud.gameOver])
+
   // When a run ends, decide whether we need to prompt for a name (top-5 by score).
   useEffect(() => {
     if (!hud.gameOver) {
       handledGameOverRef.current = false
       setShowNamePrompt(false)
+      setSavedThisRun(false)
       setPendingScoreDepth(null)
       setPendingScore(null)
       setLbTab('daily')
-      setLbPage(0)
+      setViewDate(getTodayDateKey())
       return
     }
     if (handledGameOverRef.current) return
     handledGameOverRef.current = true
 
+    const s = stateRef.current
+    // Each run lands on its own day; open the board on that day.
+    setViewDate(s.dateKey)
     setPendingScoreDepth(hud.depth)
     setPendingScore(hud.score)
-    if (qualifiesTop5(highScores, hud.score)) {
+    // If the local score was already committed (e.g. saved before a refresh),
+    // don't offer the save again — reflect it as already-saved instead.
+    setSavedThisRun(s.localSaved)
+    if (!s.localSaved && qualifiesForDate(highScores, s.dateKey, hud.score)) {
       setShowNamePrompt(true)
     }
+    // Persist the game-over snapshot once so a refresh lands straight here (the
+    // per-frame autosave stops at game over).
+    saveGameState(s)
 
-    // Fire-and-forget global submit on every run end. The server upserts the
-    // player's best row FOR THIS DAY, so playing as much as they want only ever
-    // keeps their single best daily score globally. Uses the last saved name
-    // until the player enters a new one.
-    if (convexConfigured && hud.score > 0) {
+    // Fire-and-forget global submit on the FIRST game-over for this run only. The
+    // server upserts the player's best row for the day, but we still guard with
+    // `globalSubmitted` so a refresh of a game-over'd run never re-submits. Uses
+    // the last saved name until the player enters a new one.
+    if (convexConfigured && hud.score > 0 && !s.globalSubmitted) {
+      s.globalSubmitted = true
+      saveGameState(s)
       submitDailyGlobal({
         playerId: playerIdRef.current,
         name: loadLastPlayerName() || 'PLAYER',
         score: hud.score,
         depth: hud.depth,
-        dateKey: stateRef.current.dateKey,
+        dateKey: s.dateKey,
         savedAt: Date.now(),
       }).catch(() => {})
     }
   }, [hud.gameOver, hud.depth, hud.score, highScores, convexConfigured, submitDailyGlobal])
 
-  const submitHighScore = useCallback(() => {
-    if (pendingScoreDepth == null || pendingScore == null) return
-    const next = addHighScore(highScores, {
-      name: nameDraft,
-      depth: pendingScoreDepth,
-      score: pendingScore,
-    })
-    setHighScores(next)
-    saveHighScores(next)
-    saveLastPlayerName(nameDraft)
-    setShowNamePrompt(false)
-    // Update local bests immediately for the live HUD labels on subsequent runs.
-    stateRef.current.bestDepthLocal = getBestDepth(next)
-    stateRef.current.bestScoreLocal = getBestScore(next)
-    // Re-submit globally with the chosen name so the daily row shows it too.
-    if (convexConfigured) {
-      submitDailyGlobal({
-        playerId: playerIdRef.current,
-        name: nameDraft,
-        score: pendingScore,
+  const saveRunScore = useCallback(
+    (name: string) => {
+      if (pendingScoreDepth == null || pendingScore == null) return
+      const s = stateRef.current
+      // Hard guard: a run's local high score is committed at most once, ever —
+      // even across refreshes (the flag is persisted with the game-over snapshot).
+      if (s.localSaved) {
+        setSavedThisRun(true)
+        return
+      }
+      const clean = name.trim() || 'PLAYER'
+      const next = addHighScore(highScores, {
+        name: clean,
         depth: pendingScoreDepth,
-        dateKey: stateRef.current.dateKey,
-        savedAt: Date.now(),
-      }).catch(() => {})
-    }
-  }, [highScores, nameDraft, pendingScoreDepth, pendingScore, convexConfigured, submitDailyGlobal])
+        score: pendingScore,
+        dateKey: s.dateKey,
+      })
+      setHighScores(next)
+      saveHighScores(next)
+      saveLastPlayerName(clean)
+      setSavedThisRun(true)
+      // Mark + persist so a refresh can't re-open the save flow for this run.
+      s.localSaved = true
+      s.globalSubmitted = true
+      saveGameState(s)
+      // Update local bests immediately for the live HUD labels on subsequent runs.
+      s.bestDepthLocal = getBestDepth(next)
+      s.bestScoreLocal = getBestScore(next)
+      // Re-submit globally with the chosen name so the daily row shows it too.
+      if (convexConfigured) {
+        submitDailyGlobal({
+          playerId: playerIdRef.current,
+          name: clean,
+          score: pendingScore,
+          depth: pendingScoreDepth,
+          dateKey: s.dateKey,
+          savedAt: Date.now(),
+        }).catch(() => {})
+      }
+    },
+    [highScores, pendingScoreDepth, pendingScore, convexConfigured, submitDailyGlobal],
+  )
 
-  const skipHighScore = useCallback(() => {
-    setShowNamePrompt(false)
-  }, [])
+  const submitHighScore = useCallback(() => {
+    saveRunScore(nameDraft)
+  }, [saveRunScore, nameDraft])
+
+  // Play Again from the game-over screen. If the player earned a high score but
+  // never tapped Save, persist it under their remembered name first so a qualifying
+  // run is never silently lost just because they jumped straight back in.
+  const playAgain = useCallback(() => {
+    if (showNamePrompt && !savedThisRun) saveRunScore(nameDraft)
+    restart()
+  }, [showNamePrompt, savedThisRun, saveRunScore, nameDraft, restart])
+
+  // Local placement of the just-finished run within ITS day (1-based), for the
+  // "New high score" banner. Computed before this run was inserted.
+  const runLocalRank = useMemo(() => {
+    if (pendingScore == null) return null
+    return (
+      entriesForDate(highScores, stateRef.current.dateKey).filter(
+        (e) => e.score >= pendingScore,
+      ).length + 1
+    )
+  }, [highScores, pendingScore])
+
+  // Whether this run is a new GLOBAL best — i.e. it beat the player's previous
+  // best for today, so it improves their row on the global daily board. (The
+  // global board keeps one best row per player per day.)
+  const isGlobalBest = useMemo(() => {
+    if (!convexConfigured || pendingScore == null) return false
+    const prevBestToday = entriesForDate(highScores, stateRef.current.dateKey).reduce(
+      (m, e) => Math.max(m, e.score),
+      0,
+    )
+    return pendingScore > prevBestToday
+  }, [convexConfigured, highScores, pendingScore])
+
+  // Global placement (1-based) on today's daily board. Prefer the player's own
+  // row once the submit lands; until then estimate from where the score slots.
+  // null while the board is still loading so we don't flash a wrong rank.
+  const runGlobalRank = useMemo(() => {
+    if (!convexConfigured || pendingScore == null) return null
+    const rows = globalDailyScores
+    if (!rows || rows.length === 0) return null
+    const mineIdx = rows.findIndex((r) => r.playerId === playerIdRef.current)
+    if (mineIdx >= 0) return mineIdx + 1
+    return rows.filter((r) => r.score > pendingScore).length + 1
+  }, [convexConfigured, globalDailyScores, pendingScore])
 
   // Run stats for the menus (pause + game over). Recomputed only when a menu
   // is actually open.
@@ -780,21 +1027,32 @@ export default function App() {
   // region so the panel never grows past the viewport no matter how many rows
   // exist. The active tab falls back to whichever board has data.
   const dailyRows = convexConfigured && globalDailyScores ? globalDailyScores : []
-  const hasDaily = dailyRows.length > 0
-  const hasLocal = highScores.length > 0
-  const activeTab: 'daily' | 'local' =
-    lbTab === 'daily' ? (hasDaily ? 'daily' : 'local') : hasLocal ? 'local' : 'daily'
-  const lbRows = activeTab === 'daily' ? dailyRows : highScores
-  const lbPageCount = Math.max(1, Math.ceil(lbRows.length / GAMEOVER_LB_PAGE_SIZE))
-  const lbSafePage = Math.min(Math.max(0, lbPage), lbPageCount - 1)
-  const lbStart = lbSafePage * GAMEOVER_LB_PAGE_SIZE
-  const lbPageRows = lbRows.slice(lbStart, lbStart + GAMEOVER_LB_PAGE_SIZE)
-  // On the daily board, pin the player's own row when it falls off the visible
-  // page so they can always see their standing without hunting through pages.
+  const localRows = entriesForDate(highScores, viewDate)
+  const showGlobalTab = convexConfigured
+  const hasAnyLocalEver = highScores.length > 0
+  const showLeaderboard = showGlobalTab || hasAnyLocalEver
+  // Global tab requires Convex; otherwise the board is local-only.
+  const activeTab: 'daily' | 'local' = lbTab === 'daily' && showGlobalTab ? 'daily' : 'local'
+  const lbRows = activeTab === 'daily' ? dailyRows : localRows
+  const lbTopRows = lbRows.slice(0, GAMEOVER_LB_PAGE_SIZE)
+  // On the global board, pin the player's own row when it's below the visible
+  // top slice so they always see their standing for the day.
   const myDailyIdx =
     activeTab === 'daily' ? dailyRows.findIndex((e) => e.playerId === playerIdRef.current) : -1
-  const myOnPage = myDailyIdx >= lbStart && myDailyIdx < lbStart + GAMEOVER_LB_PAGE_SIZE
-  const lbPinnedMe = myDailyIdx >= 0 && !myOnPage ? dailyRows[myDailyIdx]! : null
+  const lbPinnedMe = myDailyIdx >= GAMEOVER_LB_PAGE_SIZE ? dailyRows[myDailyIdx]! : null
+  // Date stepper bounds: can't view the future, and stops at the earliest day
+  // the active board actually has records for (no scrolling into empty history).
+  // An absolute cap guards against any stray far-past dateKey.
+  const capDate = stepDateKey(todayKey, -MAX_DATE_BACK_DAYS)
+  const localFloor = (() => {
+    const dates = localDates(highScores)
+    return dates.length ? dates[dates.length - 1]! : todayKey
+  })()
+  const globalFloor = earliestGlobalDate ?? todayKey
+  const activeFloor = activeTab === 'daily' ? globalFloor : localFloor
+  const floorDate = activeFloor > capDate ? activeFloor : capDate
+  const atToday = viewDate >= todayKey
+  const atFloor = viewDate <= floorDate
 
   return (
     <div className="lg-viewport">
@@ -812,32 +1070,138 @@ export default function App() {
             <canvas ref={canvasRef} className="lg-canvas" />
 
             {/* "Now playing" corner card — pops in when a new song starts, holds
-                briefly, then fades. Non-interactive so taps pass to gameplay. */}
-            {nowPlaying && (
-              <div
-                className={`nowPlaying${npLeaving ? ' leaving' : ''}`}
-                role="status"
-                aria-live="polite"
+                briefly, then fades. Also re-shown (pinned) for as long as the music
+                panel is open. Non-interactive so taps pass to gameplay. */}
+            {(() => {
+              const card = musicPanelOpen ? panelTrack ?? nowPlaying : nowPlaying
+              // While the panel is open the card is always present (placeholder
+              // when no track is known yet); otherwise it only auto-pops.
+              if (!card && !musicPanelOpen) return null
+              const hasArt = !!card?.artwork && card.artwork !== brokenArtSrc
+              const cls = `${musicPanelOpen ? 'nowPlaying pinned' : `nowPlaying${npLeaving ? ' leaving' : ''}`}${
+                hasArt ? '' : ' noArt'
+              }`
+              return (
+                <div className={cls} role="status" aria-live="polite">
+                  {hasArt && (
+                    <img
+                      className="npArt"
+                      src={card!.artwork}
+                      alt=""
+                      aria-hidden="true"
+                      onError={() => setBrokenArtSrc(card!.artwork ?? null)}
+                    />
+                  )}
+                  <div className="npText">
+                    <div className="npEyebrow">Now Playing</div>
+                    <div className="npTitle">{card ? card.title : 'Nothing playing'}</div>
+                    {card && <div className="npArtist">{card.artist}</div>}
+                    {card && (card.album || card.genre) && (
+                      <div className="npAlbum">{card.album || card.genre}</div>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Music control: bottom-right button on the pause / game-over overlays
+                (in-game the canvas dock button opens the same panel). Plus the
+                shared popover (Pause / Next / Volume) and an outside-tap scrim. */}
+            {(hud.paused || (hud.gameOver && gameOverReady)) && (
+              <button
+                type="button"
+                className={`musicCornerBtn${musicOn ? ' on' : ''}`}
+                aria-label="Music controls"
+                aria-expanded={musicPanelOpen}
+                onClick={toggleCornerMusicPanel}
               >
-                {nowPlaying.artwork ? (
-                  <img
-                    className="npArt"
-                    src={nowPlaying.artwork}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <div className="npArt npArtFallback" aria-hidden="true">♪</div>
-                )}
-                <div className="npText">
-                  <div className="npEyebrow">Now Playing</div>
-                  <div className="npTitle">{nowPlaying.title}</div>
-                  <div className="npArtist">{nowPlaying.artist}</div>
-                  {(nowPlaying.album || nowPlaying.genre) && (
-                    <div className="npAlbum">{nowPlaying.album || nowPlaying.genre}</div>
+                <span className="musicCornerGlyph" aria-hidden="true">♪</span>
+              </button>
+            )}
+
+            {musicPanelOpen && (
+              <>
+                <div
+                  className="musicScrim"
+                  onPointerDown={closeMusicPanel}
+                  aria-hidden="true"
+                />
+                <div
+                  className="musicPanel"
+                  role="dialog"
+                  aria-label="Music controls"
+                  style={{ left: musicPanelPos.left, bottom: musicPanelPos.bottom }}
+                >
+                  <div className="musicPanelRow">
+                    <button
+                      type="button"
+                      className="musicBtn"
+                      aria-label={musicOn ? 'Pause music' : 'Play music'}
+                      onClick={toggleMusicPlayback}
+                    >
+                      {musicOn ? (
+                        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                          <rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" />
+                          <rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                          <path d="M8 5.5 L8 18.5 L19 12 Z" fill="currentColor" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="musicBtn"
+                      aria-label="Next track"
+                      onClick={nextTrack}
+                    >
+                      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                        <path d="M6 5.5 L6 18.5 L15 12 Z" fill="currentColor" />
+                        <rect x="16" y="5" width="3" height="14" rx="1.2" fill="currentColor" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className={`musicBtn${volumeOpen ? ' active' : ''}`}
+                      aria-label="Volume"
+                      aria-expanded={volumeOpen}
+                      onClick={() => setVolumeOpen((v) => !v)}
+                    >
+                      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                        <path
+                          d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"
+                          fill="currentColor"
+                        />
+                        {volume > 0.02 && (
+                          <path
+                            d="M16 8.5 A5 5 0 0 1 16 15.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                          />
+                        )}
+                      </svg>
+                    </button>
+                  </div>
+                  {volumeOpen && (
+                    <div className="musicVolumeRow">
+                      <input
+                        className="musicVolume"
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={volume}
+                        aria-label="Volume level"
+                        style={{ '--vol': `${Math.round(volume * 100)}%` } as CSSProperties}
+                        onChange={(e) => changeVolume(parseFloat(e.target.value))}
+                      />
+                    </div>
                   )}
                 </div>
-              </div>
+              </>
             )}
 
             {/* The pause + music control dock is drawn ON the canvas (see
@@ -924,8 +1288,10 @@ export default function App() {
               </div>
             )}
 
-            {/* Game-over overlay + optional name prompt for top-5. */}
-            {hud.gameOver && (
+            {/* Game-over overlay. Appears after a short wind-down beat; the name
+                save is inline and non-blocking (leaderboard + Play Again stay
+                visible the whole time). */}
+            {hud.gameOver && gameOverReady && (
               <div className="menuOverlay" role="dialog" aria-label="Game over">
                 <div className="menuPanel">
                   <div className="menuKicker">Run ended</div>
@@ -953,85 +1319,110 @@ export default function App() {
                     </div>
                   )}
 
-                  {showNamePrompt && (
-                    <div className="menuSection">
-                      <div className="menuSectionTitle">New high score — enter your name</div>
-                      <input
-                        className="menuInput"
-                        value={nameDraft}
-                        onChange={(e) => setNameDraft(e.target.value)}
-                        maxLength={16}
-                        placeholder="PLAYER"
-                        autoFocus
-                      />
-                      <div className="menuActions">
-                        <button type="button" className="menuBtn ghost" onClick={skipHighScore}>
-                          Skip
-                        </button>
-                        <button type="button" className="menuBtn primary" onClick={submitHighScore}>
+                  {showNamePrompt && !savedThisRun && (
+                    <div className="menuSection nameSave">
+                      <div className="nameSaveBadge">
+                        {isGlobalBest
+                          ? `New Global High Score${runGlobalRank ? ` · #${runGlobalRank}` : ''}`
+                          : `New Local High Score · #${runLocalRank}`}
+                      </div>
+                      <div className="nameSaveRow">
+                        <input
+                          className="menuInput"
+                          value={nameDraft}
+                          onChange={(e) => setNameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') submitHighScore()
+                          }}
+                          maxLength={16}
+                          placeholder="PLAYER"
+                          aria-label="Your name"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          className="menuBtn primary nameSaveBtn"
+                          onClick={submitHighScore}
+                        >
                           Save
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {!showNamePrompt && (hasDaily || hasLocal) && (
+                  {showNamePrompt && savedThisRun && (
+                    <div className="nameSaved" role="status">
+                      Saved as <strong>{nameDraft.trim() || 'PLAYER'}</strong>
+                    </div>
+                  )}
+
+                  {showLeaderboard && (
                     <div className="menuSection menuLeaderboard">
                       <div className="lbTabs" role="tablist">
-                        {hasDaily && (
+                        {showGlobalTab && (
                           <button
                             type="button"
                             role="tab"
                             aria-selected={activeTab === 'daily'}
                             className={`lbTab${activeTab === 'daily' ? ' active' : ''}`}
-                            onClick={() => {
-                              setLbTab('daily')
-                              setLbPage(0)
-                            }}
+                            onClick={() => setLbTab('daily')}
                           >
-                            Daily Global
+                            Global
                           </button>
                         )}
-                        {hasLocal && (
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={activeTab === 'local'}
-                            className={`lbTab${activeTab === 'local' ? ' active' : ''}`}
-                            onClick={() => {
-                              setLbTab('local')
-                              setLbPage(0)
-                            }}
-                          >
-                            Your Best
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={activeTab === 'local'}
+                          className={`lbTab${activeTab === 'local' ? ' active' : ''}`}
+                          onClick={() => setLbTab('local')}
+                        >
+                          Local
+                        </button>
                       </div>
 
                       <ol className="menuScoreList lbList">
-                        {lbPageRows.map((e, i) => {
-                          const rank = lbStart + i + 1
-                          const mine =
-                            activeTab === 'daily' &&
-                            'playerId' in e &&
-                            e.playerId === playerIdRef.current
-                          const key =
-                            'playerId' in e ? `${e.playerId}-${rank}` : `${e.ts}-${rank}`
-                          return (
-                            <li key={key} className={`menuScoreRow${mine ? ' isMe' : ''}`}>
-                              <span className="rank">{rank}</span>
-                              <span className="name">{e.name}</span>
-                              <span className="val">
-                                {e.score.toLocaleString()}
-                                <span className="depth">d{e.depth}</span>
-                              </span>
-                            </li>
-                          )
-                        })}
+                        {lbTopRows.length === 0 ? (
+                          <li className="lbEmpty">No runs on this day</li>
+                        ) : (
+                          lbTopRows.map((e, i) => {
+                            const rank = i + 1
+                            // Global board: the player's own actor row. Local board:
+                            // the run that just finished (matched by score+depth+day).
+                            const mine =
+                              activeTab === 'daily'
+                                ? 'playerId' in e && e.playerId === playerIdRef.current
+                                : 'ts' in e &&
+                                  pendingScore != null &&
+                                  e.score === pendingScore &&
+                                  e.depth === pendingScoreDepth &&
+                                  e.dateKey === stateRef.current.dateKey
+                            const key =
+                              'playerId' in e ? `${e.playerId}-${rank}` : `${e.ts}-${rank}`
+                            return (
+                              <li key={key} className={`menuScoreRow${mine ? ' isMe' : ''}`}>
+                                <span className="rank">{rank}</span>
+                                <span className="name">
+                                  {e.name}
+                                  {mine && activeTab === 'daily' && (
+                                    <span className="youTag">(YOU)</span>
+                                  )}
+                                </span>
+                                <span className="val">
+                                  {e.score.toLocaleString()}
+                                  <span className="depth">d{e.depth}</span>
+                                </span>
+                              </li>
+                            )
+                          })
+                        )}
                         {lbPinnedMe && (
                           <li className="menuScoreRow isMe pinned">
                             <span className="rank">{myDailyIdx + 1}</span>
-                            <span className="name">{lbPinnedMe.name}</span>
+                            <span className="name">
+                              {lbPinnedMe.name}
+                              <span className="youTag">(YOU)</span>
+                            </span>
                             <span className="val">
                               {lbPinnedMe.score.toLocaleString()}
                               <span className="depth">d{lbPinnedMe.depth}</span>
@@ -1040,41 +1431,37 @@ export default function App() {
                         )}
                       </ol>
 
-                      {lbPageCount > 1 && (
-                        <div className="lbPager">
-                          <button
-                            type="button"
-                            className="lbPagerBtn"
-                            disabled={lbSafePage === 0}
-                            aria-label="Previous page"
-                            onClick={() => setLbPage((p) => Math.max(0, p - 1))}
-                          >
-                            ‹
-                          </button>
-                          <span className="lbPagerLabel">
-                            {lbSafePage + 1} / {lbPageCount}
-                          </span>
-                          <button
-                            type="button"
-                            className="lbPagerBtn"
-                            disabled={lbSafePage >= lbPageCount - 1}
-                            aria-label="Next page"
-                            onClick={() => setLbPage((p) => Math.min(lbPageCount - 1, p + 1))}
-                          >
-                            ›
-                          </button>
-                        </div>
-                      )}
+                      <div className="lbPager lbDateNav">
+                        <button
+                          type="button"
+                          className="lbPagerBtn"
+                          disabled={atFloor}
+                          aria-label="Previous day"
+                          onClick={() => setViewDate((d) => stepDateKey(d, -1))}
+                        >
+                          ‹
+                        </button>
+                        <span className="lbPagerLabel lbDateLabel">
+                          {formatDateLabel(viewDate, todayKey)}
+                        </span>
+                        <button
+                          type="button"
+                          className="lbPagerBtn"
+                          disabled={atToday}
+                          aria-label="Next day"
+                          onClick={() => setViewDate((d) => stepDateKey(d, 1))}
+                        >
+                          ›
+                        </button>
+                      </div>
                     </div>
                   )}
 
-                  {!showNamePrompt && (
-                    <div className="menuActions">
-                      <button type="button" className="menuBtn primary" onClick={restart}>
-                        Play Again
-                      </button>
-                    </div>
-                  )}
+                  <div className="menuActions">
+                    <button type="button" className="menuBtn primary" onClick={playAgain}>
+                      Play Again
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

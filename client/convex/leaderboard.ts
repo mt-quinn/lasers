@@ -196,6 +196,20 @@ export const getTopDailyScoresForDate = query({
   },
 })
 
+// Earliest day with any daily-board records, so the client can stop backward
+// date paging at the start of recorded history instead of scrolling forever.
+export const getEarliestDailyDate = query({
+  args: {},
+  handler: async (ctx) => {
+    const first = await ctx.db
+      .query('dailyScores')
+      .withIndex('by_dateKey_score')
+      .order('asc')
+      .first()
+    return first ? first.dateKey : null
+  },
+})
+
 // Maintenance janitor (not client-exposed; invoke via `npx convex run`).
 // Removes every leaderboard row for a given playerId across both boards —
 // used to wipe test/verification rows.

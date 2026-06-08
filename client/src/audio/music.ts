@@ -33,6 +33,10 @@ const AUDIUS_API_BASE = 'https://discoveryprovider.audius.co/v1'
 // Persisted music on/off preference. Survives refreshes so the player's last
 // choice sticks; a fresh browser (no key yet) defaults to "wanted".
 const MUSIC_WANT_KEY = 'laserburn.music.wantPlaying'
+// Persisted output volume (0..1). Applied through a GainNode in the Web Audio
+// graph rather than HTMLAudioElement.volume, because iOS Safari ignores the
+// latter — the slider must move a gain node to actually do anything on phones.
+const MUSIC_VOL_KEY = 'laserburn.music.volume'
 
 const readWantPlaying = (): boolean => {
   try {
@@ -48,6 +52,23 @@ const writeWantPlaying = (on: boolean): void => {
     localStorage.setItem(MUSIC_WANT_KEY, on ? '1' : '0')
   } catch {
     // Ignore storage failures (private mode, quota); state stays in-memory.
+  }
+}
+
+const readVolume = (): number => {
+  try {
+    const v = parseFloat(localStorage.getItem(MUSIC_VOL_KEY) ?? '')
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.85
+  } catch {
+    return 0.85
+  }
+}
+
+const writeVolume = (v: number): void => {
+  try {
+    localStorage.setItem(MUSIC_VOL_KEY, v.toFixed(3))
+  } catch {
+    // Ignore storage failures; volume stays in-memory.
   }
 }
 
@@ -145,6 +166,8 @@ class MusicEngine {
   private ctx: AudioContext | null = null
   private analyser: AnalyserNode | null = null
   private source: MediaElementAudioSourceNode | null = null
+  private gain: GainNode | null = null
+  private volume = readVolume()
   private freq: Uint8Array<ArrayBuffer> | null = null
 
   private trackId = DEFAULT_TRACK_ID
@@ -420,6 +443,43 @@ class MusicEngine {
     return this.wantPlaying
   }
 
+  getVolume() {
+    return this.volume
+  }
+
+  // Set output volume (0..1). Drives the graph's GainNode live and persists the
+  // choice. Safe to call before the graph exists — ensureGraph() reads this.volume.
+  setVolume(v: number) {
+    const next = Math.min(1, Math.max(0, v))
+    this.volume = next
+    writeVolume(next)
+    if (this.gain) this.gain.gain.value = next
+  }
+
+  // Skip to the next tempo-matched track immediately. Turns music on if it was
+  // off (the player explicitly asked for a track), resumes the context inside
+  // the calling gesture, then picks + plays a fresh song.
+  async next() {
+    if (!this.wantPlaying) {
+      this.wantPlaying = true
+      writeWantPlaying(true)
+    }
+    this.ensureGraph()
+    const ctx = this.ctx
+    if (ctx && ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        // Ignore; the load below still attempts to play.
+      }
+    }
+    // Mark the transition so the per-frame unlock check doesn't flash the resume
+    // prompt during the brief gap between tracks.
+    this.loadPending = true
+    this.notifyNeedsUnlock()
+    await this.pickAndPlayNext()
+  }
+
   // ---- "Audio needs unlock" subscription --------------------------------
   //
   // On mobile (iOS Safari especially) the player's first interaction is a
@@ -534,11 +594,17 @@ class MusicEngine {
       analyser.minDecibels = -85
       analyser.maxDecibels = -8
       analyser.smoothingTimeConstant = 0.58
+      // source -> analyser -> gain -> destination. The gain node is what the
+      // volume slider drives (HTMLAudioElement.volume is a no-op on iOS).
+      const gain = ctx.createGain()
+      gain.gain.value = this.volume
       source.connect(analyser)
-      analyser.connect(ctx.destination)
+      analyser.connect(gain)
+      gain.connect(ctx.destination)
       this.ctx = ctx
       this.source = source
       this.analyser = analyser
+      this.gain = gain
       this.freq = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount))
       // Surface suspended↔running transitions so the "tap to resume" prompt
       // can show/hide itself as the OS moves the context around.

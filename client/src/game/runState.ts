@@ -332,6 +332,12 @@ export type RunState = {
   bestDepthLocal: number
   // True when the run has ended (out of lives). App will show game-over UI and optionally save score.
   gameOver: boolean
+  // Score-commit guards, persisted with the run so a refresh of a game-over'd run
+  // can never submit the same score again. `globalSubmitted` = the daily global
+  // upsert has fired for this run; `localSaved` = the local high-score row has
+  // been committed (Save / auto-save). Once set, both are one-way for the run.
+  globalSubmitted: boolean
+  localSaved: boolean
 
   // Tutorial/first-play helpers.
   tutorialMovedEmitter: boolean
@@ -493,6 +499,8 @@ export const createInitialRunState = (): RunState => {
     blocksSpawned: 0,
     bestDepthLocal: 0,
     gameOver: false,
+    globalSubmitted: false,
+    localSaved: false,
     tutorialMovedEmitter: false,
     // Single life: "how deep" score-attack. One fail ends the run.
     lives: 1,
