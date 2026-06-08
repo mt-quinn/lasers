@@ -90,12 +90,36 @@ interface AudiusTrack {
   bpm?: number
   duration?: number
   genre?: string
+  mood?: string
   is_streamable?: boolean
   is_available?: boolean
   is_delete?: boolean
   is_stream_gated?: boolean
   title?: string
+  album?: string
+  user?: { name?: string; handle?: string }
+  artwork?: { '150x150'?: string; '480x480'?: string; '1000x1000'?: string }
 }
+
+// Metadata for the "now playing" corner card. `album` is best-effort (Audius
+// standalone tracks rarely carry one), so the UI falls back to genre.
+export interface TrackInfo {
+  id: string
+  title: string
+  artist: string
+  album?: string
+  genre?: string
+  artwork?: string
+}
+
+const extractTrackInfo = (t: AudiusTrack): TrackInfo => ({
+  id: t.id ?? '',
+  title: t.title?.trim() || 'Unknown Track',
+  artist: t.user?.name?.trim() || t.user?.handle?.trim() || 'Unknown Artist',
+  album: t.album?.trim() || undefined,
+  genre: t.genre?.trim() || undefined,
+  artwork: t.artwork?.['480x480'] || t.artwork?.['150x150'] || undefined,
+})
 
 type EngineSignals = Omit<MusicSignals, 'intensity'>
 
@@ -134,6 +158,15 @@ class MusicEngine {
   private recentTrackIds: string[] = []
   private picking = false
   private currentBpm = 0
+
+  // "Now playing" announcement state. Metadata for a freshly picked track is held
+  // in `pendingInfo` until the audio element actually starts playing, at which
+  // point it's promoted to `nowPlaying` and the token bumps so the UI can pop a
+  // corner card exactly when the new song becomes audible.
+  private pendingInfo: TrackInfo | null = null
+  private nowPlaying: TrackInfo | null = null
+  private nowPlayingToken = 0
+  private announcedId = ''
 
   // Stream failover state. The Audius discovery provider load-balances the
   // /stream endpoint across community content nodes, some of which are
@@ -195,6 +228,7 @@ class MusicEngine {
       // A healthy load: clear the failover counter so a later glitch starts
       // its own fresh backoff.
       el.addEventListener('playing', this.onAudioHealthy)
+      el.addEventListener('playing', this.onAudioPlaying)
       el.addEventListener('canplay', this.onAudioHealthy)
       // A node served a bad/blocked stream: route around it.
       el.addEventListener('error', this.onAudioError)
@@ -209,6 +243,22 @@ class MusicEngine {
     this.loadAttempt = 0
     this.loadPending = false
     this.notifyNeedsUnlock()
+  }
+
+  // Announce a newly-started track exactly once, when it actually begins playing
+  // (not when picked, which can be seconds earlier while it loads).
+  private onAudioPlaying = () => {
+    if (this.announcedId === this.trackId) return
+    if (!this.pendingInfo || this.pendingInfo.id !== this.trackId) return
+    this.announcedId = this.trackId
+    this.nowPlaying = this.pendingInfo
+    this.nowPlayingToken++
+  }
+
+  // Latest started track + a token that increments on each new song, so the UI
+  // can detect "a new song just started" by watching the token.
+  getNowPlaying(): { info: TrackInfo; token: number } | null {
+    return this.nowPlaying ? { info: this.nowPlaying, token: this.nowPlayingToken } : null
   }
 
   private onAudioError = () => {
@@ -313,6 +363,7 @@ class MusicEngine {
       const pick = choices[Math.floor(Math.random() * choices.length)]!
       this.trackId = pick.id!
       this.currentBpm = typeof pick.bpm === 'number' ? pick.bpm : 0
+      this.pendingInfo = extractTrackInfo(pick)
       this.recentTrackIds.push(pick.id!)
       if (this.recentTrackIds.length > 8) this.recentTrackIds.shift()
     } finally {

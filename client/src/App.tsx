@@ -20,6 +20,7 @@ import {
 } from './game/highScores'
 import { clearGameState, loadGameState, saveGameState } from './game/gameState'
 import { musicEngine } from './audio/music'
+import type { TrackInfo } from './audio/music'
 import { sfxEngine } from './audio/sfx'
 import { drawPieceSwatch, type SwatchKind } from './render/swatch'
 import { useMutation, useQuery } from 'convex/react'
@@ -142,6 +143,12 @@ export default function App() {
   }))
 
   const [musicOn, setMusicOn] = useState<boolean>(() => musicEngine.isWantPlaying())
+  // "Now playing" corner card: shows briefly when a new song starts.
+  const [nowPlaying, setNowPlaying] = useState<TrackInfo | null>(null)
+  const [npLeaving, setNpLeaving] = useState(false)
+  const npTokenRef = useRef(-1)
+  const npHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const npRemoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Mobile-only "Tap to resume" prompt: shown when music is wanted but the
   // AudioContext isn't running (iOS won't unlock audio from a drag gesture).
   const [audioNeedsUnlock, setAudioNeedsUnlock] = useState<boolean>(() =>
@@ -604,6 +611,18 @@ export default function App() {
           '--accent-hue',
           (s.music.playing ? s.music.hue : 200).toFixed(1),
         )
+
+        // New song started? Pop the unobtrusive "now playing" card, then auto-hide.
+        const np = musicEngine.getNowPlaying()
+        if (np && np.token !== npTokenRef.current) {
+          npTokenRef.current = np.token
+          if (npHideTimerRef.current) clearTimeout(npHideTimerRef.current)
+          if (npRemoveTimerRef.current) clearTimeout(npRemoveTimerRef.current)
+          setNpLeaving(false)
+          setNowPlaying(np.info)
+          npHideTimerRef.current = setTimeout(() => setNpLeaving(true), 10400)
+          npRemoveTimerRef.current = setTimeout(() => setNowPlaying(null), 10850)
+        }
       }
 
       // Auto-save game state every 2 seconds (20 buckets)
@@ -650,6 +669,8 @@ export default function App() {
       window.removeEventListener('resize', resize)
       document.removeEventListener('visibilitychange', onVisibility)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      if (npHideTimerRef.current) clearTimeout(npHideTimerRef.current)
+      if (npRemoveTimerRef.current) clearTimeout(npRemoveTimerRef.current)
       if (safeProbeRef.current) {
         safeProbeRef.current.remove()
         safeProbeRef.current = null
@@ -789,6 +810,35 @@ export default function App() {
         <main className="lg-main">
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
+
+            {/* "Now playing" corner card — pops in when a new song starts, holds
+                briefly, then fades. Non-interactive so taps pass to gameplay. */}
+            {nowPlaying && (
+              <div
+                className={`nowPlaying${npLeaving ? ' leaving' : ''}`}
+                role="status"
+                aria-live="polite"
+              >
+                {nowPlaying.artwork ? (
+                  <img
+                    className="npArt"
+                    src={nowPlaying.artwork}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <div className="npArt npArtFallback" aria-hidden="true">♪</div>
+                )}
+                <div className="npText">
+                  <div className="npEyebrow">Now Playing</div>
+                  <div className="npTitle">{nowPlaying.title}</div>
+                  <div className="npArtist">{nowPlaying.artist}</div>
+                  {(nowPlaying.album || nowPlaying.genre) && (
+                    <div className="npAlbum">{nowPlaying.album || nowPlaying.genre}</div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* The pause + music control dock is drawn ON the canvas (see
                 drawControlDock in draw.ts) so the gravity-well lens warps it
