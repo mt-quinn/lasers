@@ -49,24 +49,37 @@ const getFeatAtlas = (w: number, h: number) => {
   return featAtlasCtx
 }
 
-// Reusable scratch canvas for the contact-shadow pass: all silhouettes are drawn
-// here unblurred, then composited onto the scene with a single blur (instead of
-// blurring each piece's fill separately, which is a canvas-filter perf trap).
-let shadowCanvas: HTMLCanvasElement | null = null
-let shadowCanvasCtx: CanvasRenderingContext2D | null = null
-const getShadowCanvas = (w: number, h: number) => {
-  if (!shadowCanvas) {
-    shadowCanvas = document.createElement('canvas')
-    shadowCanvasCtx = shadowCanvas.getContext('2d')
+// Reusable scratch canvases for the contact-shadow pass. Silhouettes are drawn
+// unblurred into A, blurred ONCE into B, then upscaled onto the scene. Both
+// scratches live at HALF device resolution: Canvas2D `filter: blur` cost scales
+// with the destination area, so blurring at quarter the pixels is ~4× cheaper —
+// and a contact shadow is soft enough that the downscale is invisible. (Blurring
+// each piece's fill separately, or at full res, is a canvas-filter perf trap.)
+const SHADOW_DOWN = 0.5
+let shadowA: HTMLCanvasElement | null = null
+let shadowACtx: CanvasRenderingContext2D | null = null
+let shadowB: HTMLCanvasElement | null = null
+let shadowBCtx: CanvasRenderingContext2D | null = null
+const getShadowPair = (devW: number, devH: number) => {
+  const hw = Math.max(1, Math.ceil(devW * SHADOW_DOWN))
+  const hh = Math.max(1, Math.ceil(devH * SHADOW_DOWN))
+  if (!shadowA) {
+    shadowA = document.createElement('canvas')
+    shadowACtx = shadowA.getContext('2d')
+    shadowB = document.createElement('canvas')
+    shadowBCtx = shadowB.getContext('2d')
   }
-  if (shadowCanvas.width !== w || shadowCanvas.height !== h) {
-    shadowCanvas.width = w
-    shadowCanvas.height = h
+  if (shadowA.width !== hw || shadowA.height !== hh) {
+    shadowA.width = hw
+    shadowA.height = hh
+    shadowB!.width = hw
+    shadowB!.height = hh
   }
-  return shadowCanvasCtx
+  return { ca: shadowA, actx: shadowACtx, cb: shadowB!, bctx: shadowBCtx, hw, hh, scale: SHADOW_DOWN }
 }
 import {
   drawRoundedPolyomino,
+  buildRoundedPolyominoPath,
   roundedOutlinePoints,
   applyDomedDepth,
   drawBlockKindOverlay,
@@ -80,6 +93,16 @@ import {
 // line that races down the grid each time the board steps down a row.
 let gridSweepStart = -1
 let gridLastDepth = -1
+
+// Cache of each block's inset wall outline in LOCAL (untranslated) coords. The
+// silhouette only depends on the piece's fixed shape (loop/cellSize/cornerRadius),
+// so it's computed once per block and merely re-translated each frame — skipping
+// the per-vertex arc sampling + centroid + inset math the GL wall pass would
+// otherwise redo every frame. Keyed weakly so it's freed when a block is dropped.
+const blockOutlineCache = new WeakMap<
+  BlockEntity,
+  { sig: string; local: { x: number; y: number }[] }
+>()
 
 // Reusable offscreen buffers for the black-hole gravitational-lens effect. We
 // snapshot the already-drawn background around the hole into `lensSnap` once per
@@ -685,6 +708,9 @@ export const drawFrame = (
       const hpPct = clamp(b.hp / b.hpMax, 0, 1)
       const glow = 0.6
       const pos = { x: posX, y: posY }
+      // Bake the silhouette once and reuse it for the rim/speckle clips and the
+      // outline stroke below (instead of re-tracing the polyomino each time).
+      const shapePath = buildRoundedPolyominoPath(b.loop, pos, b.cellSize, b.cornerRadius)
       const pieceHue = hueAt(hueCx, hueCy)
       let fillBase: string
       let lum: number
@@ -748,8 +774,7 @@ export const drawFrame = (
 
       // Player-facing rim light (clipped to the piece shape).
       ctx.save()
-      drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
-      ctx.clip()
+      if (shapePath) ctx.clip(shapePath)
       ctx.globalCompositeOperation = 'screen'
       const rim = ctx.createLinearGradient(0, ay + h * 0.58, 0, ay + h)
       rim.addColorStop(0, 'rgba(255,255,255,0)')
@@ -764,8 +789,7 @@ export const drawFrame = (
       // for gold (a polished gem) and armored/chrome (their plates cover it).
       if (!b.isGold && b.kind !== 'armored' && b.kind !== 'chrome') {
         ctx.save()
-        drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
-        ctx.clip()
+        if (shapePath) ctx.clip(shapePath)
         let seed = (b.id * 2654435761) >>> 0
         const rnd = () => {
           seed = (seed * 1664525 + 1013904223) >>> 0
@@ -796,14 +820,13 @@ export const drawFrame = (
         ctx.restore()
       }
 
-      drawRoundedPolyomino(ctx, b.loop, pos, b.cellSize, b.cornerRadius)
       ctx.lineWidth = 2
       if (b.isGold) {
         ctx.strokeStyle = 'rgba(184,134,11,0.85)'
       } else {
         ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
       }
-      ctx.stroke()
+      if (shapePath) ctx.stroke(shapePath)
 
       if (!b.isGold && b.kind !== 'normal') {
         drawBlockKindOverlay(
@@ -1025,25 +1048,33 @@ export const drawFrame = (
         // Walls follow the rounded silhouette (matching the top art), nudged
         // slightly inward toward the piece center so they tuck under the top face
         // instead of poking out past the rounded corners.
-        const outline = roundedOutlinePoints(b.loop, b.cellSize, b.cornerRadius)
-        let ocx = 0
-        let ocy = 0
-        for (const p of outline) {
-          ocx += p.x
-          ocy += p.y
-        }
-        ocx /= outline.length || 1
-        ocy /= outline.length || 1
-        const INSET = 1.5
-        const loop = outline.map((p) => {
-          const dx = ocx - p.x
-          const dy = ocy - p.y
-          const dl = Math.hypot(dx, dy) || 1
-          return {
-            x: visualX + p.x + (dx / dl) * INSET,
-            y: visualY + p.y + (dy / dl) * INSET,
+        const sig = `${b.cellSize}|${b.cornerRadius}|${b.loop.length}`
+        let cached = blockOutlineCache.get(b)
+        if (!cached || cached.sig !== sig) {
+          const outline = roundedOutlinePoints(b.loop, b.cellSize, b.cornerRadius)
+          let ocx = 0
+          let ocy = 0
+          for (const p of outline) {
+            ocx += p.x
+            ocy += p.y
           }
-        })
+          ocx /= outline.length || 1
+          ocy /= outline.length || 1
+          const INSET = 1.5
+          const local = outline.map((p) => {
+            const dx = ocx - p.x
+            const dy = ocy - p.y
+            const dl = Math.hypot(dx, dy) || 1
+            return { x: p.x + (dx / dl) * INSET, y: p.y + (dy / dl) * INSET }
+          })
+          cached = { sig, local }
+          blockOutlineCache.set(b, cached)
+        }
+        const localPts = cached.local
+        const loop: { x: number; y: number }[] = new Array(localPts.length)
+        for (let i = 0; i < localPts.length; i++) {
+          loop[i] = { x: visualX + localPts[i]!.x, y: visualY + localPts[i]!.y }
+        }
         glPieces.push({
           loop,
           qx: visualX + sl.minX - M,
@@ -1065,30 +1096,38 @@ export const drawFrame = (
       // them) so the slabs feel placed in the field rather than floating. Drawn
       // unblurred into a scratch canvas, then composited with ONE blur pass.
       const sdpr = s.view.dpr
-      const sctx = getShadowCanvas(ctx.canvas.width, ctx.canvas.height)
-      if (sctx) {
-        sctx.setTransform(sdpr, 0, 0, sdpr, 0, 0)
-        sctx.clearRect(0, 0, s.view.width, s.view.height)
-        sctx.fillStyle = 'rgba(0,0,0,0.34)'
+      const shadow = getShadowPair(ctx.canvas.width, ctx.canvas.height)
+      if (shadow.actx && shadow.bctx) {
+        const sactx = shadow.actx
+        const sbctx = shadow.bctx
+        sactx.setTransform(sdpr * shadow.scale, 0, 0, sdpr * shadow.scale, 0, 0)
+        sactx.clearRect(0, 0, s.view.width, s.view.height)
+        sactx.fillStyle = 'rgba(0,0,0,0.34)'
         for (const sl of slots) {
           const b = sl.b
           const visualX = b.pos.x
           const visualY = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
           const pc = project(sl.bcx, sl.bcy)
-          sctx.save()
-          sctx.translate(pc.x + 5 * pc.scale, pc.y + 9 * pc.scale)
-          sctx.scale(pc.scale, pc.scale)
-          sctx.translate(-sl.bcx, -sl.bcy)
-          drawRoundedPolyomino(sctx, b.loop, { x: visualX, y: visualY }, b.cellSize, b.cornerRadius)
-          sctx.fill()
-          sctx.restore()
+          sactx.save()
+          sactx.translate(pc.x + 5 * pc.scale, pc.y + 9 * pc.scale)
+          sactx.scale(pc.scale, pc.scale)
+          sactx.translate(-sl.bcx, -sl.bcy)
+          drawRoundedPolyomino(sactx, b.loop, { x: visualX, y: visualY }, b.cellSize, b.cornerRadius)
+          sactx.fill()
+          sactx.restore()
         }
+        // Single blur pass at half resolution, then a cheap (filter-free) upscale.
+        sbctx.setTransform(1, 0, 0, 1, 0, 0)
+        sbctx.clearRect(0, 0, shadow.hw, shadow.hh)
+        sbctx.filter = `blur(${(4 * sdpr * shadow.scale).toFixed(2)}px)`
+        sbctx.drawImage(shadow.ca, 0, 0)
+        sbctx.filter = 'none'
         ctx.save()
         ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.globalCompositeOperation = 'source-over'
-        ctx.filter = `blur(${(4 * sdpr).toFixed(2)}px)`
-        ctx.drawImage(shadowCanvas as HTMLCanvasElement, 0, 0)
-        ctx.filter = 'none'
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'low'
+        ctx.drawImage(shadow.cb, 0, 0, shadow.hw, shadow.hh, 0, 0, ctx.canvas.width, ctx.canvas.height)
         ctx.restore()
       }
 
@@ -1732,13 +1771,15 @@ export const drawFrame = (
             }
           }
 
-          // Contact shadows under the features (single batched blur).
+          // Contact shadows under the features (single batched, half-res blur).
           const sdpr = s.view.dpr
-          const sctx = getShadowCanvas(ctx.canvas.width, ctx.canvas.height)
-          if (sctx) {
-            sctx.setTransform(sdpr, 0, 0, sdpr, 0, 0)
-            sctx.clearRect(0, 0, s.view.width, s.view.height)
-            sctx.fillStyle = 'rgba(0,0,0,0.3)'
+          const shadow = getShadowPair(ctx.canvas.width, ctx.canvas.height)
+          if (shadow.actx && shadow.bctx) {
+            const sactx = shadow.actx
+            const sbctx = shadow.bctx
+            sactx.setTransform(sdpr * shadow.scale, 0, 0, sdpr * shadow.scale, 0, 0)
+            sactx.clearRect(0, 0, s.view.width, s.view.height)
+            sactx.fillStyle = 'rgba(0,0,0,0.3)'
             for (const sl of fslots) {
               const f = sl.f
               const fcx = f.pos.x + (f.localAabb.minX + f.localAabb.maxX) * 0.5
@@ -1746,20 +1787,25 @@ export const drawFrame = (
                 f.pos.y - s.dropAnimOffset + (f.localAabb.minY + f.localAabb.maxY) * 0.5
               const pc = project(fcx, fcy)
               const rr = sl.kind === 'gem' ? sl.f.r : sl.f.sizePx * 0.6
-              sctx.save()
-              sctx.translate(pc.x + 4 * pc.scale, pc.y + 8 * pc.scale)
-              sctx.scale(pc.scale, pc.scale)
-              sctx.beginPath()
-              sctx.ellipse(0, 0, rr, rr * 0.6, 0, 0, Math.PI * 2)
-              sctx.fill()
-              sctx.restore()
+              sactx.save()
+              sactx.translate(pc.x + 4 * pc.scale, pc.y + 8 * pc.scale)
+              sactx.scale(pc.scale, pc.scale)
+              sactx.beginPath()
+              sactx.ellipse(0, 0, rr, rr * 0.6, 0, 0, Math.PI * 2)
+              sactx.fill()
+              sactx.restore()
             }
+            sbctx.setTransform(1, 0, 0, 1, 0, 0)
+            sbctx.clearRect(0, 0, shadow.hw, shadow.hh)
+            sbctx.filter = `blur(${(5 * sdpr * shadow.scale).toFixed(2)}px)`
+            sbctx.drawImage(shadow.ca, 0, 0)
+            sbctx.filter = 'none'
             ctx.save()
             ctx.setTransform(1, 0, 0, 1, 0, 0)
             ctx.globalCompositeOperation = 'source-over'
-            ctx.filter = `blur(${(5 * sdpr).toFixed(2)}px)`
-            ctx.drawImage(shadowCanvas as HTMLCanvasElement, 0, 0)
-            ctx.filter = 'none'
+            ctx.imageSmoothingEnabled = true
+            ctx.imageSmoothingQuality = 'low'
+            ctx.drawImage(shadow.cb, 0, 0, shadow.hw, shadow.hh, 0, 0, ctx.canvas.width, ctx.canvas.height)
             ctx.restore()
           }
 
@@ -2933,8 +2979,12 @@ export const drawFrame = (
       // copy appeared farther out — a visible double image. The black core is
       // drawn on top afterwards, covering the heavily-magnified centre.
       const rLensIn = rCore * 0.9
-      const rLens = rCore * 10 // outer edge: distortion fades to nothing here
+      const rLens = rCore * 7 // outer edge: distortion fades to nothing here (was 10; the taper is ~0 well before this, so a tighter box cuts the per-frame copy+upload area ~2× with no visible change)
       const RINGS = 26
+      // Cap the longest snapshot dimension so the per-frame texture upload stays
+      // bounded on big screens / large holes. The warp is bilinear, so sampling a
+      // slightly lower-res source is invisible after the upscale.
+      const LENS_MAX_DIM = 768
 
       // Device-pixel-aligned sample box. Snapshotting and compositing on integer
       // device pixels is what lets the identity (zero-deflection) region of the
@@ -2956,30 +3006,37 @@ export const drawFrame = (
       const boxHcss = sizeDevH / dpr
 
       if (sizeDevW > 4 && sizeDevH > 4) {
-        const { buf, bctx } = getLensBuf(sizeDevW, sizeDevH)
+        // Downscale factor applied to the snapshot/upload (1 = full device res).
+        const lensRes = Math.min(1, LENS_MAX_DIM / Math.max(sizeDevW, sizeDevH))
+        const bufW = Math.max(1, Math.round(sizeDevW * lensRes))
+        const bufH = Math.max(1, Math.round(sizeDevH * lensRes))
+        const ld = dpr * lensRes // box-local px -> buffer px
+        const { buf, bctx } = getLensBuf(bufW, bufH)
         if (bctx) {
-          // Snapshot the background patch (device px, 1:1) so the warp samples a
-          // clean copy and never feeds back on itself.
+          // Snapshot the background patch into the (possibly downscaled) buffer so
+          // the warp samples a clean copy and never feeds back on itself.
           bctx.setTransform(1, 0, 0, 1, 0, 0)
           bctx.clearRect(0, 0, buf.width, buf.height)
-          bctx.drawImage(canvas, devL, devT, sizeDevW, sizeDevH, 0, 0, sizeDevW, sizeDevH)
+          bctx.imageSmoothingEnabled = true
+          bctx.imageSmoothingQuality = 'low'
+          bctx.drawImage(canvas, devL, devT, sizeDevW, sizeDevH, 0, 0, bufW, bufH)
 
           // Preferred path: a GPU per-pixel warp — smooth (bilinear) and cheap.
           let gpu = true
           let warped: HTMLCanvasElement | null = renderLens(buf, {
-            cx: (cx - boxL) * dpr,
-            cy: (cy - boxT) * dpr,
-            rCore: rCore * dpr,
-            rEin: rEin * dpr,
-            rLensIn: rLensIn * dpr,
-            rLens: rLens * dpr,
-            boxDevW: sizeDevW,
-            boxDevH: sizeDevH,
+            cx: (cx - boxL) * ld,
+            cy: (cy - boxT) * ld,
+            rCore: rCore * ld,
+            rEin: rEin * ld,
+            rLensIn: rLensIn * ld,
+            rLens: rLens * ld,
+            boxDevW: bufW,
+            boxDevH: bufH,
             snapW: buf.width,
             snapH: buf.height,
           })
-          let warpW = sizeDevW
-          let warpH = sizeDevH
+          let warpW = bufW
+          let warpH = bufH
 
           // Fallback (no WebGL): the CPU ring approach, supersampled for AA.
           if (!warped) {
@@ -3012,7 +3069,7 @@ export const drawFrame = (
                 octx.translate(cx, cy)
                 octx.scale(scale, scale)
                 octx.translate(-cx, -cy)
-                octx.drawImage(buf, 0, 0, sizeDevW, sizeDevH, boxL, boxT, boxWcss, boxHcss)
+                octx.drawImage(buf, 0, 0, buf.width, buf.height, boxL, boxT, boxWcss, boxHcss)
                 octx.restore()
               }
               warped = out
@@ -3033,9 +3090,10 @@ export const drawFrame = (
             ctx.fillStyle = '#000'
             ctx.fillRect(boxL, boxT, boxWcss, boxHcss)
             ctx.globalCompositeOperation = 'source-over'
-            // GPU path is a 1:1 device-pixel copy — keep it crisp. The fallback
-            // is supersampled, so let it smooth on the downscale.
-            ctx.imageSmoothingEnabled = !gpu
+            // GPU path is a device-pixel copy — keep it crisp when uploaded 1:1,
+            // but smooth when the snapshot was downscaled. The fallback is always
+            // supersampled, so it smooths on the downscale too.
+            ctx.imageSmoothingEnabled = !gpu || lensRes < 1
             ctx.imageSmoothingQuality = 'high'
             ctx.drawImage(warped, 0, 0, warpW, warpH, boxL, boxT, boxWcss, boxHcss)
             ctx.restore()

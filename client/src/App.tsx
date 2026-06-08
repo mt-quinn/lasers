@@ -111,6 +111,12 @@ export default function App() {
   })
   const saveBucketRef = useRef<number>(-1)
   const safeProbeRef = useRef<HTMLDivElement | null>(null)
+  // Adaptive resolution: multiplies the (capped) device-pixel ratio. Dropped when
+  // the smoothed frame time exceeds budget, restored when there's headroom, so a
+  // struggling phone trades a little sharpness for a steady framerate.
+  const renderScaleRef = useRef(1)
+  const frameEmaRef = useRef(16.7)
+  const lastResChangeRef = useRef(0)
 
   const stateRef = useRef<RunState>(
     (() => {
@@ -485,7 +491,11 @@ export default function App() {
     }
 
     const resize = () => {
-      const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1))
+      // Base cap 2.0 (down from 2.5): pixel work scales with dpr², so this alone
+      // cuts ~30% of fill/blur/upload cost on dense-DPI phones for a barely
+      // perceptible sharpness change. The adaptive scale trims further if needed.
+      const baseCap = Math.min(2.0, window.devicePixelRatio || 1)
+      const dpr = Math.max(0.75, baseCap * renderScaleRef.current)
       const parent = canvas.parentElement
       if (!parent) return
       const rect = parent.getBoundingClientRect()
@@ -544,6 +554,27 @@ export default function App() {
       // 90/120Hz displays (fixed-step would "pause" every other frame).
       const dtSec = Math.min(0.05, (now - last) / 1000)
       last = now
+
+      // Adaptive resolution governor. Smooth the frame time and, with a cooldown
+      // to avoid thrash, step the render scale down when we're missing frames and
+      // back up when there's comfortable headroom. Skipped while paused (dt is
+      // meaningless then).
+      if (!s.paused) {
+        frameEmaRef.current += (dtSec * 1000 - frameEmaRef.current) * 0.1
+        const ema = frameEmaRef.current
+        if (now - lastResChangeRef.current > 1400) {
+          if (ema > 22 && renderScaleRef.current > 0.7) {
+            renderScaleRef.current = Math.max(0.7, renderScaleRef.current - 0.15)
+            lastResChangeRef.current = now
+            resize()
+          } else if (ema < 14 && renderScaleRef.current < 1) {
+            renderScaleRef.current = Math.min(1, renderScaleRef.current + 0.15)
+            lastResChangeRef.current = now
+            resize()
+          }
+        }
+      }
+
       if (!s.paused && !audioGateRef.current) stepSim(s, dtSec)
 
       // Sample the soundtrack every frame (even while paused) so the visuals
