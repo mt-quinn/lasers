@@ -121,7 +121,9 @@ const getLensOut = (wDev: number, hDev: number) => {
 // drawn each frame with a slow downward drift (reinforcing the descent) and a
 // per-star twinkle. Layered by `z` (0 far .. 1 near) for cheap depth. The GL
 // black-hole lens snapshots the background, so these get lensed for free.
-type Star = { x: number; y: number; z: number; ph: number; sp: number }
+// `mag` scales brightness/size (a few rare "hero" stars anchor the field); `ti`
+// indexes a pre-rendered tint sprite for subtle stellar color variation.
+type Star = { x: number; y: number; z: number; ph: number; sp: number; mag: number; ti: number }
 let starfield: Star[] | null = null
 const getStarfield = (): Star[] => {
   if (!starfield) {
@@ -131,12 +133,48 @@ const getStarfield = (): Star[] => {
       s = (s * 1664525 + 1013904223) >>> 0
       return s / 4294967296
     }
-    for (let i = 0; i < 130; i++) {
+    for (let i = 0; i < 200; i++) {
       const z = rnd()
-      starfield.push({ x: rnd(), y: rnd(), z, ph: rnd() * 6.283, sp: 0.006 + z * 0.02 })
+      // ~7% hero stars sit noticeably brighter/larger so the field has structure
+      // instead of reading as uniform noise.
+      const hero = rnd() < 0.07
+      const mag = hero ? 1.7 + rnd() * 1.1 : 0.55 + rnd() * 0.7
+      // Mostly white, with a minority of cool and warm stars for depth/quality.
+      const r = rnd()
+      const ti = r < 0.68 ? 0 : r < 0.86 ? 1 : 2
+      starfield.push({ x: rnd(), y: rnd(), z, ph: rnd() * 6.283, sp: 0.006 + z * 0.02, mag, ti })
     }
   }
   return starfield
+}
+
+// Soft star sprites (white / cool / warm), pre-rendered once into small offscreen
+// canvases. Drawing stars as scaled sprites gives each a crisp core plus a soft
+// glow at no per-frame allocation cost — far higher quality than a hard arc, and
+// cheaper than building a radial gradient per star per frame.
+let starSprites: HTMLCanvasElement[] | null = null
+const getStarSprites = (): HTMLCanvasElement[] => {
+  if (starSprites) return starSprites
+  const tints: Array<[number, number, number]> = [
+    [255, 255, 255], // white
+    [196, 216, 255], // cool blue-white
+    [255, 228, 196], // warm amber-white
+  ]
+  starSprites = tints.map(([r, g, b]) => {
+    const c = document.createElement('canvas')
+    c.width = 64
+    c.height = 64
+    const g2 = c.getContext('2d')!
+    const grad = g2.createRadialGradient(32, 32, 0, 32, 32, 32)
+    grad.addColorStop(0.0, 'rgba(255,255,255,1)')
+    grad.addColorStop(0.16, `rgba(${r},${g},${b},0.9)`)
+    grad.addColorStop(0.45, `rgba(${r},${g},${b},0.22)`)
+    grad.addColorStop(1.0, `rgba(${r},${g},${b},0)`)
+    g2.fillStyle = grad
+    g2.fillRect(0, 0, 64, 64)
+    return c
+  })
+  return starSprites
 }
 
 const withDpr = (ctx: CanvasRenderingContext2D, dpr: number, fn: () => void) => {
@@ -314,19 +352,22 @@ export const drawFrame = (
       // Parallax starfield drifting slowly downward through the void.
       {
         const stars = getStarfield()
+        const sprites = getStarSprites()
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
         for (const st of stars) {
           const xx = st.x * W
           const yy = ((st.y + tNow * st.sp) % 1) * H
           const tw = 0.5 + 0.5 * Math.sin(tNow * (0.6 + st.z) + st.ph)
-          const a = (0.05 + 0.16 * st.z) * (0.45 + 0.55 * tw)
-          const r = 0.4 + st.z * 1.1
-          ctx.fillStyle = `rgba(200,225,245,${a.toFixed(3)})`
-          ctx.beginPath()
-          ctx.arc(xx, yy, r, 0, Math.PI * 2)
-          ctx.fill()
+          // Brighter and more legible than before, but the twinkle still pulls the
+          // dimmest stars near zero so the field shimmers instead of glaring.
+          const a = Math.min(0.95, (0.1 + 0.42 * st.z) * (0.4 + 0.6 * tw) * st.mag)
+          const size = (1.5 + st.z * 3.4) * st.mag
+          ctx.globalAlpha = a
+          const sp = sprites[st.ti]
+          ctx.drawImage(sp, xx - size / 2, yy - size / 2, size, size)
         }
+        ctx.globalAlpha = 1
         ctx.restore()
       }
 
