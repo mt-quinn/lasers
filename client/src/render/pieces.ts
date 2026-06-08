@@ -11,8 +11,13 @@ import type { BlockKind } from '../game/runState'
 
 // Build a rounded-corner path for a polyomino outline (loop in cell units,
 // positioned at `pos` world px). Leaves the path on the context (no fill/stroke).
-export const drawRoundedPolyomino = (
-  ctx: CanvasRenderingContext2D,
+// Minimal path sink shared by CanvasRenderingContext2D and Path2D, so the same
+// geometry tracer can either draw straight into a context's current path or bake
+// a reusable Path2D (built once, then filled/clipped/stroked many times).
+type PathSink = Pick<Path2D, 'moveTo' | 'lineTo' | 'arc' | 'closePath'>
+
+const traceRoundedPolyomino = (
+  sink: PathSink,
   loop: Vec2[],
   pos: Vec2,
   cellSize: number,
@@ -52,14 +57,12 @@ export const drawRoundedPolyomino = (
     return cross(inD, outD) > 0.5
   }
 
-  ctx.beginPath()
-
   const p0 = pts[0]!
   const p1 = pts[1]!
   const d01 = dir(p0, p1)
   const startCut = isConvex(0) ? r : 0
   const start = { x: p0.x + d01.x * startCut, y: p0.y + d01.y * startCut }
-  ctx.moveTo(start.x, start.y)
+  sink.moveTo(start.x, start.y)
 
   for (let i = 0; i < m; i++) {
     const a = pts[i]!
@@ -68,7 +71,7 @@ export const drawRoundedPolyomino = (
     const segLen = Math.hypot(b.x - a.x, b.y - a.y)
     const cutB = isConvex(i + 1) ? Math.min(r, segLen * 0.5 - 0.6) : 0
     const b2 = { x: b.x - d.x * cutB, y: b.y - d.y * cutB }
-    ctx.lineTo(b2.x, b2.y)
+    sink.lineTo(b2.x, b2.y)
 
     if (isConvex(i + 1)) {
       const inD = d
@@ -79,11 +82,40 @@ export const drawRoundedPolyomino = (
       }
       const startAng = Math.atan2(b.y - inD.y * r - center.y, b.x - inD.x * r - center.x)
       const endAng = Math.atan2(b.y + outD.y * r - center.y, b.x + outD.x * r - center.x)
-      ctx.arc(center.x, center.y, r, startAng, endAng, false)
+      sink.arc(center.x, center.y, r, startAng, endAng, false)
     }
   }
 
-  ctx.closePath()
+  sink.closePath()
+}
+
+// Trace the rounded silhouette into the context's current path (caller then
+// fills/clips/strokes). Kept for callers that draw the shape exactly once.
+export const drawRoundedPolyomino = (
+  ctx: CanvasRenderingContext2D,
+  loop: Vec2[],
+  pos: Vec2,
+  cellSize: number,
+  rPx: number,
+) => {
+  if (loop.length < 3) return
+  ctx.beginPath()
+  traceRoundedPolyomino(ctx, loop, pos, cellSize, rPx)
+}
+
+// Bake the rounded silhouette into a reusable Path2D. Building it once and then
+// calling ctx.fill(path)/clip(path)/stroke(path) avoids re-tracing the geometry
+// (and re-allocating its scratch arrays) for every layer of a single piece.
+export const buildRoundedPolyominoPath = (
+  loop: Vec2[],
+  pos: Vec2,
+  cellSize: number,
+  rPx: number,
+): Path2D | null => {
+  if (loop.length < 3) return null
+  const path = new Path2D()
+  traceRoundedPolyomino(path, loop, pos, cellSize, rPx)
+  return path
 }
 
 // Sample the rounded polyomino OUTLINE into a closed list of points (local px,
@@ -240,108 +272,155 @@ export const drawBlockKindOverlay = (
   ctx.save()
 
   if (kind === 'armored') {
-    // Armored read = a DARK gunmetal plate bolted across the bottom (reflective
-    // underside) of the face. Dark detailing is the key: additive beam/spark glow
-    // and bloom only brighten bright pixels, so a dark plate + recessed bolts stay
-    // legible no matter how bright the impact gets, and the bolts (not chevrons)
-    // make it clearly "armor", not "fast".
+    // Armored read = a DARK gunmetal plate bolted across EVERY exposed underside
+    // of the piece. The sim deflects any straight-up beam that strikes a downward-
+    // facing face (hit.normal.y >= 0.45), which is the bottom edge of every cell
+    // that has nothing beneath it — not just the lowest row. So we paint a plate on
+    // each such face (merging adjacent cells in a row into one continuous plate),
+    // so the armor UI matches exactly what's invulnerable. Dark detailing is the
+    // key: additive beam/spark glow and bloom only brighten bright pixels, so a
+    // dark plate + recessed bolts stay legible no matter how bright the impact
+    // gets, and the bolts (not chevrons) make it clearly "armor", not "fast".
     const flash = Math.min(1, fx.shieldFlashSec / 0.3)
-    const plateH = Math.min(h * 0.5, cellSize * 0.92)
-    const plateTop = ay + h - plateH
+    const plateH = Math.min(cellSize * 0.5, h * 0.92)
+
+    // Cell-space exposed-bottom runs. Cells use an integer grid; a cell's bottom
+    // face is exposed when no cell sits directly below it (screen +y = down).
+    let cminx = Infinity
+    let cminy = Infinity
+    const occ = new Set<string>()
+    for (const c of cells) {
+      occ.add(`${c.x},${c.y}`)
+      if (c.x < cminx) cminx = c.x
+      if (c.y < cminy) cminy = c.y
+    }
+    if (!Number.isFinite(cminx)) {
+      cminx = 0
+      cminy = 0
+    }
+    const rowToXs = new Map<number, number[]>()
+    for (const c of cells) {
+      if (occ.has(`${c.x},${c.y + 1}`)) continue
+      let xs = rowToXs.get(c.y)
+      if (!xs) {
+        xs = []
+        rowToXs.set(c.y, xs)
+      }
+      xs.push(c.x)
+    }
+    // Merge contiguous cells per row into [x0, x1) runs.
+    const runs: Array<{ cy: number; x0: number; x1: number }> = []
+    for (const [cy, xs] of rowToXs) {
+      xs.sort((a, b) => a - b)
+      let start = xs[0]!
+      let prev = xs[0]!
+      for (let i = 1; i < xs.length; i++) {
+        if (xs[i] === prev + 1) {
+          prev = xs[i]!
+        } else {
+          runs.push({ cy, x0: start, x1: prev + 1 })
+          start = xs[i]!
+          prev = xs[i]!
+        }
+      }
+      runs.push({ cy, x0: start, x1: prev + 1 })
+    }
 
     drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
     ctx.save()
     ctx.clip()
 
-    // Solid, near-opaque gunmetal slab (dark -> darker toward the edge).
-    ctx.globalCompositeOperation = 'source-over'
-    const plate = ctx.createLinearGradient(0, plateTop, 0, ay + h)
-    plate.addColorStop(0, 'rgba(46,54,70,0.97)')
-    plate.addColorStop(0.45, 'rgba(28,34,48,0.99)')
-    plate.addColorStop(1, 'rgba(13,16,24,1)')
-    ctx.fillStyle = plate
-    ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
-
-    // Subtle brushed-metal sheen so the plate still reads as metal, kept low so
-    // it never blows out.
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(ax - 2, plateTop, w + 4, plateH + 4)
-    ctx.clip()
-    ctx.globalCompositeOperation = 'screen'
-    const sheen = ctx.createLinearGradient(ax, plateTop, ax + w, plateTop + plateH)
-    sheen.addColorStop(0, 'rgba(120,140,170,0)')
-    sheen.addColorStop(0.5, 'rgba(120,140,170,0.10)')
-    sheen.addColorStop(1, 'rgba(120,140,170,0)')
-    ctx.fillStyle = sheen
-    ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
-    ctx.restore()
-
-    // Hard armor boundary: a thick DARK divider with a thin metallic lip above it.
-    // The dark line survives bloom; the lip gives the plate a forged top edge.
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.strokeStyle = 'rgba(6,8,14,0.95)'
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.moveTo(ax - 2, plateTop)
-    ctx.lineTo(ax + w + 2, plateTop)
-    ctx.stroke()
-    ctx.strokeStyle = `rgba(${flash > 0 ? '200,230,255' : '150,170,202'},${(0.55 + 0.35 * flash).toFixed(3)})`
-    ctx.lineWidth = 1.3
-    ctx.beginPath()
-    ctx.moveTo(ax - 2, plateTop - 1.4)
-    ctx.lineTo(ax + w + 2, plateTop - 1.4)
-    ctx.stroke()
-
-    // Bolt row, inset from the very bottom edge so the grazing reflected beam
-    // can't sit on top of them. Each bolt = dark socket + raised head + glint +
-    // hex slot, so they stay readable as recessed armor fixings even when bright.
     const boltR = Math.max(2.2, Math.min(cellSize * 0.12, 6))
-    const boltY = plateTop + plateH * 0.46
     const gap = Math.max(boltR * 3.4, cellSize * 0.52)
-    ctx.globalCompositeOperation = 'source-over'
-    for (let bx = ax + Math.max(boltR * 1.6, gap * 0.5); bx < ax + w - boltR; bx += gap) {
-      // Recessed socket shadow.
-      ctx.fillStyle = 'rgba(0,0,0,0.6)'
-      ctx.beginPath()
-      ctx.arc(bx, boltY + boltR * 0.18, boltR * 1.18, 0, Math.PI * 2)
-      ctx.fill()
-      // Bolt head.
-      const bg = ctx.createRadialGradient(
-        bx - boltR * 0.3,
-        boltY - boltR * 0.3,
-        boltR * 0.2,
-        bx,
-        boltY,
-        boltR,
-      )
-      bg.addColorStop(0, 'rgba(150,164,190,0.98)')
-      bg.addColorStop(1, 'rgba(70,82,104,0.98)')
-      ctx.fillStyle = bg
-      ctx.beginPath()
-      ctx.arc(bx, boltY, boltR, 0, Math.PI * 2)
-      ctx.fill()
-      // Dark slot across the head.
-      ctx.strokeStyle = 'rgba(14,18,28,0.85)'
-      ctx.lineWidth = Math.max(1, boltR * 0.32)
-      ctx.beginPath()
-      ctx.moveTo(bx - boltR * 0.58, boltY)
-      ctx.lineTo(bx + boltR * 0.58, boltY)
-      ctx.stroke()
-    }
 
-    ctx.restore()
+    for (const run of runs) {
+      const rx = ax + (run.x0 - cminx) * cellSize
+      const rw = (run.x1 - run.x0) * cellSize
+      const cellBottom = ay + (run.cy + 1 - cminy) * cellSize
+      const plateTop = cellBottom - plateH
 
-    // Deflection flash: an icy edge wash only while a no-damage hit is registering.
-    if (flash > 0) {
-      drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
+      // Solid, near-opaque gunmetal slab (dark -> darker toward the edge).
+      ctx.globalCompositeOperation = 'source-over'
+      const plate = ctx.createLinearGradient(0, plateTop, 0, cellBottom)
+      plate.addColorStop(0, 'rgba(46,54,70,0.97)')
+      plate.addColorStop(0.45, 'rgba(28,34,48,0.99)')
+      plate.addColorStop(1, 'rgba(13,16,24,1)')
+      ctx.fillStyle = plate
+      ctx.fillRect(rx - 2, plateTop, rw + 4, plateH + 4)
+
+      // Subtle brushed-metal sheen so the plate still reads as metal, kept low so
+      // it never blows out.
       ctx.save()
+      ctx.beginPath()
+      ctx.rect(rx - 2, plateTop, rw + 4, plateH + 4)
       ctx.clip()
       ctx.globalCompositeOperation = 'screen'
-      ctx.fillStyle = `rgba(150,205,255,${(0.4 * flash).toFixed(3)})`
-      ctx.fillRect(ax - 2, plateTop, w + 4, plateH + 4)
+      const sheen = ctx.createLinearGradient(rx, plateTop, rx + rw, plateTop + plateH)
+      sheen.addColorStop(0, 'rgba(120,140,170,0)')
+      sheen.addColorStop(0.5, 'rgba(120,140,170,0.10)')
+      sheen.addColorStop(1, 'rgba(120,140,170,0)')
+      ctx.fillStyle = sheen
+      ctx.fillRect(rx - 2, plateTop, rw + 4, plateH + 4)
       ctx.restore()
+
+      // Hard armor boundary: a thick DARK divider with a thin metallic lip above.
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = 'rgba(6,8,14,0.95)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(rx - 2, plateTop)
+      ctx.lineTo(rx + rw + 2, plateTop)
+      ctx.stroke()
+      ctx.strokeStyle = `rgba(${flash > 0 ? '200,230,255' : '150,170,202'},${(0.55 + 0.35 * flash).toFixed(3)})`
+      ctx.lineWidth = 1.3
+      ctx.beginPath()
+      ctx.moveTo(rx - 2, plateTop - 1.4)
+      ctx.lineTo(rx + rw + 2, plateTop - 1.4)
+      ctx.stroke()
+
+      // Bolt row, inset from the very bottom edge so the grazing reflected beam
+      // can't sit on top of them.
+      const boltY = plateTop + plateH * 0.46
+      ctx.globalCompositeOperation = 'source-over'
+      for (let bx = rx + Math.max(boltR * 1.6, gap * 0.5); bx < rx + rw - boltR; bx += gap) {
+        // Recessed socket shadow.
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'
+        ctx.beginPath()
+        ctx.arc(bx, boltY + boltR * 0.18, boltR * 1.18, 0, Math.PI * 2)
+        ctx.fill()
+        // Bolt head.
+        const bg = ctx.createRadialGradient(
+          bx - boltR * 0.3,
+          boltY - boltR * 0.3,
+          boltR * 0.2,
+          bx,
+          boltY,
+          boltR,
+        )
+        bg.addColorStop(0, 'rgba(150,164,190,0.98)')
+        bg.addColorStop(1, 'rgba(70,82,104,0.98)')
+        ctx.fillStyle = bg
+        ctx.beginPath()
+        ctx.arc(bx, boltY, boltR, 0, Math.PI * 2)
+        ctx.fill()
+        // Dark slot across the head.
+        ctx.strokeStyle = 'rgba(14,18,28,0.85)'
+        ctx.lineWidth = Math.max(1, boltR * 0.32)
+        ctx.beginPath()
+        ctx.moveTo(bx - boltR * 0.58, boltY)
+        ctx.lineTo(bx + boltR * 0.58, boltY)
+        ctx.stroke()
+      }
+
+      // Deflection flash: an icy wash on the plate while a no-damage hit registers.
+      if (flash > 0) {
+        ctx.globalCompositeOperation = 'screen'
+        ctx.fillStyle = `rgba(150,205,255,${(0.4 * flash).toFixed(3)})`
+        ctx.fillRect(rx - 2, plateTop, rw + 4, plateH + 4)
+      }
     }
+
+    ctx.restore()
   } else if (kind === 'chrome') {
     drawRoundedPolyomino(ctx, loop, pos, cellSize, cornerRadius)
     ctx.save()
