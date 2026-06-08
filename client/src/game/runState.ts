@@ -33,6 +33,21 @@ export type MeltFx = {
   seed: number
 }
 
+// Brief "piece dissolving into motes" flash. Captures the dead block's
+// silhouette so the renderer can pop + fade it in-place as the motes burst out,
+// bridging the otherwise-instant piece→mote transition. Purely visual.
+export type PieceBurstFx = {
+  id: number
+  pos: Vec2
+  cellSize: number
+  cornerRadius: number
+  loop: Vec2[]
+  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
+  isGold: boolean
+  t: number
+  dur: number
+}
+
 export type SparkParticle = {
   x: number
   y: number
@@ -196,6 +211,10 @@ export type PrismFeature = {
   // Outgoing direction offsets (degrees) relative to the incoming beam direction.
   // Allowed values: 0, ±15, ±45, ±90. Each prism picks 2-4 distinct values at spawn.
   exitsDeg: number[]
+  // Live "beam is passing through me" energy, 0..1. Set to 1 whenever a beam
+  // splits here this frame, then decays. Drives the conduit/core pulse so the
+  // splitter visibly lights up only while routing a beam. Purely visual.
+  lit: number
   localAabb: { minX: number; minY: number; maxX: number; maxY: number }
 }
 
@@ -438,6 +457,8 @@ export type RunState = {
   // FX
   meltFx: MeltFx[]
   nextMeltId: number
+  pieceBursts: PieceBurstFx[]
+  nextPieceBurstId: number
   sparks: SparkParticle[]
   weldGlows: WeldGlow[]
   sparkEmitAcc: number
@@ -595,6 +616,8 @@ export const createInitialRunState = (): RunState => {
     bestScoreLocal: 0,
     meltFx: [],
     nextMeltId: 1,
+    pieceBursts: [],
+    nextPieceBurstId: 1,
     sparks: [],
     weldGlows: [],
     sparkEmitAcc: 0,

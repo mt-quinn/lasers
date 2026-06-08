@@ -435,7 +435,10 @@ export const raycastSceneThick = (
       circles.push({
         kind: 'prism',
         id: p.id,
-        c: { x: p.pos.x + p.cellSize * 0.5, y: p.pos.y + p.cellSize * 0.5 },
+        c: {
+          x: p.pos.x + (p.localAabb.minX + p.localAabb.maxX) * 0.5,
+          y: p.pos.y + (p.localAabb.minY + p.localAabb.maxY) * 0.5,
+        },
         r: p.r,
         maxY: p.pos.y + p.localAabb.maxY,
       })

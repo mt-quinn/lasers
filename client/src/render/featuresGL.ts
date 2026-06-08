@@ -9,9 +9,12 @@
 //   Mirror   → a steel wedge (right-triangle prism). The two legs are lit steel
 //              walls; the diagonal hypotenuse is a polished chrome panel (baked
 //              2D art) set in a rounded steel bezel — clearly an angled reflector.
-//   Splitter → a faceted crystal: a raised octagonal gem (crown + pavilion
-//              facets) with a glowing core and the exit arrows baked onto its
-//              top facet. Flat per-facet normals make it sparkle.
+//   Splitter → a crystalline router: a faceted octagonal hub (glowing baked
+//              core) with raised crystal prongs radiating along each exit
+//              direction plus a dim intake prong pointing down. The prong
+//              silhouette encodes the split directions, and facets/prongs
+//              self-glow with `lit` while a beam routes through. Deliberately
+//              radial + cyan so it never reads as the steel mirror wedge.
 //
 // Like piecesGL, this renders into a private WebGL canvas (device px) and returns
 // it for the caller to composite with drawImage. Returns null if WebGL is
@@ -39,24 +42,30 @@ export type GLMirror = {
   v1: number
 }
 
-export type GLGem = {
-  kind: 'gem'
-  cx: number // center, world px
+export type GLSplitter = {
+  kind: 'splitter'
+  cx: number // hub center, world px
   cy: number
-  radius: number
+  hubR: number // hub crystal radius
+  prongLen: number // distance from center to prong tip
+  prongW: number // prong half-width at its base
   height: number
   // Crystal body color (0..1).
   cr: number
   cg: number
   cb: number
-  // Atlas UV rect for the top facet (arrows + core glow + facet shading).
+  // Exit directions, degrees relative to a straight-up beam (0 = up, +90 right).
+  exits: number[]
+  // 0..1 "beam routing through me" glow (drives facet/prong emissive).
+  lit: number
+  // Atlas UV rect for the hub top facet (glowing core glyph).
   u0: number
   v0: number
   u1: number
   v1: number
 }
 
-export type GLFeature = GLMirror | GLGem
+export type GLFeature = GLMirror | GLSplitter
 
 let gl: WebGLRenderingContext | null = null
 let glCanvas: HTMLCanvasElement | null = null
@@ -433,27 +442,30 @@ export const renderFeaturesGL = (
       continue
     }
 
-    // Gem (splitter): raised octagonal crystal, crown + pavilion facets, glowing
-    // top facet with baked exit arrows.
+    // Splitter: a crystalline ROUTER. A central faceted hub with physical prongs
+    // radiating along each exit direction (and a stubby intake prong pointing
+    // down at the incoming beam). The prong silhouette literally points where the
+    // beam comes out, so the split is legible from a distance and never looks like
+    // the steel mirror wedge. Prongs/facets self-glow with `lit` while a beam
+    // routes through.
+    const litEmis = f.lit
+    const hubEmis = 0.16 + 0.55 * litEmis
     const SIDES = 8
-    const R = f.radius
-    // A wide, low faceted disc: the big flat top face dominates the silhouette
-    // so the exit arrows stay legible even when the gem is far up the shaft
-    // (where perspective foreshortens everything vertically).
+    const R = f.hubR
     const H = f.height
-    const rTop = R * 0.92 // near-full flat top
+    const rTop = R * 0.9
     const rG = R
-    const rBase = R * 0.66
+    const rBase = R * 0.64
     const zTop = H
-    const zG = H * 0.74 // shallow crown bevel
+    const zG = H * 0.72
     const zBase = 0
-    const a0 = -Math.PI / 2 // first vertex points up-screen
+    const a0 = -Math.PI / 2
     const ringPt = (rad: number, i: number) => {
       const ang = a0 + (i / SIDES) * Math.PI * 2
       return { x: f.cx + Math.cos(ang) * rad, y: f.cy + Math.sin(ang) * rad }
     }
 
-    // Top facet octagon (textured). UV maps the [-rTop,rTop] box to the atlas.
+    // Hub top facet octagon (textured glowing core).
     const toUV = (x: number, y: number) => ({
       u: f.u0 + ((x - f.cx + rTop) / (2 * rTop)) * (f.u1 - f.u0),
       v: f.v0 + ((y - f.cy + rTop) / (2 * rTop)) * (f.v1 - f.v0),
@@ -481,8 +493,9 @@ export const renderFeaturesGL = (
       zd: number,
       emis: number,
       shade: number,
+      cxRef: number,
+      cyRef: number,
     ) => {
-      // Normal from two edges of the quad (treat as planar).
       const ux = B.x - A.x
       const uy = B.y - A.y
       const uz = zb - za
@@ -496,9 +509,8 @@ export const renderFeaturesGL = (
       nx /= nl
       ny /= nl
       nz /= nl
-      // Orient outward (away from gem center, upward-ish).
-      const mx = (A.x + B.x + C.x + D.x) / 4 - f.cx
-      const my = (A.y + B.y + C.y + D.y) / 4 - f.cy
+      const mx = (A.x + B.x + C.x + D.x) / 4 - cxRef
+      const my = (A.y + B.y + C.y + D.y) / 4 - cyRef
       if (mx * nx + my * ny < 0 && nz < 0.05) {
         nx = -nx
         ny = -ny
@@ -515,6 +527,7 @@ export const renderFeaturesGL = (
       push(D.x, D.y, zd, nx, ny, nz, cr, cg, cb, 0, 0, 0, emis)
     }
 
+    // Hub crystal: crown + pavilion facets.
     for (let i = 0; i < SIDES; i++) {
       const j = (i + 1) % SIDES
       const tA = ringPt(rTop, i)
@@ -523,11 +536,54 @@ export const renderFeaturesGL = (
       const gB = ringPt(rG, j)
       const bA = ringPt(rBase, i)
       const bB = ringPt(rBase, j)
-      // Crown facet: top ring → girdle (flares outward + down).
-      facetQuad(tA, zTop, tB, zTop, gB, zG, gA, zG, 0.26, 0.9)
-      // Pavilion facet: girdle → base (tapers inward + down).
-      facetQuad(gA, zG, gB, zG, bB, zBase, bA, zBase, 0.14, 0.7)
+      facetQuad(tA, zTop, tB, zTop, gB, zG, gA, zG, hubEmis, 0.92, f.cx, f.cy)
+      facetQuad(gA, zG, gB, zG, bB, zBase, bA, zBase, hubEmis * 0.6, 0.66, f.cx, f.cy)
     }
+
+    // One prong per direction: a raised crystalline bar pointing the exit way.
+    // A flat top facet (bright, emissive) + four lit side walls. Tip is narrower
+    // so it reads as an arrow/shard.
+    const prong = (deg: number, len: number, halfW: number, topEmis: number, sideShade: number) => {
+      const rad = (deg * Math.PI) / 180
+      // 0 deg = up (0,-1); +deg rotates toward +x (screen-clockwise).
+      const dx = Math.sin(rad)
+      const dy = -Math.cos(rad)
+      const px = -dy
+      const py = dx
+      const r0 = R * 0.7 // start just inside the hub
+      const r1 = len
+      const wTip = halfW * 0.42
+      const hP = H * 0.62
+      const baseL: V = { x: f.cx + dx * r0 + px * halfW, y: f.cy + dy * r0 + py * halfW }
+      const baseR: V = { x: f.cx + dx * r0 - px * halfW, y: f.cy + dy * r0 - py * halfW }
+      const tipL: V = { x: f.cx + dx * r1 + px * wTip, y: f.cy + dy * r1 + py * wTip }
+      const tipR: V = { x: f.cx + dx * r1 - px * wTip, y: f.cy + dy * r1 - py * wTip }
+      // Top face (CCW: baseL, tipL, tipR, baseR), flat up-normal, emissive.
+      const cr = f.cr * 1.0
+      const cg = f.cg * 1.0
+      const cb = f.cb * 1.0
+      push(baseL.x, baseL.y, hP, 0, 0, 1, cr, cg, cb, 0, 0, 0, topEmis)
+      push(tipL.x, tipL.y, hP, 0, 0, 1, cr, cg, cb, 0, 0, 0, topEmis)
+      push(tipR.x, tipR.y, hP, 0, 0, 1, cr, cg, cb, 0, 0, 0, topEmis)
+      push(baseL.x, baseL.y, hP, 0, 0, 1, cr, cg, cb, 0, 0, 0, topEmis)
+      push(tipR.x, tipR.y, hP, 0, 0, 1, cr, cg, cb, 0, 0, 0, topEmis)
+      push(baseR.x, baseR.y, hP, 0, 0, 1, cr, cg, cb, 0, 0, 0, topEmis)
+      // Side walls (each top edge extruded down to z=0).
+      const loop = [baseL, tipL, tipR, baseR]
+      const sideEmis = topEmis * 0.55
+      for (let i = 0; i < 4; i++) {
+        const A = loop[i]!
+        const B = loop[(i + 1) % 4]!
+        facetQuad(A, hP, B, hP, B, zBase, A, zBase, sideEmis, sideShade, f.cx, f.cy)
+      }
+    }
+
+    for (const deg of f.exits) {
+      prong(deg, f.prongLen, f.prongW, 0.3 + 0.85 * litEmis, 0.85)
+    }
+    // Intake prong (points down at the incoming beam): shorter + dimmer so it
+    // reads as the "in" port, distinct from the bright exits.
+    prong(180, f.hubR + f.prongW * 1.6, f.prongW * 0.8, 0.1 + 0.3 * litEmis, 0.6)
   }
 
   const verts = new Float32Array(arr)

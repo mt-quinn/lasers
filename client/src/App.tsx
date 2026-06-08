@@ -768,6 +768,24 @@ export default function App() {
           (s.music.playing ? s.music.hue : 200).toFixed(1),
         )
 
+        // Keep the now-playing card inside the empty top-left gutter so it never
+        // covers the play trapezoid. The board's left edge slopes inward as it
+        // descends, so the binding constraint is the card's BOTTOM: publish the
+        // screen-x of the board's left edge there (minus margins) as the card's
+        // max width.
+        {
+          const layout = getArenaLayout(s.view)
+          const proj = makeProjection(s.view, layout)
+          const cardLeft = 10
+          // Card top (~10px) + height (~64px) + a buffer for any top safe-area
+          // inset, so the published width stays conservative on notched phones.
+          const cardBottomY = 96
+          const worldYAtBottom = proj.unproject(0, cardBottomY).y
+          const edgeX = proj.project(0, worldYAtBottom).x
+          const maxW = Math.max(120, edgeX - cardLeft - 8)
+          document.documentElement.style.setProperty('--np-max-w', `${maxW.toFixed(0)}px`)
+        }
+
         // New song started? Pop the unobtrusive "now playing" card, then auto-hide.
         const np = musicEngine.getNowPlaying()
         if (np && np.token !== npTokenRef.current) {

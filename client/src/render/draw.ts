@@ -1496,6 +1496,48 @@ export const drawFrame = (
       }
     }
 
+    // Piece-dissolve flashes: the dead block's silhouette pops outward and fades
+    // as its motes burst, so the piece reads as breaking into energy instead of
+    // blinking out. Cheap: one additive fill + rim per dying piece for ~0.18s.
+    if (s.pieceBursts.length > 0) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      for (const fx of s.pieceBursts) {
+        const p = clamp(fx.t / Math.max(0.0001, fx.dur), 0, 1)
+        const ease = 1 - (1 - p) * (1 - p) // ease-out
+        const ax0 = fx.pos.x + fx.localAabb.minX
+        const ay0 = fx.pos.y + fx.localAabb.minY
+        const w0 = fx.localAabb.maxX - fx.localAabb.minX
+        const h0 = fx.localAabb.maxY - fx.localAabb.minY
+        const cx0 = ax0 + w0 * 0.5
+        const cy0 = ay0 + h0 * 0.5
+        const mp = project(cx0, cy0)
+        const burstScale = mp.scale * (1 + 0.28 * ease)
+        const alpha = 1 - ease // fade out
+        const burstHue = fx.isGold ? 44 : hueAt(cx0, cy0)
+
+        ctx.save()
+        ctx.translate(mp.x, mp.y)
+        ctx.scale(burstScale, burstScale)
+        ctx.translate(-cx0, -cy0)
+
+        // Colored energy body, brightest at the instant of death.
+        drawRoundedPolyomino(ctx, fx.loop, fx.pos, fx.cellSize, fx.cornerRadius)
+        ctx.fillStyle = hsl(burstHue, 100, 68, 0.5 * alpha)
+        ctx.fill()
+        // White-hot core that decays faster than the body, so the flash "cools".
+        ctx.fillStyle = `rgba(255,255,255,${(0.55 * alpha * (1 - ease)).toFixed(3)})`
+        ctx.fill()
+        // Expanding rim that keeps a constant on-screen weight as it scales up.
+        drawRoundedPolyomino(ctx, fx.loop, fx.pos, fx.cellSize, fx.cornerRadius)
+        ctx.lineWidth = 2 / burstScale
+        ctx.strokeStyle = hsl(burstHue, 100, 82, 0.8 * alpha)
+        ctx.stroke()
+        ctx.restore()
+      }
+      ctx.restore()
+    }
+
     // Board features: mirrors (destructible diagonal deflectors) / prisms / black holes.
     // Mirrors + splitters render as 3D solids in a single GL pass (matching the
     // block slabs); the black hole stays 2D. `glFeaturesDrawn` gates the 2D
@@ -1557,97 +1599,55 @@ export const drawFrame = (
         }
       }
 
-      // Gem top facet for a splitter: glowing core, faceted cut, exit arrows.
-      const bakeGemTop = (
-        c: CanvasRenderingContext2D,
-        size: number,
-        exitsDeg: number[],
-        hue: number,
-      ) => {
+      // Splitter HUB top facet: a glowing crystalline core. Direction is carried
+      // by the 3D prongs now, so this stays a clean luminous gem (faceted bevel +
+      // hot core), tinted to the music hue.
+      const bakeSplitterTop = (c: CanvasRenderingContext2D, size: number, hue: number) => {
         c.clearRect(0, 0, size, size)
         const cx = size / 2
         const cy = size / 2
         const R = size / 2
-        // Crystal body: deep blue rim, glassy mid, darker core so the bright
-        // arrows on top have strong contrast to read against.
-        const body = c.createRadialGradient(cx - R * 0.2, cy - R * 0.2, R * 0.05, cx, cy, R)
-        body.addColorStop(0, heat(hue, 120, 185, 230, 80, 64, 0.98))
-        body.addColorStop(0.45, heat(hue, 70, 140, 195, 75, 50, 0.96))
-        body.addColorStop(0.78, 'rgba(34,86,140,0.96)')
-        body.addColorStop(1, 'rgba(14,40,72,0.96)')
+        // Glassy crystal body.
+        const body = c.createRadialGradient(cx - R * 0.22, cy - R * 0.22, R * 0.04, cx, cy, R)
+        body.addColorStop(0, heat(hue, 150, 210, 245, 85, 70, 0.98))
+        body.addColorStop(0.5, heat(hue, 70, 150, 205, 80, 52, 0.96))
+        body.addColorStop(0.82, 'rgba(30,80,135,0.96)')
+        body.addColorStop(1, 'rgba(12,36,66,0.96)')
         c.fillStyle = body
         c.beginPath()
-        c.arc(cx, cy, R, 0, Math.PI * 2)
+        c.arc(cx, cy, R * 0.98, 0, Math.PI * 2)
         c.fill()
-        // Bright bevel ring delineating the big top face so it reads as a clear
-        // disc from a distance.
+        // Faceted octagon bevel so the hub reads as a cut crystal, not a sphere.
         c.globalCompositeOperation = 'screen'
-        c.lineWidth = Math.max(2, size * 0.05)
-        c.strokeStyle = 'rgba(150,205,250,0.45)'
+        c.lineWidth = Math.max(1.5, size * 0.04)
+        c.strokeStyle = 'rgba(170,220,255,0.5)'
         c.beginPath()
-        c.arc(cx, cy, R * 0.9, 0, Math.PI * 2)
-        c.stroke()
-        c.globalCompositeOperation = 'source-over'
-        c.lineWidth = Math.max(1.5, size * 0.022)
-        c.strokeStyle = 'rgba(10,28,48,0.55)'
-        c.beginPath()
-        c.arc(cx, cy, R * 0.82, 0, Math.PI * 2)
-        c.stroke()
-
-        // Exit arrows (relative to straight-up beam): bold, high-contrast.
-        const rot = (vx: number, vy: number, rad: number) => ({
-          x: vx * Math.cos(rad) - vy * Math.sin(rad),
-          y: vx * Math.sin(rad) + vy * Math.cos(rad),
-        })
-        const rayLen = R * 0.74
-        const headLen = R * 0.34
-        const headAng = Math.PI / 6
-        const drawArrows = (style: string, lw: number) => {
-          c.strokeStyle = style
-          c.lineWidth = lw
-          c.lineCap = 'round'
-          c.lineJoin = 'round'
-          for (const deg of exitsDeg) {
-            const d = rot(0, -1, (deg * Math.PI) / 180)
-            const ex = cx + d.x * rayLen
-            const ey = cy + d.y * rayLen
-            c.beginPath()
-            c.moveTo(cx, cy)
-            c.lineTo(ex, ey)
-            const back = rot(-d.x, -d.y, 0)
-            const l = rot(back.x, back.y, headAng)
-            const r = rot(back.x, back.y, -headAng)
-            c.moveTo(ex, ey)
-            c.lineTo(ex + l.x * headLen, ey + l.y * headLen)
-            c.moveTo(ex, ey)
-            c.lineTo(ex + r.x * headLen, ey + r.y * headLen)
-            c.stroke()
-          }
+        for (let i = 0; i < 8; i++) {
+          const a = -Math.PI / 2 + (i / 8) * Math.PI * 2
+          const x = cx + Math.cos(a) * R * 0.82
+          const y = cy + Math.sin(a) * R * 0.82
+          if (i === 0) c.moveTo(x, y)
+          else c.lineTo(x, y)
         }
-        // Soft luminous halo behind the arrows so they separate from the body.
-        c.globalCompositeOperation = 'screen'
-        drawArrows('rgba(150,210,255,0.5)', Math.max(4, size * 0.11))
-        // Thick dark casing for contrast against the glassy body.
+        c.closePath()
+        c.stroke()
+        // Hot core the beam erupts from.
+        const core = c.createRadialGradient(cx, cy, 0, cx, cy, R * 0.42)
+        core.addColorStop(0, 'rgba(250,254,255,1)')
+        core.addColorStop(0.5, heat(hue, 200, 235, 255, 90, 78, 0.9))
+        core.addColorStop(1, heat(hue, 120, 190, 240, 85, 60, 0))
+        c.fillStyle = core
+        c.beginPath()
+        c.arc(cx, cy, R * 0.42, 0, Math.PI * 2)
+        c.fill()
         c.globalCompositeOperation = 'source-over'
-        drawArrows('rgba(6,16,30,0.92)', Math.max(3.5, size * 0.085))
-        // Bright white-cyan core stroke.
-        drawArrows('rgba(238,250,255,1)', Math.max(2, size * 0.05))
-        // Central hub the arrows emit from.
-        c.beginPath()
-        c.arc(cx, cy, Math.max(2, size * 0.06), 0, Math.PI * 2)
-        c.fillStyle = 'rgba(6,16,30,0.92)'
-        c.fill()
-        c.beginPath()
-        c.arc(cx, cy, Math.max(1.4, size * 0.038), 0, Math.PI * 2)
-        c.fillStyle = 'rgba(245,252,255,1)'
-        c.fill()
       }
 
       const fscale = Math.min(2, Math.max(1, s.view.dpr))
       const FSEP = 2
       type FSlot =
         | { kind: 'mirror'; f: MirrorFeature; sx: number; sy: number; sw: number; sh: number }
-        | { kind: 'gem'; f: PrismFeature; sx: number; sy: number; sw: number; sh: number }
+        | { kind: 'splitter'; f: PrismFeature; sx: number; sy: number; sw: number; sh: number }
       const fslots: FSlot[] = []
       let fx = FSEP
       let frowH = 0
@@ -1670,9 +1670,10 @@ export const drawFrame = (
           const p = place(w, h)
           fslots.push({ kind: 'mirror', f, ...p })
         } else if (f.kind === 'prism') {
+          // Only the hub needs a baked texture; prongs are untextured 3D.
           const sz = Math.max(8, Math.round(f.r * 2.0 * fscale))
           const p = place(sz, sz)
-          fslots.push({ kind: 'gem', f, ...p })
+          fslots.push({ kind: 'splitter', f, ...p })
         }
       }
       if (fslots.length > 0) {
@@ -1691,8 +1692,7 @@ export const drawFrame = (
             if (sl.kind === 'mirror') {
               bakeMirrorPanel(fac, sl.sw, sl.sh, sl.f.hp, sl.f.hpMax)
             } else {
-              const ex = Array.isArray(sl.f.exitsDeg) ? sl.f.exitsDeg : [45, -45]
-              bakeGemTop(fac, sl.sw, ex, hueAt(sl.f.pos.x, sl.f.pos.y))
+              bakeSplitterTop(fac, sl.sw, hueAt(sl.f.pos.x, sl.f.pos.y))
             }
             fac.restore()
             const u0 = sl.sx / fatlasW
@@ -1722,17 +1722,23 @@ export const drawFrame = (
               })
             } else {
               const f = sl.f
-              const cx = f.pos.x + f.cellSize * 0.5
-              const cy = f.pos.y - s.dropAnimOffset + f.cellSize * 0.5
+              const cx = f.pos.x + (f.localAabb.minX + f.localAabb.maxX) * 0.5
+              const cy =
+                f.pos.y - s.dropAnimOffset + (f.localAabb.minY + f.localAabb.maxY) * 0.5
+              const half = (f.localAabb.maxX - f.localAabb.minX) * 0.5
               glFeatures.push({
-                kind: 'gem',
+                kind: 'splitter',
                 cx,
                 cy,
-                radius: f.r,
-                height: f.cellSize * PIECE_EXTRUDE * 0.55,
-                cr: 0.32,
-                cg: 0.6,
-                cb: 0.86,
+                hubR: f.r,
+                prongLen: half * 0.96,
+                prongW: f.cellSize * 0.18,
+                height: f.cellSize * PIECE_EXTRUDE * 0.62,
+                cr: 0.28,
+                cg: 0.74,
+                cb: 0.98,
+                exits: Array.isArray(f.exitsDeg) ? f.exitsDeg : [45, -45],
+                lit: typeof f.lit === 'number' ? f.lit : 0,
                 u0,
                 v0,
                 u1,
@@ -1758,7 +1764,10 @@ export const drawFrame = (
               const fcy =
                 f.pos.y - s.dropAnimOffset + (f.localAabb.minY + f.localAabb.maxY) * 0.5
               const pc = project(fcx, fcy)
-              const rr = sl.kind === 'gem' ? sl.f.r : sl.f.sizePx * 0.6
+              const rr =
+                sl.kind === 'splitter'
+                  ? (sl.f.localAabb.maxX - sl.f.localAabb.minX) * 0.42
+                  : sl.f.sizePx * 0.6
               sactx.save()
               sactx.translate(pc.x + 4 * pc.scale, pc.y + 8 * pc.scale)
               sactx.scale(pc.scale, pc.scale)
@@ -1847,6 +1856,7 @@ export const drawFrame = (
             pos: { x: visualPos.x, y: visualPos.y },
             cellSize: p.cellSize,
             r: p.r,
+            footprint: p.localAabb.maxX - p.localAabb.minX,
             exitsDeg: Array.isArray(exitsDeg) ? exitsDeg : [45, -45],
           })
           ctx.restore() // feature perspective transform
@@ -1912,6 +1922,76 @@ export const drawFrame = (
 
         ctx.restore()
         ctx.restore() // feature perspective transform
+      }
+    }
+
+    // Splitter energy overlay: pulsing conduits along each prong + a core flare,
+    // driven by `lit` (a beam is routing through) over a faint idle shimmer.
+    // Additive, drawn on top of the 3D crystal so it reads as live laser energy
+    // travelling out each exit. Works for both the GL and 2D-fallback crystals.
+    if (s.features.length > 0) {
+      for (const f of s.features) {
+        if (f.kind !== 'prism') continue
+        const exits = Array.isArray(f.exitsDeg) ? f.exitsDeg : [45, -45]
+        const lit = typeof f.lit === 'number' ? f.lit : 0
+        const cxw = f.pos.x + (f.localAabb.minX + f.localAabb.maxX) * 0.5
+        const cyw = f.pos.y - s.dropAnimOffset + (f.localAabb.minY + f.localAabb.maxY) * 0.5
+        const fp = project(cxw, cyw)
+        if (fp.scale < 0.04) continue
+        const hue = hueAt(cxw, cyw)
+        const idle = 0.16 + 0.1 * Math.sin(tNow * 3 + f.id)
+        const energy = clamp(idle + lit * (0.9 + 0.4 * mEnergy), 0, 1.3)
+        const half = (f.localAabb.maxX - f.localAabb.minX) * 0.5
+        const hubR = f.r
+
+        ctx.save()
+        ctx.translate(fp.x, fp.y)
+        ctx.scale(fp.scale, fp.scale)
+        ctx.translate(-cxw, -cyw)
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.lineCap = 'round'
+
+        const drawConduit = (deg: number, len: number, intensity: number) => {
+          const rad = (deg * Math.PI) / 180
+          const dx = Math.sin(rad)
+          const dy = -Math.cos(rad)
+          const x0 = cxw + dx * hubR * 0.5
+          const y0 = cyw + dy * hubR * 0.5
+          const x1 = cxw + dx * len
+          const y1 = cyw + dy * len
+          ctx.strokeStyle = hsl(hue, 100, 70, 0.35 * intensity)
+          ctx.lineWidth = 2.4
+          ctx.beginPath()
+          ctx.moveTo(x0, y0)
+          ctx.lineTo(x1, y1)
+          ctx.stroke()
+          if (intensity > 0.25) {
+            const t = (s.timeSec * 1.6 + f.id * 0.13) % 1
+            const px = x0 + (x1 - x0) * t
+            const py = y0 + (y1 - y0) * t
+            ctx.fillStyle = hsl(hue, 100, 86, Math.min(1, intensity))
+            ctx.beginPath()
+            ctx.arc(px, py, 2.2, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.fillStyle = hsl(hue, 100, 80, 0.5 * intensity)
+            ctx.beginPath()
+            ctx.arc(x1, y1, 2.6, 0, Math.PI * 2)
+            ctx.fill()
+          }
+        }
+        for (const deg of exits) drawConduit(deg, half * 0.96, energy)
+        drawConduit(180, hubR + f.cellSize * 0.18 * 1.6, energy * 0.5)
+
+        const flare = ctx.createRadialGradient(cxw, cyw, 0, cxw, cyw, hubR * 1.25)
+        flare.addColorStop(0, hsl(hue, 100, 92, 0.6 * energy))
+        flare.addColorStop(0.5, hsl(hue, 100, 74, 0.28 * energy))
+        flare.addColorStop(1, hsl(hue, 100, 60, 0))
+        ctx.fillStyle = flare
+        ctx.beginPath()
+        ctx.arc(cxw, cyw, hubR * 1.25, 0, Math.PI * 2)
+        ctx.fill()
+
+        ctx.restore()
       }
     }
 

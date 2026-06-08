@@ -505,6 +505,12 @@ export const stepSim = (s: RunState, dt: number) => {
     if (b.shieldFlashSec > 0) b.shieldFlashSec = Math.max(0, b.shieldFlashSec - dt)
   }
 
+  // Decay each splitter's "beam routing through me" glow. ~0.18s falloff so the
+  // conduits pulse brightly while lasing and settle to idle when the beam moves.
+  for (const f of s.features) {
+    if (f.kind === 'prism' && f.lit > 0) f.lit = Math.max(0, f.lit - dt / 0.18)
+  }
+
   // Melt FX: blocks collapse into a molten blob, then release an XP orb that flies away.
   if (s.meltFx.length > 0) {
     const done: string[] = []
@@ -525,6 +531,14 @@ export const stepSim = (s: RunState, dt: number) => {
     }
     if (done.length > 0) {
       s.meltFx = s.meltFx.filter((f) => !done.includes(f.id))
+    }
+  }
+
+  // Piece-dissolve flashes: advance and cull.
+  if (s.pieceBursts.length > 0) {
+    for (const fx of s.pieceBursts) fx.t += dt
+    if (s.pieceBursts.some((f) => f.t >= f.dur)) {
+      s.pieceBursts = s.pieceBursts.filter((f) => f.t < f.dur)
     }
   }
 
@@ -743,8 +757,10 @@ export const stepSim = (s: RunState, dt: number) => {
 
   const emitPrismRays = (prismId: number, hitPoint: Vec2, incoming: Vec2, intensity: number, bouncesLeft: number, piercesLeft: number) => {
     const prism = s.features.find((f) => f.kind === 'prism' && f.id === prismId) as
-      | { exitsDeg?: number[] }
+      | { exitsDeg?: number[]; lit?: number }
       | undefined
+    // Light the crystal: a beam is routing through it this frame.
+    if (prism) prism.lit = 1
     const allowed = new Set([0, 15, -15, 45, -45, 90, -90])
     const exitsRaw: number[] = Array.isArray(prism?.exitsDeg) && prism.exitsDeg.length > 0 ? prism.exitsDeg : [45, -45]
     const exits = [...new Set(exitsRaw.filter((x) => allowed.has(x)))].sort((a, b) => Math.abs(a) - Math.abs(b))
@@ -958,6 +974,23 @@ export const stepSim = (s: RunState, dt: number) => {
       // the old melt-into-XP-orb flow). Gold blocks burst brighter (their large
       // heat budget is simply spread across the standard mote count).
       spawnHeatMotes(s, b, heatBudget, 0, s.overdriveSec > 0)
+
+      // Brief dissolve flash so the piece doesn't blink out the instant its motes
+      // appear — the silhouette pops + fades in-place as the debris bursts.
+      s.pieceBursts.push({
+        id: s.nextPieceBurstId++,
+        pos: { x: b.pos.x, y: b.pos.y },
+        cellSize: b.cellSize,
+        cornerRadius: b.cornerRadius,
+        loop: b.loop,
+        localAabb: { ...b.localAabb },
+        isGold: b.isGold,
+        t: 0,
+        dur: 0.3,
+      })
+      if (s.pieceBursts.length > 48) {
+        s.pieceBursts.splice(0, s.pieceBursts.length - 48)
+      }
 
       // Check if this destroyed block should spawn a splitter (prism)
       if (s.stats.splitterChance > 0 && Math.random() < s.stats.splitterChance) {

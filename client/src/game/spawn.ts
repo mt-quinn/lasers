@@ -247,13 +247,20 @@ const spawnMirror = (s: RunState, rng: Rng) => {
   s.normalBlocksSinceFeature = 0
 }
 
+// Splitter footprint: a 2x2-cell crystal so its directional silhouette reads
+// from a distance (the old 1-cell gem looked like a stray 1x1 block). `r` is the
+// central HUB collision radius — the beam enters the hub and splits; the prongs
+// are visual direction indicators that overhang the hub.
+const PRISM_FOOTPRINT_CELLS = 2
+const prismFootprintPx = (cellSize: number) => PRISM_FOOTPRINT_CELLS * cellSize
+const prismHubRadius = (cellSize: number) => cellSize * 0.5
+
 const spawnPrism = (s: RunState, rng: Rng) => {
   const cellSize = 40
-  const r = cellSize * 0.36
-  const wPx = cellSize
-  const hPx = cellSize
+  const size = prismFootprintPx(cellSize)
+  const r = prismHubRadius(cellSize)
   const exits = pickTwoExits(rng)
-  const placed = placeAabb(s, wPx, hPx, { preferredXFrac: rng() })
+  const placed = placeAabb(s, size, size, { preferredXFrac: rng() })
 
   const prism: PrismFeature = {
     id: s.nextFeatureId++,
@@ -262,7 +269,8 @@ const spawnPrism = (s: RunState, rng: Rng) => {
     cellSize,
     r,
     exitsDeg: exits,
-    localAabb: { minX: 0, minY: 0, maxX: cellSize, maxY: cellSize },
+    lit: 0,
+    localAabb: { minX: 0, minY: 0, maxX: size, maxY: size },
   }
   s.features.push(prism)
   s.normalBlocksSinceFeature = 0
@@ -270,8 +278,9 @@ const spawnPrism = (s: RunState, rng: Rng) => {
 
 export const spawnPrismAt = (s: RunState, x: number, y: number) => {
   const cellSize = 40
-  const r = cellSize * 0.36
-  
+  const size = prismFootprintPx(cellSize)
+  const r = prismHubRadius(cellSize)
+
   // Prism exit configurations: pick 2 distinct offsets from the allowed set.
   const allowed: number[] = [0, 15, -15, 45, -45, 90, -90]
   const count = 2 // Always spawn with 2 outputs
@@ -289,7 +298,8 @@ export const spawnPrismAt = (s: RunState, x: number, y: number) => {
     cellSize,
     r,
     exitsDeg: exits,
-    localAabb: { minX: 0, minY: 0, maxX: cellSize, maxY: cellSize },
+    lit: 0,
+    localAabb: { minX: 0, minY: 0, maxX: size, maxY: size },
   }
   s.features.push(prism)
 }

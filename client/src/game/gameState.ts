@@ -16,6 +16,8 @@ type SavedRunState = Omit<
   | 'music'
   | 'xpOrbs'
   | 'meltFx'
+  | 'pieceBursts'
+  | 'nextPieceBurstId'
   | 'sparks'
   | 'weldGlows'
   | 'sparkEmitAcc'

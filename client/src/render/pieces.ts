@@ -651,89 +651,85 @@ export const drawMirrorShape = (ctx: CanvasRenderingContext2D, g: MirrorGeom) =>
 export type PrismGeom = {
   pos: Vec2 // top-left (world px)
   cellSize: number
-  r: number
+  r: number // hub radius
+  footprint: number // full footprint size (px), 2x2 cells
   exitsDeg: number[]
 }
 
-// Prism (splitter): dark crystal sphere with bright exit-direction arrows.
+// Splitter (2D fallback when WebGL is unavailable): a crystalline router — a
+// faceted glowing hub with tapered crystal prongs pointing each exit direction
+// (plus a dim intake prong pointing down). Deliberately radial + cyan so it can
+// never be mistaken for the steel mirror wedge.
 export const drawPrismShape = (ctx: CanvasRenderingContext2D, g: PrismGeom) => {
-  const cx = g.pos.x + g.cellSize * 0.5
-  const cy = g.pos.y + g.cellSize * 0.5
+  const half = g.footprint * 0.5
+  const cx = g.pos.x + half
+  const cy = g.pos.y + half
   const r = g.r
+  const exits: number[] = Array.isArray(g.exitsDeg) ? g.exitsDeg : [45, -45]
+
+  const rot = (deg: number): Vec2 => {
+    const rad = (deg * Math.PI) / 180
+    return { x: Math.sin(rad), y: -Math.cos(rad) }
+  }
 
   ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.fillStyle = 'rgba(80,180,255,0.08)'
+
+  // Tapered crystal prong toward `deg`, reaching `len` from center.
+  const drawProng = (deg: number, len: number, hw: number, dim: number) => {
+    const d = rot(deg)
+    const p = { x: -d.y, y: d.x }
+    const r0 = r * 0.6
+    const wTip = hw * 0.4
+    const bL = { x: cx + d.x * r0 + p.x * hw, y: cy + d.y * r0 + p.y * hw }
+    const bR = { x: cx + d.x * r0 - p.x * hw, y: cy + d.y * r0 - p.y * hw }
+    const tL = { x: cx + d.x * len + p.x * wTip, y: cy + d.y * len + p.y * wTip }
+    const tR = { x: cx + d.x * len - p.x * wTip, y: cy + d.y * len - p.y * wTip }
+    const grd = ctx.createLinearGradient(cx, cy, cx + d.x * len, cy + d.y * len)
+    grd.addColorStop(0, `rgba(120,210,255,${0.55 * dim})`)
+    grd.addColorStop(1, `rgba(40,120,180,${0.32 * dim})`)
+    ctx.fillStyle = grd
+    ctx.beginPath()
+    ctx.moveTo(bL.x, bL.y)
+    ctx.lineTo(tL.x, tL.y)
+    ctx.lineTo(tR.x, tR.y)
+    ctx.lineTo(bR.x, bR.y)
+    ctx.closePath()
+    ctx.fill()
+    ctx.strokeStyle = `rgba(220,245,255,${0.5 * dim})`
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+  }
+
+  for (const deg of exits) drawProng(deg, half * 0.96, g.cellSize * 0.2, 1)
+  drawProng(180, r + g.cellSize * 0.22, g.cellSize * 0.16, 0.55)
+
+  // Hub crystal: octagon body with a glowing core.
   ctx.beginPath()
-  ctx.arc(cx, cy, r * 2.0, 0, Math.PI * 2)
+  for (let i = 0; i < 8; i++) {
+    const a = -Math.PI / 2 + (i / 8) * Math.PI * 2
+    const x = cx + Math.cos(a) * r
+    const y = cy + Math.sin(a) * r
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  }
+  ctx.closePath()
+  const body = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r)
+  body.addColorStop(0, 'rgba(225,248,255,0.7)')
+  body.addColorStop(0.5, 'rgba(70,160,215,0.55)')
+  body.addColorStop(1, 'rgba(16,52,86,0.6)')
+  ctx.fillStyle = body
   ctx.fill()
-  ctx.restore()
-
-  ctx.save()
-  ctx.globalCompositeOperation = 'source-over'
-
-  const grd = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r)
-  grd.addColorStop(0, 'rgba(235,250,255,0.55)')
-  grd.addColorStop(0.35, 'rgba(70,140,190,0.45)')
-  grd.addColorStop(1, 'rgba(10,25,40,0.55)')
-  ctx.fillStyle = grd
-  ctx.beginPath()
-  ctx.arc(cx, cy, r, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)'
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.strokeStyle = 'rgba(190,230,255,0.55)'
+  ctx.lineWidth = 1.6
   ctx.stroke()
 
-  ctx.fillStyle = 'rgba(0,0,0,0.22)'
+  ctx.globalCompositeOperation = 'lighter'
+  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.7)
+  core.addColorStop(0, 'rgba(250,254,255,0.9)')
+  core.addColorStop(1, 'rgba(120,200,250,0)')
+  ctx.fillStyle = core
   ctx.beginPath()
-  ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2)
-  ctx.fill()
-
-  const exits: number[] = Array.isArray(g.exitsDeg) ? g.exitsDeg : [45, -45]
-  const base = { x: 0, y: -1 }
-  const toRad = (deg: number) => (deg * Math.PI) / 180
-  const rot = (v: Vec2, rad: number): Vec2 => {
-    const c = Math.cos(rad)
-    const sn = Math.sin(rad)
-    return { x: v.x * c - v.y * sn, y: v.x * sn + v.y * c }
-  }
-  const rayLen = r * 0.88
-  const headLen = r * 0.2
-  const headAng = Math.PI / 7
-
-  const drawGlyphPass = (strokeStyle: string, lineWidth: number) => {
-    ctx.strokeStyle = strokeStyle
-    ctx.lineWidth = lineWidth
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    for (const deg of exits) {
-      const d = rot(base, toRad(deg))
-      const ex = cx + d.x * rayLen
-      const ey = cy + d.y * rayLen
-      ctx.beginPath()
-      ctx.moveTo(cx, cy)
-      ctx.lineTo(ex, ey)
-
-      const back = { x: -d.x, y: -d.y }
-      const left = rot(back, headAng)
-      const right = rot(back, -headAng)
-      ctx.moveTo(ex, ey)
-      ctx.lineTo(ex + left.x * headLen, ey + left.y * headLen)
-      ctx.moveTo(ex, ey)
-      ctx.lineTo(ex + right.x * headLen, ey + right.y * headLen)
-      ctx.stroke()
-    }
-  }
-
-  drawGlyphPass('rgba(0,0,0,0.55)', 6)
-  drawGlyphPass('rgba(245,255,255,0.92)', 2.8)
-
-  ctx.fillStyle = 'rgba(245,255,255,0.65)'
-  ctx.beginPath()
-  ctx.arc(cx, cy, Math.max(1.4, r * 0.11), 0, Math.PI * 2)
+  ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2)
   ctx.fill()
 
   ctx.restore()
