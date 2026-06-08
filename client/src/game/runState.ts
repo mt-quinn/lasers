@@ -1,4 +1,5 @@
 import type { Vec2 } from './math'
+import { getTodayDateKey, hashDateKey } from './rng'
 
 export const XP_ORB_CONDENSE_DUR = 0.5
 export const XP_ORB_FLY_DUR = 0.55
@@ -420,9 +421,21 @@ export type RunState = {
   // Requirement: at least 3 normal blocks must spawn between each feature.
   normalBlocksSinceFeature: number
   spawnTimer: number
+
+  // Daily seeded board. The run belongs to `dateKey` (YYYY-MM-DD); `dailySeed`
+  // is its hash. Each scheduled board-spawn draws an independent RNG seeded from
+  // (dailySeed, boardSpawnIndex), so everyone playing that day faces the same
+  // piece sequence. `boardSpawnIndex` increments once per spawnBoardThing call
+  // and also drives content variety (so the ramp is index-based, hence identical
+  // for everyone, rather than wall-clock-based which diverges under pacing).
+  dailySeed: number
+  dateKey: string
+  boardSpawnIndex: number
 }
 
 export const createInitialRunState = (): RunState => {
+  // Every run is today's daily board.
+  const dateKey = getTodayDateKey()
   return {
     paused: false,
     view: { width: 360, height: 640, dpr: 1, safeBottom: 0 },
@@ -554,6 +567,9 @@ export const createInitialRunState = (): RunState => {
     nextFeatureId: 1,
     // Allow features immediately at the start (no prior feature to "cool down" from).
     normalBlocksSinceFeature: 3,
+    dailySeed: hashDateKey(dateKey),
+    dateKey,
+    boardSpawnIndex: 0,
     // Give the player a moment to orient before the first block arrives.
     spawnTimer: 1.3,
   }

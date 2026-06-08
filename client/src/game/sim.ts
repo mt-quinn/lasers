@@ -31,6 +31,15 @@ const WELL_STEP_SCREEN = 6 // integration step, in screen px
 // point at the core more than this (cos angle). A tangential skim whips around
 // instead of getting swallowed, so the beam favors orbiting over capture.
 const WELL_CAPTURE_DOT = 0.55
+// Near-core "bite": extra turn weight applied ONLY at the closest approach to
+// the core, so a straight pass-through can bend the beam past 90° without
+// strengthening the wider field. It rides a high power of the normalized
+// proximity (tNorm: 0 at the field edge, 1 at the core), so it's negligible
+// through the low/mid field and spikes hard near the core. WELL_NEAR_BITE is
+// the peak extra weight at the core; WELL_NEAR_BITE_POWER is how tightly it
+// hugs the core (higher = narrower, affects only the very closest points).
+const WELL_NEAR_BITE = 1.8
+const WELL_NEAR_BITE_POWER = 10
 
 // Score-attack tuning.
 export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to keep the combo
@@ -286,6 +295,19 @@ export const stepSim = (s: RunState, dt: number) => {
     Math.max(0.34, 0.62 + (0.42 - 0.62) * prog - 0.08 * creep) * GAME_PACE_SCALE // ~0.71s -> 0.48s -> ~0.39s after 15% slowdown
   const maxBlocksBase = Math.floor(7 + 8 * prog + 4 * creep) // 7 -> 15 -> ~19
 
+  // Surge/breather cadence: a deterministic wave layered on the base interval so
+  // arrivals come in rhythmic crunches with calm between, instead of a flat drip
+  // — this is the run's pulse. Phase is pure wall-clock (identical for everyone)
+  // and only modulates PACING, never the seeded piece sequence. Intensity ramps
+  // with `prog`, so early waves are gentle and late ones bite.
+  const CADENCE_PERIOD = 20 // seconds per breather -> surge -> breather cycle
+  const cadenceWave = 0.5 - 0.5 * Math.cos((s.timeSec / CADENCE_PERIOD) * Math.PI * 2) // 0..1
+  const surge01 = Math.pow(cadenceWave, 2.2) * (0.4 + 0.6 * prog) // sharpen into peaks + ramp in
+  // Surge: arrivals up to ~50% faster with a few extra on-screen slots; breather
+  // eases off ~10% so you actually get to breathe.
+  const cadenceInterval = 1.1 - 0.55 * surge01
+  const cadenceCap = Math.round(4 * surge01)
+
   // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
   const dangerY = layout.failY - 2 * cellSize
   let dangerCount = 0
@@ -294,8 +316,8 @@ export const stepSim = (s: RunState, dt: number) => {
     if (bottom >= dangerY) dangerCount++
   }
   const pressure01 = clamp(dangerCount / 3, 0, 1)
-  const spawnEvery = spawnEveryBase * (1 + 0.85 * pressure01)
-  const maxBlocks = Math.max(3, maxBlocksBase - Math.floor(2 * pressure01))
+  const spawnEvery = spawnEveryBase * cadenceInterval * (1 + 0.85 * pressure01)
+  const maxBlocks = Math.max(3, maxBlocksBase + cadenceCap - Math.floor(2 * pressure01))
 
   const allowSpawn = dangerCount === 0 && s.respiteSec <= 0
   if (allowSpawn && s.spawnTimer <= 0) {
@@ -1014,7 +1036,13 @@ export const stepSim = (s: RunState, dt: number) => {
           const tNorm = 1 - distS / wellInfluenceR
           const minStrength = 0.28
           const strength = minStrength + (1 - minStrength) * tNorm
-          const w = strength * strength * strength
+          // Base falloff (unchanged across the low/mid field) + a near-core bite
+          // that lifts only the top end of the curve so a head-on pass can bend
+          // past 90°. tNorm is clamped so the even power can't add spurious turn
+          // just outside the field boundary.
+          const tBite = tNorm > 0 ? tNorm : 0
+          const w =
+            strength * strength * strength + WELL_NEAR_BITE * Math.pow(tBite, WELL_NEAR_BITE_POWER)
           const turnSum = lateral * w
 
           // Apply the bend to the *world* direction (orientation is preserved by

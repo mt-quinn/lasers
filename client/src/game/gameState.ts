@@ -1,5 +1,6 @@
 import type { RunState } from './runState'
 import { createInitialRunState } from './runState'
+import { getTodayDateKey } from './rng'
 
 // v2: routing-skill rework (fixed power, piercing beam, flat HP). Old v1 saves
 // use the obsolete HP/DPS model, so they are intentionally not loaded.
@@ -125,6 +126,10 @@ export const saveGameState = (state: RunState) => {
       // Score persists with the run so a refresh keeps depth and score in sync.
       score: state.score,
       bestScoreLocal: state.bestScoreLocal,
+      // Daily seed state so a refresh resumes the same board mid-run.
+      dailySeed: state.dailySeed,
+      dateKey: state.dateKey,
+      boardSpawnIndex: state.boardSpawnIndex,
     }
 
     localStorage.setItem(GAME_STATE_KEY, JSON.stringify(toSave))
@@ -182,7 +187,14 @@ export const loadGameState = (): RunState | null => {
     if (!freshState.levelUpActive) {
       freshState.paused = false
     }
-    
+
+    // Daily-only: a saved run from a previous day is stale (different board).
+    // Drop it so the player starts fresh on today's seeded board.
+    if (freshState.dateKey !== getTodayDateKey()) {
+      localStorage.removeItem(GAME_STATE_KEY)
+      return null
+    }
+
     return freshState
   } catch {
     // If anything goes wrong, clear the corrupted state and return null

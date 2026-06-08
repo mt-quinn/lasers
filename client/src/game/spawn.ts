@@ -4,8 +4,16 @@ import { buildCellLoop, computeLocalAabbPx } from './outline'
 import { SHAPES } from './shapes'
 import { getArenaLayout } from './layout'
 import { screenTopWorldY } from '../render/projection'
+import { spawnRng, type Rng } from './rng'
 
-const randOf = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)]!
+const randOf = <T,>(arr: T[], rng: Rng) => arr[Math.floor(rng() * arr.length)]!
+
+// Content difficulty is driven by the deterministic board-spawn INDEX, not
+// wall-clock time: under adaptive pacing two players reach a given timeSec at
+// different spawn counts, so a time-based ramp would desync the piece sequence.
+// This nominal interval converts an index into the equivalent "schedule
+// seconds" the variety thresholds were tuned in (~2 spawns/sec).
+const NOMINAL_SPAWN_SEC = 0.5
 
 const shapeCellBounds = (cells: { x: number; y: number }[]) => {
   let minX = Infinity
@@ -54,7 +62,7 @@ const collidesAny = (cand: WorldAabb, s: RunState) => {
 // Routing-focused block variety, introduced on a schedule so the player learns
 // the base verb (pierce) first, then fast-droppers, then armored, then chrome.
 // These add routing/prioritization decisions, never HP-sponge tedium.
-const rollBlockKind = (tSec: number): BlockKind => {
+const rollBlockKind = (tSec: number, rng: Rng): BlockKind => {
   if (tSec < 30) return 'normal'
   const pFast = clamp((tSec - 30) / 90, 0, 1) * 0.2 // ramps to ~20%
   const pArmored = clamp((tSec - 60) / 120, 0, 1) * 0.16 // ramps to ~16%
@@ -63,7 +71,7 @@ const rollBlockKind = (tSec: number): BlockKind => {
   // death it multiplies into a cluster of slow 1x1s, so it's a deliberate
   // difficulty spike rather than a constant presence.
   const pShatter = clamp((tSec - 120) / 150, 0, 1) * 0.1 // ramps to ~10%
-  const r = Math.random()
+  const r = rng()
   if (r < pShatter) return 'shatter'
   if (r < pShatter + pChrome) return 'chrome'
   if (r < pShatter + pChrome + pArmored) return 'armored'
@@ -71,7 +79,7 @@ const rollBlockKind = (tSec: number): BlockKind => {
   return 'normal'
 }
 
-const rollFeatureKind = (tSec: number): BoardFeature['kind'] | null => {
+const rollFeatureKind = (tSec: number, rng: Rng): BoardFeature['kind'] | null => {
   // Tunable knobs. Start rare so the board reads cleanly; ramp slightly over time.
   // Optics (mirror/prism) are now the player's routing *tools*, so they appear a
   // bit more often than the old per-feature rate (black holes are gone).
@@ -79,7 +87,7 @@ const rollFeatureKind = (tSec: number): BoardFeature['kind'] | null => {
   const pMirror = 0.07 + 0.04 * ramp
   const pPrism = 0.07 + 0.04 * ramp
 
-  const r = Math.random()
+  const r = rng()
   if (r < pPrism) return 'prism'
   if (r < pPrism + pMirror) return 'mirror'
   return null
@@ -89,17 +97,24 @@ type PlaceOpts = {
   // Keep the piece out of the central column (mirrors, which would otherwise
   // reflect the straight-up beam back down and stall the game).
   avoidCenterHalf?: number
+  // Deterministic lane in [0,1) from the daily seed. When the resulting column
+  // is collision-free it's used outright (so everyone's board lands pieces in
+  // the same lanes); otherwise the adaptive search below picks a free spot.
+  preferredXFrac?: number
 }
 
 const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) => {
   const avoidCenterHalf = opts.avoidCenterHalf ?? 0
+  const preferredXFrac = opts.preferredXFrac
   const pad = 18
   const gap = 16
   const xMin = pad
   const xMax = s.view.width - wPx - pad
 
   const centerX = s.view.width / 2
-  const genX = () => {
+  // `src` (when provided) makes the lane deterministic; otherwise it's random.
+  const genX = (src?: number) => {
+    const r = src != null ? src : Math.random()
     if (avoidCenterHalf > 0) {
       // Left lane: piece's right edge stays left of the protected band.
       const leftHi = centerX - avoidCenterHalf - wPx
@@ -108,13 +123,13 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) 
       const leftOk = leftHi >= xMin
       const rightOk = rightLo <= xMax
       if (leftOk || rightOk) {
-        const pickLeft = leftOk && (!rightOk || Math.random() < 0.5)
-        if (pickLeft) return clamp(xMin + Math.random() * (leftHi - xMin), xMin, leftHi)
-        return clamp(rightLo + Math.random() * (xMax - rightLo), rightLo, xMax)
+        const pickLeft = leftOk && (!rightOk || r < 0.5)
+        if (pickLeft) return clamp(xMin + r * (leftHi - xMin), xMin, leftHi)
+        return clamp(rightLo + r * (xMax - rightLo), rightLo, xMax)
       }
       // Fallback (piece too wide to dodge the band): fall through to full width.
     }
-    return clamp(xMin + Math.random() * Math.max(0, xMax - xMin), xMin, xMax)
+    return clamp(xMin + r * Math.max(0, xMax - xMin), xMin, xMax)
   }
 
   // Spawn fully ABOVE the visible top edge so pieces descend into view (rather
@@ -131,7 +146,8 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) 
   let bestScore = -Infinity
 
   for (let attempt = 0; attempt < 22; attempt++) {
-    const x = genX()
+    const usePreferred = attempt === 0 && preferredXFrac != null
+    const x = usePreferred ? genX(preferredXFrac) : genX()
 
     // Find all occupants that overlap horizontally, then spawn above the topmost of them.
     let minTopY = Infinity
@@ -162,7 +178,10 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) 
 
     if (!collidesAny(cand, s)) {
       const clearance = baseY - y
-      const score = -overlapCount * 3 - clearance * 0.01 + Math.random() * 0.15
+      // The deterministic preferred column wins outright when collision-free so
+      // the daily lanes match across players; the jittered search is fallback.
+      const score =
+        -overlapCount * 3 - clearance * 0.01 + (usePreferred ? 1000 : Math.random() * 0.15)
       if (!found || score > bestScore) {
         bestScore = score
         placedX = x
@@ -190,14 +209,28 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) 
 const MIRROR_HP = 80
 const MIRROR_SIZE_CELLS = 2
 
-const spawnMirror = (s: RunState) => {
+// Prism exit configurations (degrees, relative to the incoming beam). Pick two
+// distinct ones; the rng variant uses exactly two draws so it stays clean.
+const PRISM_EXIT_CHOICES: number[] = [0, 15, -15, 45, -45, 90, -90]
+
+const pickTwoExits = (rng: Rng): number[] => {
+  const i = Math.floor(rng() * PRISM_EXIT_CHOICES.length)
+  let j = Math.floor(rng() * (PRISM_EXIT_CHOICES.length - 1))
+  if (j >= i) j += 1
+  return [PRISM_EXIT_CHOICES[i]!, PRISM_EXIT_CHOICES[j]!]
+}
+
+const spawnMirror = (s: RunState, rng: Rng) => {
   const cellSize = 40
   const sizePx = MIRROR_SIZE_CELLS * cellSize
   // Diagonal-only: a vertical beam is always kicked sideways, never straight back.
-  const orient: 1 | -1 = Math.random() < 0.5 ? 1 : -1
+  const orient: 1 | -1 = rng() < 0.5 ? 1 : -1
   // Keep a small launch corridor at center so the muzzle usually has clearance,
   // but mirrors can sit near-center for routing (they deflect, never block).
-  const placed = placeAabb(s, sizePx, sizePx, { avoidCenterHalf: s.view.width * 0.12 })
+  const placed = placeAabb(s, sizePx, sizePx, {
+    avoidCenterHalf: s.view.width * 0.12,
+    preferredXFrac: rng(),
+  })
 
   const mirror: MirrorFeature = {
     id: s.nextFeatureId++,
@@ -214,23 +247,13 @@ const spawnMirror = (s: RunState) => {
   s.normalBlocksSinceFeature = 0
 }
 
-const spawnPrism = (s: RunState) => {
+const spawnPrism = (s: RunState, rng: Rng) => {
   const cellSize = 40
   const r = cellSize * 0.36
   const wPx = cellSize
   const hPx = cellSize
-  const placed = placeAabb(s, wPx, hPx)
-
-  // Prism exit configurations: pick 2 distinct offsets from the allowed set.
-  // These are *relative* to the incoming beam direction.
-  const allowed: number[] = [0, 15, -15, 45, -45, 90, -90]
-  const count = 2 // Always spawn with 2 outputs
-  const exits: number[] = []
-  while (exits.length < count) {
-    const d = allowed[Math.floor(Math.random() * allowed.length)]!
-    if (exits.includes(d)) continue
-    exits.push(d)
-  }
+  const exits = pickTwoExits(rng)
+  const placed = placeAabb(s, wPx, hPx, { preferredXFrac: rng() })
 
   const prism: PrismFeature = {
     id: s.nextFeatureId++,
@@ -272,22 +295,29 @@ export const spawnPrismAt = (s: RunState, x: number, y: number) => {
 }
 
 export const spawnBoardThing = (s: RunState) => {
-  const kind = rollFeatureKind(s.timeSec)
+  // One independent RNG per scheduled board-spawn -> the Nth piece of the day is
+  // identical for everyone regardless of how their pacing diverges.
+  const index = s.boardSpawnIndex++
+  const rng = spawnRng(s.dailySeed, index)
+  // Index-based schedule clock so content variety is deterministic per player.
+  const schedSec = index * NOMINAL_SPAWN_SEC
+
+  const kind = rollFeatureKind(schedSec, rng)
   // Early-run safeguard: first 15 blocks must be normal (no undamageable features).
   if (s.blocksSpawned < 15) {
-    return spawnBlock(s)
+    return spawnBlock(s, rng, schedSec)
   }
   // Protection: require at least 3 normal blocks between each feature spawn.
   if (kind != null && s.normalBlocksSinceFeature < 3) {
-    return spawnBlock(s)
+    return spawnBlock(s, rng, schedSec)
   }
-  if (kind === 'mirror') return spawnMirror(s)
-  if (kind === 'prism') return spawnPrism(s)
-  return spawnBlock(s)
+  if (kind === 'mirror') return spawnMirror(s, rng)
+  if (kind === 'prism') return spawnPrism(s, rng)
+  return spawnBlock(s, rng, schedSec)
 }
 
-export const spawnBlock = (s: RunState) => {
-  const t = s.timeSec
+export const spawnBlock = (s: RunState, rng: Rng, schedSec: number) => {
+  const t = schedSec
   // Cell size is constant so the global drop step is always exactly "1x1 block".
   const cellSize = 40
   // Big rounding: for a 1-cell-thick block, ends should read as a half-circle (capsule).
@@ -295,7 +325,7 @@ export const spawnBlock = (s: RunState) => {
   const cornerRadius = cellSize * 0.5 - 0.6
 
   // Routing-focused kind (scheduled introduction; early game is normal-only).
-  const kind = rollBlockKind(t)
+  const kind = rollBlockKind(t, rng)
 
   // Shape weighting: simpler early, bigger later. Chrome is always a single cell
   // so its reflective phase is brief — it dies fast and can't wall the muzzle.
@@ -311,10 +341,10 @@ export const spawnBlock = (s: RunState) => {
   const shatterPool = pool.filter((sh) => sh.id !== 'Dot')
   const shape =
     kind === 'chrome'
-      ? (SHAPES.find((sh) => sh.id === 'Dot') ?? randOf(pool))
+      ? (SHAPES.find((sh) => sh.id === 'Dot') ?? randOf(pool, rng))
       : kind === 'shatter'
-        ? randOf(shatterPool.length > 0 ? shatterPool : pool)
-        : randOf(pool)
+        ? randOf(shatterPool.length > 0 ? shatterPool : pool, rng)
+        : randOf(pool, rng)
   const cells = normalizeCellsToOrigin(shape.cells)
   const bounds = shapeCellBounds(cells)
   const wPx = bounds.w * cellSize
@@ -335,7 +365,7 @@ export const spawnBlock = (s: RunState) => {
   // wall-clearance placement is needed anymore — they can spawn anywhere.
 
   // Gold blocks are a normal-kind bonus only (no special-kind gold).
-  const isGold = kind === 'normal' && Math.random() < s.stats.goldSpawnChance
+  const isGold = kind === 'normal' && rng() < s.stats.goldSpawnChance
 
   // XP per block: 1 for normal, 5 + bonus for gold blocks
   const xpValue = isGold ? 5 + s.stats.goldXpBonus : 1
@@ -369,8 +399,9 @@ export const spawnBlock = (s: RunState) => {
   const hpAnchorLocalPx = { x: best.x * cellSize, y: best.y * cellSize }
 
   // Spawn placement: never overlap any existing block AABB (including other
-  // newly-spawned blocks above). No kind-specific placement constraints remain.
-  const placed = placeAabb(s, wPx, hPx)
+  // newly-spawned blocks above). The deterministic lane comes from the daily
+  // seed; vertical stacking still adapts to the live board.
+  const placed = placeAabb(s, wPx, hPx, { preferredXFrac: rng() })
 
   const block: BlockEntity = {
     id: s.nextBlockId++,

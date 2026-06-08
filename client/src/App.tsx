@@ -25,6 +25,7 @@ import { drawPieceSwatch, type SwatchKind } from './render/swatch'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../convex/_generated/api'
 import { getOrCreatePlayerId, isConvexConfigured } from './game/playerId'
+import { getTodayDateKey } from './game/rng'
 
 type HudSnapshot = {
   paused: boolean
@@ -143,10 +144,12 @@ export default function App() {
   // so the game still runs fully offline with just the local board.
   const playerIdRef = useRef<string>(getOrCreatePlayerId())
   const convexConfigured = useMemo(() => isConvexConfigured(), [])
-  const submitEndlessGlobal = useMutation(api.leaderboard.submitEndlessScore)
-  const globalEndlessScores = useQuery(
-    api.leaderboard.getTopEndlessScores,
-    convexConfigured && hud.gameOver ? {} : 'skip',
+  // The whole game is a daily run, so the global board is today's daily board.
+  const todayKey = useMemo(() => getTodayDateKey(), [])
+  const submitDailyGlobal = useMutation(api.leaderboard.submitDailyScore)
+  const globalDailyScores = useQuery(
+    api.leaderboard.getTopDailyScoresForDate,
+    convexConfigured && hud.gameOver ? { dateKey: todayKey } : 'skip',
   )
 
   const setPaused = useCallback((paused: boolean) => {
@@ -591,18 +594,20 @@ export default function App() {
     }
 
     // Fire-and-forget global submit on every run end. The server upserts the
-    // player's best row, so resubmitting (and the later name-save submit) is
-    // safe. Uses the last saved name until the player enters a new one.
+    // player's best row FOR THIS DAY, so playing as much as they want only ever
+    // keeps their single best daily score globally. Uses the last saved name
+    // until the player enters a new one.
     if (convexConfigured && hud.score > 0) {
-      submitEndlessGlobal({
+      submitDailyGlobal({
         playerId: playerIdRef.current,
         name: loadLastPlayerName() || 'PLAYER',
         score: hud.score,
         depth: hud.depth,
+        dateKey: stateRef.current.dateKey,
         savedAt: Date.now(),
       }).catch(() => {})
     }
-  }, [hud.gameOver, hud.depth, hud.score, highScores, convexConfigured, submitEndlessGlobal])
+  }, [hud.gameOver, hud.depth, hud.score, highScores, convexConfigured, submitDailyGlobal])
 
   const submitHighScore = useCallback(() => {
     if (pendingScoreDepth == null || pendingScore == null) return
@@ -618,17 +623,18 @@ export default function App() {
     // Update local bests immediately for the live HUD labels on subsequent runs.
     stateRef.current.bestDepthLocal = getBestDepth(next)
     stateRef.current.bestScoreLocal = getBestScore(next)
-    // Re-submit globally with the chosen name so the global row shows it too.
+    // Re-submit globally with the chosen name so the daily row shows it too.
     if (convexConfigured) {
-      submitEndlessGlobal({
+      submitDailyGlobal({
         playerId: playerIdRef.current,
         name: nameDraft,
         score: pendingScore,
         depth: pendingScoreDepth,
+        dateKey: stateRef.current.dateKey,
         savedAt: Date.now(),
       }).catch(() => {})
     }
-  }, [highScores, nameDraft, pendingScoreDepth, pendingScore, convexConfigured, submitEndlessGlobal])
+  }, [highScores, nameDraft, pendingScoreDepth, pendingScore, convexConfigured, submitDailyGlobal])
 
   const skipHighScore = useCallback(() => {
     setShowNamePrompt(false)
@@ -834,7 +840,7 @@ export default function App() {
 
                   {highScores.length > 0 && (
                     <div className="menuSection">
-                      <div className="menuSectionTitle">Top Scores</div>
+                      <div className="menuSectionTitle">Your Best</div>
                       <ol className="menuScoreList">
                         {highScores.slice(0, 5).map((e, i) => (
                           <li key={`${e.ts}-${i}`} className="menuScoreRow">
@@ -850,11 +856,11 @@ export default function App() {
                     </div>
                   )}
 
-                  {convexConfigured && globalEndlessScores && globalEndlessScores.length > 0 && (
+                  {convexConfigured && globalDailyScores && globalDailyScores.length > 0 && (
                     <div className="menuSection">
-                      <div className="menuSectionTitle">Global Top</div>
+                      <div className="menuSectionTitle">Daily Global Top</div>
                       <ol className="menuScoreList menuScoreListGlobal">
-                        {globalEndlessScores.slice(0, 10).map((e, i) => (
+                        {globalDailyScores.slice(0, 10).map((e, i) => (
                           <li
                             key={`${e.playerId}-${i}`}
                             className={`menuScoreRow${e.playerId === playerIdRef.current ? ' isMe' : ''}`}
