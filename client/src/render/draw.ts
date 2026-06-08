@@ -191,7 +191,13 @@ export const relativeLuma = (cssRgb: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
+export type DrawUi = { musicOn: boolean }
+
+export const drawFrame = (
+  canvas: HTMLCanvasElement,
+  s: RunState,
+  ui: DrawUi = { musicOn: false },
+) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
@@ -2475,6 +2481,139 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       ctx.beginPath()
       ctx.arc(knobX, knobY, knobR * 0.92, 0, Math.PI * 2)
       ctx.fill()
+      ctx.restore()
+    }
+
+    // Control dock (pause + music): drawn ON the canvas as part of the HUD, so
+    // the gravity-well lens below samples and warps it exactly like the rest of
+    // the UI (the DOM-overlay version could never be lensed). Hit-testing lives
+    // in App.tsx against the same layout.dock geometry. Hidden on game over (the
+    // overlay covers the field) so it doesn't peek through the blur.
+    if (!s.gameOver) {
+      const d = layout.dock
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+
+      // Glass pill (matches the HUD L's fill/stroke language).
+      const pillBg = ctx.createLinearGradient(0, d.y, 0, d.y + d.h)
+      pillBg.addColorStop(0, 'rgba(12, 10, 28, 0.62)')
+      pillBg.addColorStop(1, 'rgba(10, 8, 22, 0.5)')
+      ctx.fillStyle = pillBg
+      roundedRectPath(d.x, d.y, d.w, d.h, d.r)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+      ctx.lineWidth = 1.5
+      roundedRectPath(d.x, d.y, d.w, d.h, d.r)
+      ctx.stroke()
+
+      // Icon glyphs are authored in a 24x24 box (mirrors the old SVGs); scale to
+      // the 19px on-button glyph and center on each button.
+      const drawGlyph = (cx: number, cy: number, paint: () => void) => {
+        const g = 19 / 24
+        ctx.save()
+        ctx.translate(cx - (24 * g) / 2, cy - (24 * g) / 2)
+        ctx.scale(g, g)
+        paint()
+        ctx.restore()
+      }
+
+      // Pause / play button. Hidden during the (currently unused) upgrade pause.
+      if (!s.levelUpActive) {
+        const c = d.pause
+        ctx.fillStyle = 'rgba(255,255,255,0.04)'
+        ctx.beginPath()
+        ctx.arc(c.cx, c.cy, d.btnR, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255,245,200,0.16)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(c.cx, c.cy, d.btnR - 0.5, 0, Math.PI * 2)
+        ctx.stroke()
+
+        ctx.fillStyle = 'rgba(255,246,213,0.92)'
+        drawGlyph(c.cx, c.cy, () => {
+          if (s.paused) {
+            ctx.beginPath()
+            ctx.moveTo(8, 5.5)
+            ctx.lineTo(8, 18.5)
+            ctx.lineTo(19, 12)
+            ctx.closePath()
+            ctx.fill()
+          } else {
+            roundedRectPath(7, 5.5, 3.5, 13, 1.4)
+            ctx.fill()
+            roundedRectPath(13.5, 5.5, 3.5, 13, 1.4)
+            ctx.fill()
+          }
+        })
+      }
+
+      // Music button. ON = cyan accent + glow; OFF = dimmed with a mute slash.
+      {
+        const c = d.music
+        const on = ui.musicOn
+        ctx.save()
+        if (on) {
+          ctx.fillStyle = 'rgba(28,60,86,0.6)'
+          ctx.beginPath()
+          ctx.arc(c.cx, c.cy, d.btnR, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.shadowColor = 'rgba(110,210,255,0.6)'
+          ctx.shadowBlur = 14
+          ctx.strokeStyle = 'rgba(120,226,255,0.85)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.arc(c.cx, c.cy, d.btnR - 0.5, 0, Math.PI * 2)
+          ctx.stroke()
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.04)'
+          ctx.beginPath()
+          ctx.arc(c.cx, c.cy, d.btnR, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.strokeStyle = 'rgba(255,245,200,0.16)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.arc(c.cx, c.cy, d.btnR - 0.5, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+        ctx.restore()
+
+        const note = on ? '#eafaff' : 'rgba(255,246,213,0.42)'
+        drawGlyph(c.cx, c.cy, () => {
+          // Note stem + flag (stroked path) + two beam heads (filled circles).
+          ctx.strokeStyle = note
+          ctx.fillStyle = note
+          ctx.lineWidth = 2
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          ctx.beginPath()
+          ctx.moveTo(9, 16.5)
+          ctx.lineTo(9, 7)
+          ctx.lineTo(18, 5)
+          ctx.lineTo(18, 14)
+          ctx.stroke()
+          ctx.beginPath()
+          ctx.arc(6.5, 16.5, 2.6, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.beginPath()
+          ctx.arc(15.5, 14, 2.6, 0, Math.PI * 2)
+          ctx.fill()
+        })
+        if (!on) {
+          // Diagonal mute slash across the button.
+          ctx.save()
+          ctx.strokeStyle = 'rgba(255,246,213,0.7)'
+          ctx.lineWidth = 2
+          ctx.lineCap = 'round'
+          const r = d.btnR - 8
+          ctx.beginPath()
+          ctx.moveTo(c.cx - r, c.cy + r)
+          ctx.lineTo(c.cx + r, c.cy - r)
+          ctx.stroke()
+          ctx.restore()
+        }
+      }
+
       ctx.restore()
     }
 

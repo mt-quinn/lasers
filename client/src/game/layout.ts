@@ -11,6 +11,19 @@ export type ArenaLayout = {
   emitterY: number
   xpGauge: { x: number; y: number; w: number; h: number; pad: number }
   xpTarget: { x: number; y: number }
+  // Control dock (pause + music): a glass pill at bottom-left, drawn ON the
+  // canvas (so the gravity-well lens warps it like the rest of the HUD) and
+  // hit-tested for taps. All values are in CSS px (canvas style px).
+  dock: {
+    x: number
+    y: number
+    w: number
+    h: number
+    r: number
+    btnR: number
+    pause: { cx: number; cy: number }
+    music: { cx: number; cy: number }
+  }
 }
 
 export const getArenaLayout = (view: ViewState): ArenaLayout => {
@@ -38,6 +51,29 @@ export const getArenaLayout = (view: ViewState): ArenaLayout => {
   // Default target for XP orbs (used for legacy paths); most code now targets the top-of-fill dynamically.
   const xpTarget = { x: gaugeX + xpW / 2, y: gaugeY + gauge.h }
 
-  return { railH, bottomPad, railY, failY, emitterY, xpGauge: gauge, xpTarget }
+  // Control dock: bottom-left glass pill holding two equal icon buttons. Its
+  // bottom edge sits just above the death line (failY), mirroring the HUD L.
+  const dockBtn = 38
+  const dockBtnR = dockBtn / 2
+  const dockPad = 5
+  const dockGap = 6
+  const dockH = dockBtn + dockPad * 2
+  const dockW = dockBtn * 2 + dockGap + dockPad * 2
+  const dockX = 12
+  const dockBottom = failY - 8
+  const dockY = dockBottom - dockH
+  const dockCY = dockY + dockH / 2
+  const dock = {
+    x: dockX,
+    y: dockY,
+    w: dockW,
+    h: dockH,
+    r: dockH / 2,
+    btnR: dockBtnR,
+    pause: { cx: dockX + dockPad + dockBtnR, cy: dockCY },
+    music: { cx: dockX + dockPad + dockBtn + dockGap + dockBtnR, cy: dockCY },
+  }
+
+  return { railH, bottomPad, railY, failY, emitterY, xpGauge: gauge, xpTarget, dock }
 }
 

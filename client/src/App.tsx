@@ -101,6 +101,14 @@ export default function App() {
   const musicAudioRef = useRef<HTMLAudioElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
+  // Latest values for use inside the (stable, []-dep) RAF + pointer effects:
+  // the on-canvas control dock reads musicOn to draw its state, and the pointer
+  // handlers call these to toggle on a tap.
+  const musicOnRef = useRef(false)
+  const dockActionsRef = useRef<{ togglePause: () => void; toggleMusic: () => void }>({
+    togglePause: () => {},
+    toggleMusic: () => {},
+  })
   const saveBucketRef = useRef<number>(-1)
   const safeProbeRef = useRef<HTMLDivElement | null>(null)
 
@@ -228,10 +236,34 @@ export default function App() {
     const isTapGesture = (cx: number, cy: number, t: number, downX: number, downY: number, downT: number) =>
       t - downT <= TAP_MAX_MS && Math.hypot(cx - downX, cy - downY) <= TAP_MAX_PX
 
+    // The on-canvas control dock is hit-tested here (it's drawn in draw.ts, not a
+    // DOM button). Returns which button the press landed on, in the dock's base
+    // (unwarped) position — the lens displaces the glyph visually but the touch
+    // target stays put. A tap toggles it; the gesture is consumed (no well drop).
+    const dockHit = (e: PointerEvent): 'pause' | 'music' | null => {
+      const canvas = canvasRef.current
+      const s = stateRef.current
+      if (!canvas || s.gameOver) return null
+      const rect = canvas.getBoundingClientRect()
+      const px = e.clientX - rect.left
+      const py = e.clientY - rect.top
+      const d = getArenaLayout(s.view).dock
+      const slop = d.btnR + 6
+      if (!s.levelUpActive && Math.hypot(px - d.pause.cx, py - d.pause.cy) <= slop) return 'pause'
+      if (Math.hypot(px - d.music.cx, py - d.music.cy) <= slop) return 'music'
+      return null
+    }
+    let dockPress: { id: number; hit: 'pause' | 'music'; cx: number; cy: number } | null = null
+
     const onPointerDown = (e: PointerEvent) => {
       const s = stateRef.current
       if (s.gameOver) return
       if (onUi(e)) return
+      const hit = dockHit(e)
+      if (hit) {
+        dockPress = { id: e.pointerId, hit, cx: e.clientX, cy: e.clientY }
+        return
+      }
       if (steerId === null) {
         // First finger: take steering control — teleport under it and grab.
         const p = getPoint(e)
@@ -284,6 +316,18 @@ export default function App() {
 
     const onPointerUp = (e: PointerEvent) => {
       const s = stateRef.current
+      // Control-dock tap: fire the toggle if the finger lifted on the same button
+      // without straying (consumes the gesture so no well drop / overdrive).
+      if (dockPress && dockPress.id === e.pointerId) {
+        const moved = Math.hypot(e.clientX - dockPress.cx, e.clientY - dockPress.cy)
+        const which = dockPress.hit
+        dockPress = null
+        if (moved <= TAP_MAX_PX) {
+          if (which === 'pause') dockActionsRef.current.togglePause()
+          else dockActionsRef.current.toggleMusic()
+        }
+        return
+      }
       // Secondary finger lifting: a clean tap fires Overdrive IN PLACE — the
       // steering finger keeps control and the well doesn't move.
       const tap = taps.get(e.pointerId)
@@ -319,6 +363,10 @@ export default function App() {
 
     // Cancel (OS gesture, palm rejection, etc.): clean up without firing.
     const onPointerCancel = (e: PointerEvent) => {
+      if (dockPress && dockPress.id === e.pointerId) {
+        dockPress = null
+        return
+      }
       if (taps.delete(e.pointerId)) return
       if (e.pointerId !== steerId) return
       steerId = null
@@ -385,6 +433,16 @@ export default function App() {
     musicEngine.setWantPlaying(next)
     setMusicOn(next)
   }, [])
+
+  // Feed the latest dock state/handlers to the []-dep RAF + pointer effects via
+  // refs (so the on-canvas dock can draw + respond without re-subscribing).
+  musicOnRef.current = musicOn
+  dockActionsRef.current.toggleMusic = toggleMusic
+  dockActionsRef.current.togglePause = () => {
+    if (stateRef.current.gameOver) return
+    if (stateRef.current.levelUpActive) return
+    setPaused(!stateRef.current.paused)
+  }
 
   // Esc toggles the upgrade menu (and pauses/resumes accordingly).
   useEffect(() => {
@@ -495,7 +553,7 @@ export default function App() {
       musicEngine.sample(now)
       musicEngine.applyTo(s.music)
 
-      drawFrame(canvas, s)
+      drawFrame(canvas, s, { musicOn: musicOnRef.current })
 
       // HUD: update at ~10fps to keep React cheap (avoid depending on React state inside RAF).
       const bucket = Math.floor(now / 100)
@@ -694,49 +752,10 @@ export default function App() {
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
 
-            {/* Unified control dock: one glass cluster of equal-size icon
-                buttons, matching the HUD L's glass/stroke language. */}
-            <div className="controlDock" style={{ bottom: `${hud.pauseBtnBottomPx}px` }}>
-              {!stateRef.current.levelUpActive && (
-                <button
-                  type="button"
-                  className="dockBtn"
-                  onClick={() => {
-                    if (hud.gameOver) return
-                    setPaused(!hud.paused)
-                  }}
-                  aria-label={hud.paused ? 'Play' : 'Pause'}
-                  title={hud.paused ? 'Resume' : 'Pause'}
-                >
-                  {hud.paused ? (
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M8 5.5v13l11-6.5z" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <rect x="7" y="5.5" width="3.5" height="13" rx="1.4" />
-                      <rect x="13.5" y="5.5" width="3.5" height="13" rx="1.4" />
-                    </svg>
-                  )}
-                </button>
-              )}
-
-              <button
-                type="button"
-                className={`dockBtn music${musicOn ? ' is-on' : ''}`}
-                onClick={toggleMusic}
-                aria-pressed={musicOn}
-                aria-label={musicOn ? 'Mute music' : 'Play music'}
-                title={musicOn ? 'Music on — click to mute' : 'Music off — click to play'}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M9 16.5V7l9-2v9" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  <circle cx="6.5" cy="16.5" r="2.6" />
-                  <circle cx="15.5" cy="14" r="2.6" />
-                </svg>
-                {!musicOn && <span className="muteSlash" aria-hidden="true" />}
-              </button>
-            </div>
+            {/* The pause + music control dock is drawn ON the canvas (see
+                drawControlDock in draw.ts) so the gravity-well lens warps it
+                with the rest of the HUD; taps are hit-tested in the pointer
+                handlers above against layout.dock. */}
 
             {/* Mobile audio-unlock prompt. A drag (the beam control) can't
                 resume audio on iOS; a tap on this full-screen overlay is a valid
