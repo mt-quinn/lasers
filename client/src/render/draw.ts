@@ -3207,29 +3207,33 @@ export const drawFrame = (
           const fastPulse = 0.5 + 0.5 * Math.sin(s.timeSec * 14)
 
           // Edge bloom — WHITE-hot (low saturation, high lightness) so it reads as
-          // a hotter temperature than the gold armed state, not just "more gold".
-          const a = 0.2 + 0.34 * drain
-          const g = ctx.createRadialGradient(cx, cy, rIn, cx, cy, rOut)
+          // a hotter temperature than the gold armed state. Kept tight to the very
+          // edges (large transparent center) and low-alpha so it never obscures
+          // the playfield.
+          const rInFire = Math.min(W, H) * 0.66
+          const a = 0.09 + 0.16 * drain
+          const g = ctx.createRadialGradient(cx, cy, rInFire, cx, cy, rOut)
           g.addColorStop(0, hsl(50, 100, 80, 0))
-          g.addColorStop(0.58, hsl(49, 90, 72, a * 0.45 * (0.8 + 0.2 * fastPulse)))
-          g.addColorStop(1, hsl(48, 95, 78, Math.min(0.9, a + 0.35 * onset)))
+          g.addColorStop(0.72, hsl(49, 90, 72, a * 0.35 * (0.8 + 0.2 * fastPulse)))
+          g.addColorStop(1, hsl(48, 95, 78, Math.min(0.55, a + 0.18 * onset)))
           ctx.fillStyle = g
           ctx.fillRect(0, 0, W, H)
 
-          // Living corner flares (out of phase) keep the frame alive.
+          // Living corner flares (out of phase) keep the frame alive — small and
+          // faint so they read as edge accents, not a wash.
           const corners: Array<[number, number, number]> = [
             [0, 0, 0],
             [W, 0, 1.6],
             [0, H, 3.1],
             [W, H, 4.7],
           ]
-          const cr = Math.min(W, H) * 0.66
+          const cr = Math.min(W, H) * 0.46
           for (const [qx, qy, ph] of corners) {
             const sh = 0.5 + 0.5 * Math.sin(s.timeSec * 7 + ph)
-            const ca = (0.12 + 0.26 * drain) * (0.4 + 0.6 * sh) + 0.3 * onset
+            const ca = (0.06 + 0.13 * drain) * (0.4 + 0.6 * sh) + 0.16 * onset
             const cg = ctx.createRadialGradient(qx, qy, 0, qx, qy, cr)
-            cg.addColorStop(0, hsl(50, 95, 85, Math.min(0.72, ca)))
-            cg.addColorStop(0.5, hsl(47, 100, 66, ca * 0.4))
+            cg.addColorStop(0, hsl(50, 95, 85, Math.min(0.5, ca)))
+            cg.addColorStop(0.5, hsl(47, 100, 66, ca * 0.35))
             cg.addColorStop(1, hsl(45, 100, 58, 0))
             ctx.fillStyle = cg
             ctx.fillRect(0, 0, W, H)
