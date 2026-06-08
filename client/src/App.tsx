@@ -863,11 +863,16 @@ export default function App() {
   useLayoutEffect(() => {
     if (!hud.gameOver) {
       setGameOverReady(false)
+      // A live run is now in progress, so any death from here earns the
+      // wind-down beat. (Also retires the "restored" flag once a new run starts.)
+      restoredGameOverRef.current = false
       return
     }
-    // Restored game-over (page refresh): skip the wind-down and show it instantly.
+    // Restored game-over (page refresh into an already-ended run): show the modal
+    // instantly, no wind-down. Don't consume the flag here — dev StrictMode double-
+    // invokes effects, and the flag stays valid until a real new run begins (the
+    // !hud.gameOver branch above), so the second invocation still shows instantly.
     if (restoredGameOverRef.current) {
-      restoredGameOverRef.current = false
       setGameOverReady(true)
       return
     }

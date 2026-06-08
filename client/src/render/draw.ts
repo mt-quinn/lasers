@@ -2829,25 +2829,34 @@ export const drawFrame = (
         ctx.stroke()
       }
 
-      // (2d) Heat-sink louvers near each shoulder — slanted recessed slits, with a
-      // faint energy glow seeping out (additive lip).
+      // (2d) Heat-sink louvers near each shoulder — slanted slits that glow with
+      // pulsing laser energy. A dark groove gives depth; an additive energy core
+      // fills it, each notch phase-offset so the bank shimmers along its length.
       for (const sign of [-1, 1]) {
         for (let k = 0; k < 4; k++) {
           const lx = cx2 + sign * (halfW * 0.5 + k * 7)
+          // Recessed groove for depth.
           ctx.strokeStyle = 'rgba(0,0,0,0.5)'
-          ctx.lineWidth = 2
+          ctx.lineWidth = 3
           ctx.beginPath()
           ctx.moveTo(lx - 3, baseY + 9)
           ctx.lineTo(lx + 3, baseY - 1)
           ctx.stroke()
-          ctx.strokeStyle = hsl(emHue, 90, 60, 0.12 * glow)
-          ctx.lineWidth = 1
+          // Pulsing energy filling the notch (travelling phase per slit).
+          const ph = 0.5 + 0.5 * Math.sin(tNow * 5.2 + beat * 4 - k * 0.9 - (sign < 0 ? 0 : 0.45))
+          const lit = clamp((0.4 + 0.6 * mEnergy) * (0.4 + 0.6 * ph) + 0.35 * beat, 0, 1.2)
+          ctx.globalCompositeOperation = 'lighter'
+          ctx.lineCap = 'round'
+          ctx.strokeStyle = hsl(emHue, 100, 72, 0.55 * lit)
+          ctx.lineWidth = 1.6
           ctx.beginPath()
-          ctx.moveTo(lx - 2, baseY + 9)
-          ctx.lineTo(lx + 4, baseY - 1)
+          ctx.moveTo(lx - 2, baseY + 8)
+          ctx.lineTo(lx + 2, baseY)
           ctx.stroke()
+          ctx.globalCompositeOperation = 'source-over'
         }
       }
+      ctx.lineCap = 'butt'
       ctx.restore() // end housing clip
 
       // (3) Recessed machined lens dish, drawn in a Y-squashed space so circles
