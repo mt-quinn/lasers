@@ -35,6 +35,10 @@ type SavedRunState = Omit<
   | 'nextGaugeFxId'
   | 'sinceStepSec'
   | 'lastBeatToken'
+  // First-run onboarding state is transient (driven by localStorage flags, not
+  // the saved run) so a mid-run refresh never reloads into a tutorial.
+  | 'tutorial'
+  | 'jit'
 >
 
 const isValidSavedState = (x: unknown): x is SavedRunState => {

@@ -529,16 +529,16 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 0.35rem;
+  gap: 0.22rem;
 }
 
 .menuKeyRow {
   display: grid;
-  grid-template-columns: 44px 1fr;
-  gap: 0.65rem;
+  grid-template-columns: 36px 1fr;
+  gap: 0.55rem;
   align-items: center;
-  padding: 0.3rem 0.4rem;
-  border-radius: 0.6rem;
+  padding: 0.22rem 0.35rem;
+  border-radius: 0.55rem;
 }
 
 .menuKeyRow:nth-child(odd) {
@@ -547,8 +547,8 @@
 
 /* Canvas-rendered real piece artwork (drawn by render/swatch.ts). */
 .menuKeyIcon {
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   display: block;
   border-radius: 0.5rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -563,14 +563,14 @@
 .menuKeyName {
   font-family: 'Oxanium', system-ui, sans-serif;
   font-weight: 800;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: rgba(255, 246, 213, 0.95);
 }
 
 .menuKeyDesc {
   font-family: 'Oxanium', system-ui, sans-serif;
-  font-size: 0.72rem;
-  line-height: 1.3;
+  font-size: 0.7rem;
+  line-height: 1.25;
   color: rgba(255, 246, 213, 0.62);
 }
 
@@ -1426,5 +1426,167 @@
   display: flex;
   gap: 0.5rem;
   margin-top: 0.75rem;
+}
+
+/* ===== First-time onboarding (FTUE) ===================================== */
+
+/* Directed-warmup callout: a single fixed band near the top so the eye never
+   hunts. Large, high-contrast, in the HUD voice. The canvas draws the pointer
+   ring to the exact subject. */
+.ftueBand {
+  position: absolute;
+  /* Anchored low — above the control dock — so it never covers the descending
+     pieces or the beam-routing field, the parts the player must watch. */
+  bottom: calc(108px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: min(440px, 92vw);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(13, 17, 30, 0.92), rgba(8, 10, 20, 0.9));
+  border: 1px solid hsl(var(--accent-hue) 80% 60% / 0.35);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 16px 50px rgba(0, 0, 0, 0.6),
+    0 0 40px hsl(var(--accent-hue) 78% 59% / 0.18);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.ftueBandText {
+  flex: 1;
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 0.98rem;
+  line-height: 1.3;
+  color: rgba(255, 246, 213, 0.97);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+
+.ftueSkip {
+  pointer-events: auto;
+  flex: none;
+  font-family: 'Space Grotesk', 'Oxanium', system-ui, sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.66rem;
+  color: rgba(255, 246, 213, 0.78);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.6rem;
+  padding: 0.42rem 0.7rem;
+  cursor: pointer;
+}
+
+.ftueSkip:hover {
+  color: #fff6d5;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Just-in-time coachmark card. No scrim of its own — the canvas already dims the
+   scene and spotlights the piece — so the card floats near the bottom, clear of
+   the (top-arriving) highlighted piece. */
+.ftueJitOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.ftueJitPanel {
+  position: absolute;
+  pointer-events: auto;
+  width: min(380px, 92vw);
+  border-radius: 1.1rem;
+  background: linear-gradient(180deg, rgba(13, 17, 30, 0.96), rgba(8, 10, 20, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 24px 70px rgba(0, 0, 0, 0.7),
+    0 0 60px hsl(var(--accent-hue) 78% 59% / 0.18);
+  padding: 0.95rem 1.05rem 1rem;
+}
+
+.ftueJitRow {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 0.7rem;
+  align-items: center;
+  margin: 0.55rem 0 0.85rem;
+}
+
+.ftueJitRow .menuKeyIcon {
+  width: 44px;
+  height: 44px;
+}
+
+.ftueJitName {
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 1.02rem;
+  color: rgba(255, 246, 213, 0.97);
+}
+
+.ftueJitDesc {
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  color: rgba(255, 246, 213, 0.72);
+  margin-top: 0.15rem;
+}
+
+.ftueJitOk {
+  width: 100%;
+}
+
+/* Pause-menu "Replay tutorial": a quiet text link below the main actions. */
+.ftueReplayLink {
+  display: block;
+  margin: 0.55rem auto 0;
+  background: none;
+  border: none;
+  font-family: 'Space Grotesk', 'Oxanium', system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: hsl(var(--accent-hue) 90% 78% / 0.75);
+  cursor: pointer;
+  padding: 0.3rem 0.5rem;
+}
+
+.ftueReplayLink:hover {
+  color: hsl(var(--accent-hue) 95% 84% / 0.95);
+}
+
+/* One-time game-over note that sells the daily replay loop. */
+.ftueReplayNote {
+  margin-top: 0.2rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.85rem;
+  background: hsl(var(--accent-hue) 70% 50% / 0.1);
+  border: 1px solid hsl(var(--accent-hue) 80% 60% / 0.3);
+  text-align: left;
+}
+
+.ftueReplayHeading {
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: rgba(255, 246, 213, 0.96);
+}
+
+.ftueReplayBody {
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: rgba(255, 246, 213, 0.7);
+  margin-top: 0.25rem;
 }
 

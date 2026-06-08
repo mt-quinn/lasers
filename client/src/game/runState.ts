@@ -232,6 +232,36 @@ export type BlackHoleFeature = {
 
 export type BoardFeature = MirrorFeature | PrismFeature | BlackHoleFeature
 
+// ---- First-time onboarding (FTUE) -----------------------------------------
+// The directed warmup is a short, action-gated piloted segment that teaches the
+// core loop (steer -> combo -> charge -> overdrive) and then morphs seamlessly
+// into the live daily run. Each beat advances only when the player performs the
+// matching action, never on a timer.
+export type TutorialBeat = 'steer' | 'combo' | 'charge' | 'overdrive' | 'handoff'
+
+export type TutorialState = {
+  phase: 'warmup'
+  beat: TutorialBeat
+  // Time spent in the current beat (seconds) — used for intro delays / handoff.
+  beatT: number
+  // Whether this beat has already injected its scripted pieces.
+  spawnedThisBeat: boolean
+  // Block the current beat wants the renderer to ring (or -1).
+  targetBlockId: number
+}
+
+// Piece types taught just-in-time the first time each appears. Mirrors the
+// pause-menu Key kinds (so the same copy/art is reused for the coachmark).
+export type TeachKind = 'fast' | 'armored' | 'shatter' | 'gold' | 'mirror' | 'splitter'
+
+// An active just-in-time coachmark: the game is paused, the referenced entity is
+// highlighted, and App shows an OK card. Dismissing it marks the kind seen.
+export type JitCallout = {
+  kind: TeachKind
+  entityId: number
+  isFeature: boolean
+}
+
 export type RunStats = {
   dps: number
   beamWidth: number
@@ -489,6 +519,12 @@ export type RunState = {
   dailySeed: number
   dateKey: string
   boardSpawnIndex: number
+
+  // First-time onboarding. `tutorial` is the directed warmup (null outside it);
+  // `jit` is the active just-in-time piece coachmark (pauses play until OK).
+  // Both are transient (not persisted) and only ever set on a first-time run.
+  tutorial: TutorialState | null
+  jit: JitCallout | null
 }
 
 export const createInitialRunState = (): RunState => {
@@ -637,6 +673,8 @@ export const createInitialRunState = (): RunState => {
     boardSpawnIndex: 0,
     // Give the player a moment to orient before the first block arrives.
     spawnTimer: 1.3,
+    tutorial: null,
+    jit: null,
   }
 }
 

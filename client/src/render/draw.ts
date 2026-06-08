@@ -2378,6 +2378,22 @@ export const drawFrame = (
         const comboHue = mi > 0 ? mHue : 46
         ctx.textAlign = 'right'
         ctx.font = "800 14px 'Oxanium', system-ui, sans-serif"
+        // Warmup COMBO beat: a fitted glowing pill behind the multiplier so the
+        // player's eye is drawn to the thing the callout is talking about.
+        if (s.tutorial?.phase === 'warmup' && s.tutorial.beat === 'combo') {
+          const lw = ctx.measureText(label).width
+          const lx = insetR - scoreW - 9
+          const pulse = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(s.timeSec * 4))
+          ctx.save()
+          ctx.globalCompositeOperation = 'screen'
+          ctx.lineWidth = 2.5
+          ctx.strokeStyle = hsl(46, 100, 70, 0.9 * pulse)
+          ctx.shadowColor = hsl(46, 100, 64, 0.85)
+          ctx.shadowBlur = 14
+          roundedRectPath(lx - lw - 7, ty - 12, lw + 14, 24, 8)
+          ctx.stroke()
+          ctx.restore()
+        }
         ctx.shadowColor = hsl(comboHue, 100, 60, (0.5 + 0.4 * fresh) * fade)
         ctx.shadowBlur = 5 + 6 * fresh
         ctx.fillStyle = hsl(comboHue, 100, 62 + 12 * fresh, (0.85 + 0.15 * fresh) * fade)
@@ -3557,8 +3573,9 @@ export const drawFrame = (
       }
 
       ctx.restore()
-    } else {
-      // First-run hint: the entire surface is the control.
+    } else if (!s.tutorial && !s.jit) {
+      // First-run hint: the entire surface is the control. Suppressed during the
+      // onboarding warmup / coachmarks (the React callouts speak instead).
       const pulse = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(s.timeSec * 3))
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
@@ -3744,6 +3761,113 @@ export const drawFrame = (
         ctx.stroke()
 
         ctx.restore()
+      }
+    }
+
+    // ---- First-run onboarding overlays ------------------------------------
+    // Warmup: ring the targeted block (steer), the Heat gauge (charge/overdrive),
+    // and flash the fail line (handoff). JIT: dim the whole screen with a soft
+    // cutout so the OK card's subject piece stays bright and unmistakable.
+    {
+      const TAU = Math.PI * 2
+      const tnow =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
+
+      const ring = (sx: number, sy: number, r: number, hue: number) => {
+        const pulse = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(tnow * 4))
+        ctx.save()
+        ctx.globalCompositeOperation = 'screen'
+        ctx.lineWidth = 3
+        ctx.strokeStyle = hsl(hue, 100, 70, 0.9 * pulse)
+        ctx.shadowColor = hsl(hue, 100, 65, 0.85)
+        ctx.shadowBlur = 16
+        ctx.beginPath()
+        ctx.arc(sx, sy, r * (1 + 0.04 * Math.sin(tnow * 4)), 0, TAU)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      const tut = s.tutorial
+      if (tut && tut.phase === 'warmup' && !s.jit) {
+        if (tut.beat === 'steer' && tut.targetBlockId >= 0) {
+          const b = s.blocks.find((x) => x.id === tut.targetBlockId)
+          if (b) {
+            const cxw = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
+            const cyw = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
+            const pp = project(cxw, cyw)
+            const ext =
+              Math.max(b.localAabb.maxX - b.localAabb.minX, b.localAabb.maxY - b.localAabb.minY) * 0.7
+            ring(pp.x, pp.y, ext * pp.scale + 8, 190)
+          }
+        } else if (tut.beat === 'charge' || tut.beat === 'overdrive') {
+          // Fitted outline hugging the Heat/Overdrive gauge (not a giant circle).
+          const g = layout.xpGauge
+          const pad = 5
+          const rx = g.x - pad
+          const ry = g.y - pad
+          const rw = g.w + pad * 2
+          const rh = g.h + pad * 2
+          const rr = Math.min(12, rw / 2)
+          const pulse = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(tnow * 4))
+          ctx.save()
+          ctx.globalCompositeOperation = 'screen'
+          ctx.lineWidth = 3
+          ctx.strokeStyle = hsl(45, 100, 70, 0.9 * pulse)
+          ctx.shadowColor = hsl(45, 100, 65, 0.85)
+          ctx.shadowBlur = 16
+          roundedRectPath(rx, ry, rw, rh, rr)
+          ctx.stroke()
+          ctx.restore()
+        } else if (tut.beat === 'handoff') {
+          const pulse = 0.5 + 0.5 * Math.sin(tnow * 5)
+          ctx.save()
+          ctx.globalCompositeOperation = 'screen'
+          ctx.strokeStyle = hsl(8, 100, 62, 0.5 + 0.4 * pulse)
+          ctx.lineWidth = 3
+          ctx.shadowColor = hsl(8, 100, 55, 0.85)
+          ctx.shadowBlur = 14
+          ctx.beginPath()
+          ctx.moveTo(0, layout.failY)
+          ctx.lineTo(s.view.width, layout.failY)
+          ctx.stroke()
+          ctx.restore()
+        }
+      }
+
+      const jit = s.jit
+      if (jit) {
+        let cxw = s.view.width / 2
+        let cyw = s.view.height / 2
+        let ext = 40
+        if (jit.isFeature) {
+          const f = s.features.find((x) => x.id === jit.entityId)
+          if (f) {
+            cxw = f.pos.x + (f.localAabb.minX + f.localAabb.maxX) * 0.5
+            cyw = f.pos.y + (f.localAabb.minY + f.localAabb.maxY) * 0.5
+            ext = Math.max(f.localAabb.maxX - f.localAabb.minX, f.localAabb.maxY - f.localAabb.minY) * 0.6
+          }
+        } else {
+          const b = s.blocks.find((x) => x.id === jit.entityId)
+          if (b) {
+            cxw = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
+            cyw = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
+            ext = Math.max(b.localAabb.maxX - b.localAabb.minX, b.localAabb.maxY - b.localAabb.minY) * 0.6
+          }
+        }
+        const pp = project(cxw, cyw)
+        const rHole = ext * pp.scale + 22
+
+        const grad = ctx.createRadialGradient(pp.x, pp.y, rHole * 0.6, pp.x, pp.y, rHole + 90)
+        grad.addColorStop(0, 'rgba(4,6,12,0)')
+        grad.addColorStop(0.55, 'rgba(4,6,12,0.55)')
+        grad.addColorStop(1, 'rgba(4,6,12,0.82)')
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, s.view.width, s.view.height)
+        ctx.restore()
+
+        ring(pp.x, pp.y, rHole, 50)
       }
     }
   })

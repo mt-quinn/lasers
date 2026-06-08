@@ -1,37 +1,39 @@
 // One-shot sound-effects engine (Web Audio).
 //
-// Plays short samples (currently the "quench" piece-destroyed sound) with true
-// polyphony: every trigger spawns its own AudioBufferSourceNode, so rapid or
-// simultaneous kills overlap naturally instead of cutting each other off.
+// Plays the "pop" piece-destroyed sample with true polyphony: every trigger
+// spawns its own AudioBufferSourceNode, so rapid or simultaneous kills overlap
+// naturally instead of cutting each other off.
 //
-// "Without artificially inflating volume": each voice plays at a fixed baseline
-// gain, and the whole effects bus runs through a DynamicsCompressorNode acting
-// as a limiter. A single hit sits below the limiter threshold (so it plays at
-// exactly its baseline), while stacked/overlapping voices are caught by the
-// limiter and can't sum into a volume spike. A small per-voice pitch + start-
-// time jitter decorrelates identical samples so they don't comb-filter.
+// Each voice plays at a fixed baseline gain, and the whole effects bus runs
+// through a DynamicsCompressorNode acting as a limiter. A single hit sits below
+// the limiter threshold (so it plays at exactly its baseline), while stacked/
+// overlapping voices are caught by the limiter and can't sum into a volume
+// spike. A small per-voice pitch + start-time jitter decorrelates identical
+// samples so they don't comb-filter.
 //
-// This is intentionally independent of the music engine (and its mute toggle):
-// gameplay feedback should fire whether or not the soundtrack is on. It shares
-// nothing with the music AudioContext, and unlocks on the same first gesture.
+// This is intentionally independent of the music engine and its volume slider:
+// gameplay feedback fires at a fixed level whether or not the soundtrack is on,
+// and is never scaled by the music volume control. On iOS it requests the
+// "ambient" audio session so the effect mixes with other app audio instead of
+// interrupting it. It unlocks on the same first gesture as the music.
 
-// Master switch for the piece-destroyed SFX. Disabled for now — quench.wav
-// isn't the right sound. The whole audio route (this engine, the gesture
-// unlock in App, and the stepSim trigger) is intentionally left wired up; to
-// re-enable, drop in the new sample (or repoint QUENCH_URL) and flip this true.
-const QUENCH_ENABLED: boolean = false
+const POP_URL = `${import.meta.env.BASE_URL}pop.wav`
 
-const QUENCH_URL = `${import.meta.env.BASE_URL}quench.wav`
-
-// Baseline level for the quench SFX (0..1). A single play lands here; the bus
-// limiter only engages once overlaps would push past it.
-const QUENCH_VOLUME = 0.66
+// Fixed playback level for the pop SFX (0..1): 50%, independent of the music
+// volume slider. The bus limiter only engages once overlaps would push past it.
+const POP_VOLUME = 0.5
 
 // Hard ceiling on concurrent voices so a pathological kill rate can't spawn an
 // unbounded number of nodes. The limiter handles loudness; this caps node count.
-const MAX_VOICES = 16
+const MAX_VOICES = 24
 
 type WindowWithWebkit = typeof window & { webkitAudioContext?: typeof AudioContext }
+
+// WebKit-only audio session API (Safari/iOS). Setting `type = 'ambient'` lets
+// our web audio mix with other apps' audio rather than taking over the session.
+type NavigatorWithAudioSession = Navigator & {
+  audioSession?: { type?: string }
+}
 
 class SfxEngine {
   private ctx: AudioContext | null = null
@@ -43,16 +45,15 @@ class SfxEngine {
   private activeVoices = 0
 
   constructor() {
-    // Skip downloading the sample while the effect is disabled.
-    if (QUENCH_ENABLED && typeof window !== 'undefined') void this.prefetch()
+    if (typeof window !== 'undefined') void this.prefetch()
   }
 
   private async prefetch() {
     try {
-      const res = await fetch(QUENCH_URL)
+      const res = await fetch(POP_URL)
       if (res.ok) this.raw = await res.arrayBuffer()
     } catch {
-      // Offline / missing asset: playQuench() simply no-ops.
+      // Offline / missing asset: playPop() simply no-ops.
     }
   }
 
@@ -63,6 +64,15 @@ class SfxEngine {
       (window as WindowWithWebkit).webkitAudioContext
     if (!Ctor) return
     try {
+      // iOS: ask for the mixable ("ambient") audio session so the pop SFX coexists
+      // with other app audio instead of interrupting it. Best-effort; ignored
+      // where unsupported.
+      try {
+        const session = (navigator as NavigatorWithAudioSession).audioSession
+        if (session) session.type = 'ambient'
+      } catch {
+        // audioSession not available / not settable: fall back to default.
+      }
       const ctx = new Ctor()
       // Bus limiter: only ever reduces gain (no makeup), so it can tame summed
       // peaks from overlapping one-shots but never boost a single hit.
@@ -94,7 +104,6 @@ class SfxEngine {
   // Must be called from inside a user gesture the first time (autoplay policy).
   // Idempotent and safe to call on every gesture.
   unlock() {
-    if (!QUENCH_ENABLED) return
     this.ensureGraph()
     const ctx = this.ctx
     if (ctx && ctx.state === 'suspended') {
@@ -104,10 +113,10 @@ class SfxEngine {
     void this.decode()
   }
 
-  // Fire-and-forget a quench. No-ops until the context is unlocked + the sample
-  // is decoded (both happen by the time gameplay produces a kill).
-  playQuench() {
-    if (!QUENCH_ENABLED) return
+  // Fire-and-forget a pop on each piece destroyed. No-ops until the context is
+  // unlocked + the sample is decoded (both happen by the time gameplay produces
+  // a kill). Polyphonic: rapid/simultaneous kills overlap freely.
+  playPop() {
     const ctx = this.ctx
     const buffer = this.buffer
     const limiter = this.limiter
@@ -121,7 +130,7 @@ class SfxEngine {
     src.detune.value = (Math.random() * 2 - 1) * 40
 
     const gain = ctx.createGain()
-    gain.gain.value = QUENCH_VOLUME
+    gain.gain.value = POP_VOLUME
 
     src.connect(gain)
     gain.connect(limiter)

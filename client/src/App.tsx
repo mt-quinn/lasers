@@ -2,7 +2,19 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties } from 'react'
 import './app.css'
 import { createInitialRunState, type RunState } from './game/runState'
+import type { TeachKind, TutorialBeat } from './game/runState'
 import { stepSim, fireOverdrive } from './game/sim'
+import {
+  applyTutorialUrlFlag,
+  isTutorialDone,
+  startTutorial,
+  skipTutorial,
+  dismissJit,
+  resetTutorialProgress,
+  isReplayTipSeen,
+  markReplayTipSeen,
+  WARMUP_COPY,
+} from './game/tutorial'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
 // import { computeXpCap, getRarityColor } from './game/levelUp'  // Unused after upgrade system removal
@@ -37,6 +49,13 @@ type HudSnapshot = {
   depth: number
   score: number
   gameOver: boolean
+  // First-run onboarding: the active warmup beat (drives the callout band) and
+  // the active just-in-time coachmark kind (drives the OK card). Null otherwise.
+  tutorialBeat: TutorialBeat | null
+  jitKind: TeachKind | null
+  // Screen-space anchor (CSS px) of the highlighted JIT piece, so the OK card can
+  // appear right next to it. `r` is the spotlight radius. Null when no coachmark.
+  jitAnchor: { x: number; y: number; r: number } | null
 }
 
 // Game-over leaderboard: rows shown for the selected day. Kept small so the
@@ -48,6 +67,12 @@ const GAMEOVER_LB_PAGE_SIZE = 5
 // How far back the date stepper can travel (days). A generous floor that avoids
 // stepping forever into empty history.
 const MAX_DATE_BACK_DAYS = 365
+
+// Touch capability — used only to tailor the warmup OVERDRIVE callout (desktop
+// players also get the Space shortcut). Computed once at module load.
+const HAS_TOUCH =
+  typeof window !== 'undefined' &&
+  ('ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0)
 
 // Shift a YYYY-MM-DD key by whole days, returning the new key (local calendar).
 const stepDateKey = (dateKey: string, deltaDays: number): string => {
@@ -81,6 +106,11 @@ const formatDateLabel = (dateKey: string, todayKey: string): string => {
 // recognizable. Block kinds are drawn as a 2x2 footprint.
 const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
   {
+    kind: 'gold',
+    name: 'Gold block',
+    desc: 'Worth far more points and Overdrive charge.',
+  },
+  {
     kind: 'fast',
     name: 'Fast block',
     desc: 'Drops 2x as far every other time it drops.',
@@ -107,8 +137,9 @@ const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
   },
 ]
 
-// A single legend icon: draws the real piece artwork into a small canvas.
-const SWATCH_BOX = 44
+// A single legend icon: draws the real piece artwork into a small canvas. Kept
+// compact so the (now 6-row) pause-menu Key fits on one screen without scrolling.
+const SWATCH_BOX = 36
 const PieceSwatch = ({ kind }: { kind: SwatchKind }) => {
   const ref = useRef<HTMLCanvasElement | null>(null)
   useEffect(() => {
@@ -207,8 +238,20 @@ export default function App() {
 
   const stateRef = useRef<RunState>(
     (() => {
-      const saved = loadGameState()
-      return saved || createInitialRunState()
+      // URL override (?tutorial=1 / ?tutorial=0) definitively forces all tutorial
+      // flags on or off before we decide how to boot. No-op when absent.
+      applyTutorialUrlFlag()
+      // Only resume a saved mid-run once the tutorial is complete; if onboarding
+      // is still pending (first-time player, or ?tutorial=1), ignore any stale
+      // save and (re)start the warmup so the override is honored.
+      if (isTutorialDone()) {
+        const saved = loadGameState()
+        if (saved) return saved
+        return createInitialRunState()
+      }
+      const fresh = createInitialRunState()
+      startTutorial(fresh)
+      return fresh
     })()
   )
 
@@ -220,6 +263,34 @@ export default function App() {
     return Math.max(10, s.view.height - layout.failY + margin)
   }, [])
 
+  // Screen-space anchor (CSS px) + spotlight radius of the active JIT piece, so
+  // the OK card can be placed right beside it. Mirrors the canvas spotlight math.
+  const computeJitAnchor = useCallback((s: RunState) => {
+    if (!s.jit) return null
+    const layout = getArenaLayout(s.view)
+    const proj = makeProjection(s.view, layout)
+    let cxw = s.view.width / 2
+    let cyw = s.view.height / 2
+    let ext = 40
+    if (s.jit.isFeature) {
+      const f = s.features.find((x) => x.id === s.jit!.entityId)
+      if (f) {
+        cxw = f.pos.x + (f.localAabb.minX + f.localAabb.maxX) * 0.5
+        cyw = f.pos.y + (f.localAabb.minY + f.localAabb.maxY) * 0.5
+        ext = Math.max(f.localAabb.maxX - f.localAabb.minX, f.localAabb.maxY - f.localAabb.minY) * 0.6
+      }
+    } else {
+      const b = s.blocks.find((x) => x.id === s.jit!.entityId)
+      if (b) {
+        cxw = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
+        cyw = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
+        ext = Math.max(b.localAabb.maxX - b.localAabb.minX, b.localAabb.maxY - b.localAabb.minY) * 0.6
+      }
+    }
+    const pp = proj.project(cxw, cyw)
+    return { x: pp.x, y: pp.y, r: ext * pp.scale + 22 }
+  }, [])
+
   const [hud, setHud] = useState<HudSnapshot>(() => ({
     paused: false,
     pauseBtnBottomPx: computePauseBtnBottomPx(),
@@ -227,6 +298,10 @@ export default function App() {
     score: stateRef.current.score,
     // Honor a restored game-over so the screen shows instantly on refresh.
     gameOver: stateRef.current.gameOver,
+    tutorialBeat:
+      stateRef.current.tutorial?.phase === 'warmup' ? stateRef.current.tutorial.beat : null,
+    jitKind: stateRef.current.jit?.kind ?? null,
+    jitAnchor: computeJitAnchor(stateRef.current),
   }))
   // True only for the very first game-over render after a refresh that restored a
   // game-over'd run — used to skip the death wind-down (jump straight to the modal).
@@ -272,6 +347,8 @@ export default function App() {
   const [showNamePrompt, setShowNamePrompt] = useState(false)
   const [savedThisRun, setSavedThisRun] = useState(false)
   const [gameOverReady, setGameOverReady] = useState(false)
+  // One-time first-run game-over note that sells the daily replay loop.
+  const [showReplayTip, setShowReplayTip] = useState(false)
   const [pendingScoreDepth, setPendingScoreDepth] = useState<number | null>(null)
   const [pendingScore, setPendingScore] = useState<number | null>(null)
   const handledGameOverRef = useRef(false)
@@ -393,6 +470,8 @@ export default function App() {
       // and the well doesn't get grabbed.
       if (musicPanelOpenRef.current) return
       if (s.gameOver) return
+      // A just-in-time coachmark freezes play; its OK card (DOM) owns input.
+      if (s.jit) return
       if (onUi(e)) return
       const hit = dockHit(e)
       if (hit) {
@@ -658,6 +737,8 @@ export default function App() {
   dockActionsRef.current.togglePause = () => {
     if (stateRef.current.gameOver) return
     if (stateRef.current.levelUpActive) return
+    // A just-in-time coachmark owns the pause; the OK card resumes it.
+    if (stateRef.current.jit) return
     setPaused(!stateRef.current.paused)
   }
 
@@ -680,6 +761,8 @@ export default function App() {
       // The only way to resume is to pick an upgrade.
       if (stateRef.current.levelUpActive) return
       if (stateRef.current.gameOver) return
+      // A just-in-time coachmark owns the pause; only its OK button resumes.
+      if (stateRef.current.jit) return
       setPaused(!stateRef.current.paused)
     }
     window.addEventListener('keydown', onKeyDown, { passive: false })
@@ -816,6 +899,9 @@ export default function App() {
           depth: s.depth,
           score: s.score,
           gameOver: s.gameOver,
+          tutorialBeat: s.tutorial?.phase === 'warmup' ? s.tutorial.beat : null,
+          jitKind: s.jit?.kind ?? null,
+          jitAnchor: computeJitAnchor(s),
         })
         // Publish the live music hue so the DOM menus (pause / game over) can ride
         // the soundtrack like the canvas does. Frozen to the cold cyan accent when
@@ -927,8 +1013,37 @@ export default function App() {
       depth: 0,
       score: 0,
       gameOver: false,
+      tutorialBeat: null,
+      jitKind: null,
+      jitAnchor: null,
     })
     // Clear saved state when player explicitly restarts
+    clearGameState()
+  }, [computePauseBtnBottomPx, highScores])
+
+  // "Replay tutorial" (pause menu): forget all first-run progress and drop back
+  // into the directed warmup. Keeps the same run object so the RAF loop persists.
+  const replayTutorial = useCallback(() => {
+    resetTutorialProgress()
+    const prev = stateRef.current
+    const fresh = createInitialRunState()
+    fresh.view = prev.view
+    fresh.input = prev.input
+    fresh.bestDepthLocal = getBestDepth(highScores)
+    fresh.bestScoreLocal = getBestScoreForDate(highScores, fresh.dateKey)
+    startTutorial(fresh)
+    Object.assign(prev, fresh)
+    handledGameOverRef.current = false
+    setHud({
+      paused: false,
+      pauseBtnBottomPx: computePauseBtnBottomPx(),
+      depth: 0,
+      score: 0,
+      gameOver: false,
+      tutorialBeat: fresh.tutorial?.phase === 'warmup' ? fresh.tutorial.beat : null,
+      jitKind: null,
+      jitAnchor: null,
+    })
     clearGameState()
   }, [computePauseBtnBottomPx, highScores])
 
@@ -956,6 +1071,19 @@ export default function App() {
     const tid = window.setTimeout(() => setGameOverReady(true), 1300)
     return () => window.clearTimeout(tid)
   }, [hud.gameOver])
+
+  // One-time first-run game-over note (sells the daily replay loop). Shows once
+  // on the first game over the player reaches, then never again.
+  useEffect(() => {
+    if (!hud.gameOver) {
+      setShowReplayTip(false)
+      return
+    }
+    if (gameOverReady && !isReplayTipSeen()) {
+      setShowReplayTip(true)
+      markReplayTipSeen()
+    }
+  }, [hud.gameOver, gameOverReady])
 
   // When a run ends, decide whether we need to prompt for a name (top-5 by score).
   useEffect(() => {
@@ -1315,8 +1443,80 @@ export default function App() {
               </div>
             )}
 
-            {/* Pause overlay. */}
-            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && pauseStats && (
+            {/* Directed-warmup callout band: one fixed location, plain language,
+                with an always-available Skip. Hidden while paused or during a
+                just-in-time coachmark. */}
+            {hud.tutorialBeat && !hud.jitKind && !hud.paused && !hud.gameOver && (
+              <div className="ftueBand" role="status">
+                <span className="ftueBandText">
+                  {hud.tutorialBeat === 'overdrive' && !HAS_TOUCH
+                    ? 'Tap or press Space to OVERDRIVE your laser.'
+                    : WARMUP_COPY[hud.tutorialBeat]}
+                </span>
+                <button
+                  type="button"
+                  className="ftueSkip"
+                  onClick={() => {
+                    skipTutorial(stateRef.current)
+                    setHud((h) => ({ ...h, tutorialBeat: null }))
+                  }}
+                >
+                  Skip
+                </button>
+              </div>
+            )}
+
+            {/* Just-in-time piece coachmark. The canvas dims the scene and
+                spotlights the piece; this card carries the name + desc + art
+                (reusing the pause-menu Key) and an OK button that resumes play. */}
+            {hud.jitKind &&
+              (() => {
+                const item = PIECE_KEY.find((k) => k.kind === hud.jitKind)
+                if (!item) return null
+                // Place the card next to the highlighted piece: below it when the
+                // piece is in the upper half, above it otherwise. Clamped on-screen.
+                const a = hud.jitAnchor
+                const vw = stateRef.current.view.width
+                const vh = stateRef.current.view.height
+                const cardW = Math.min(380, vw * 0.92)
+                const cx = a
+                  ? Math.min(Math.max(a.x, cardW / 2 + 8), vw - cardW / 2 - 8)
+                  : vw / 2
+                const below = a ? a.y < vh * 0.5 : true
+                const panelStyle: CSSProperties = a
+                  ? below
+                    ? { left: cx, top: a.y + a.r + 16, transform: 'translateX(-50%)' }
+                    : { left: cx, top: a.y - a.r - 16, transform: 'translate(-50%, -100%)' }
+                  : { left: vw / 2, bottom: 24, transform: 'translateX(-50%)' }
+                return (
+                  <div className="ftueJitOverlay" role="dialog" aria-label={item.name}>
+                    <div className="ftueJitPanel" style={panelStyle}>
+                      <div className="menuKicker">New piece</div>
+                      <div className="ftueJitRow">
+                        <PieceSwatch kind={item.kind} />
+                        <div className="ftueJitText">
+                          <div className="ftueJitName">{item.name}</div>
+                          <div className="ftueJitDesc">{item.desc}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="menuBtn primary ftueJitOk"
+                        onClick={() => {
+                          dismissJit(stateRef.current)
+                          setHud((h) => ({ ...h, jitKind: null, paused: false }))
+                        }}
+                      >
+                        OK
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
+
+            {/* Pause overlay. Suppressed while a just-in-time coachmark owns the
+                pause (its own OK card shows instead). */}
+            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && !hud.jitKind && pauseStats && (
               <div className="menuOverlay" role="dialog" aria-label="Paused">
                 <div className="menuPanel">
                   <div className="menuKicker">Run in progress</div>
@@ -1365,6 +1565,10 @@ export default function App() {
                       Resume
                     </button>
                   </div>
+
+                  <button type="button" className="menuLink ftueReplayLink" onClick={replayTutorial}>
+                    Replay tutorial
+                  </button>
                 </div>
               </div>
             )}
@@ -1396,6 +1600,17 @@ export default function App() {
                       <div className="menuChip">
                         <span className="v">{pauseStats.runTime}</span>
                         <span className="k">Time</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {showReplayTip && (
+                    <div className="ftueReplayNote" role="note">
+                      <div className="ftueReplayHeading">Try today&apos;s level again</div>
+                      <div className="ftueReplayBody">
+                        Today&apos;s level is the same every time you play it. Each day has its
+                        own local and global leaderboards &mdash; replay it to beat your score
+                        and climb the ranks.
                       </div>
                     </div>
                   )}

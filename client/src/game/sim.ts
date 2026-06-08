@@ -3,6 +3,7 @@ import type { Vec2 } from './math'
 import type { RunState, MirrorFeature, BlockEntity, HeatMote, GaugeFx } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing, spawnPrismAt, spawnShatterChildren } from './spawn'
+import { stepTutorial, scanJitTrigger, WARMUP_HEAT_PER_KILL } from './tutorial'
 import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
@@ -297,6 +298,11 @@ const restoreLogicalPositions = (s: RunState) => {
 export const stepSim = (s: RunState, dt: number) => {
   s.timeSec += dt
 
+  // First-run directed warmup: a slow, no-death board with scripted pieces and
+  // suppressed scoring. The stepper advances beats on the player's actions and
+  // hands off to the live run when it completes.
+  const warmup = s.tutorial?.phase === 'warmup'
+
   // Level-up notification FX
   if (s.levelUpNotificationFx) {
     s.levelUpNotificationFx.t += dt
@@ -331,6 +337,8 @@ export const stepSim = (s: RunState, dt: number) => {
   // actually travel down the board (and you must route immediately), tightening
   // to a fast floor.
   s.dropIntervalSec = Math.max(0.2, 0.7 + (0.3 - 0.7) * prog - 0.1 * creep) * GAME_PACE_SCALE
+  // Warmup: a calm, slow descent so a first-timer is never rushed.
+  if (warmup) s.dropIntervalSec = 1.6
 
   const layout = getArenaLayout(s.view)
   const cellSize = 40
@@ -384,7 +392,11 @@ export const stepSim = (s: RunState, dt: number) => {
   const maxBlocks = Math.max(3, maxBlocksBase + cadenceCap - Math.floor(2 * pressure01))
 
   const allowSpawn = dangerCount === 0 && s.respiteSec <= 0
-  if (allowSpawn && s.spawnTimer <= 0) {
+  // During the warmup, the live spawn director is silenced: the tutorial stepper
+  // is the sole source of pieces (scripted beats).
+  if (warmup) {
+    stepTutorial(s, dt)
+  } else if (allowSpawn && s.spawnTimer <= 0) {
     const occupants = s.blocks.length + s.features.length
     if (occupants < maxBlocks) {
       spawnBoardThing(s)
@@ -666,17 +678,20 @@ export const stepSim = (s: RunState, dt: number) => {
   // player gets one more turn to clear it (the UI line is unchanged).
   const failY = layout.failY
   let anyPastFail = false
-  for (const b of s.blocks) {
-    if (b.pos.y + b.localAabb.maxY >= failY) {
-      anyPastFail = true
-      break
-    }
-  }
-  if (!anyPastFail) {
-    // Nothing past the line (player cleared it, or never reached it): disarm.
+  // The warmup is a no-death sandbox: never end the run, never arm the grace.
+  if (warmup) {
     s.failGraceDepth = -1
   } else {
-    if (s.failGraceDepth < 0) {
+    for (const b of s.blocks) {
+      if (b.pos.y + b.localAabb.maxY >= failY) {
+        anyPastFail = true
+        break
+      }
+    }
+    if (!anyPastFail) {
+      // Nothing past the line (player cleared it, or never reached it): disarm.
+      s.failGraceDepth = -1
+    } else if (s.failGraceDepth < 0) {
       // First detection: arm the grace at the current step. Not fatal yet.
       s.failGraceDepth = s.depth
     } else if (s.depth > s.failGraceDepth) {
@@ -927,9 +942,9 @@ export const stepSim = (s: RunState, dt: number) => {
 
     if (b.hp <= 0) {
       s.blocksDestroyed += 1
-      // Piece-destroyed SFX. Polyphonic + bus-limited, so multi-kills and rapid
-      // chains overlap cleanly without the volume piling up.
-      sfxEngine.playQuench()
+      // Piece-destroyed SFX (pop.wav). Polyphonic + bus-limited, so multi-kills
+      // and rapid chains overlap cleanly without the volume piling up.
+      sfxEngine.playPop()
 
       // Score: depth x combo. Each kill bumps the combo (refreshing its rolling
       // window) and scores base x combo-multiplier x route-bonus, where the base
@@ -942,7 +957,8 @@ export const stepSim = (s: RunState, dt: number) => {
       // bursts into heat motes (spawned below) carrying this kill's heat value;
       // the player vacuums them with the well to fill the gauge. The budget still
       // scales with combo + piece value, captured here at kill time.
-      const heatBudget = HEAT_PER_KILL * Math.max(1, b.xpValue) * (1 + 0.05 * s.combo)
+      const heatPerKill = warmup ? WARMUP_HEAT_PER_KILL : HEAT_PER_KILL
+      const heatBudget = heatPerKill * Math.max(1, b.xpValue) * (1 + 0.05 * s.combo)
 
       // Multi-kill: each additional block killed in the SAME beam pass (this
       // frame) is worth progressively more — the direct reward for carving a
@@ -955,7 +971,9 @@ export const stepSim = (s: RunState, dt: number) => {
       const overdriveScore = s.overdriveSec > 0 ? OVERDRIVE_SCORE_MULT : 1
       const depthBase = 10 + s.depth * 0.5
       const gained = Math.round(depthBase * comboMult * routeBonus * overdriveScore * multiKillMult * Math.max(1, b.xpValue))
-      s.score += gained
+      // Scoring is suppressed during the warmup (it resets to 0 at handoff), but
+      // the combo + charge mechanics still run so the player learns them.
+      if (!warmup) s.score += gained
       // Surge the music-reactive layer on satisfying plays (bigger combos /
       // optic routes / multi-kills push harder). Renderer reads `crescendo`.
       s.crescendo = clamp(
@@ -1392,5 +1410,11 @@ export const stepSim = (s: RunState, dt: number) => {
 
   // Restore logical positions after laser computation.
   restoreLogicalPositions(s)
+
+  // Just-in-time piece coachmarks: once a never-seen piece kind is fully on
+  // screen, pause and arm the OK card (App renders + dismisses it). Skipped
+  // during the warmup; setting `paused` here stops further stepSim via the App
+  // gate, freezing the piece fully in view.
+  scanJitTrigger(s)
 }
 

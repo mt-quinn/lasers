@@ -447,6 +447,79 @@ export const spawnBlock = (s: RunState, rng: Rng, schedSec: number) => {
   s.normalBlocksSinceFeature = Math.min(3, s.normalBlocksSinceFeature + 1)
 }
 
+// Scripted spawn for the directed warmup. Places a block of a chosen shape/kind
+// in a chosen horizontal lane, just above the visible top edge so it descends
+// into view. No collision checks (the warmup board is fully authored). Returns
+// the new block id so the tutorial can track / highlight it.
+export const spawnTutorialBlock = (
+  s: RunState,
+  opts: { shapeId?: string; kind?: BlockKind; isGold?: boolean; laneFrac?: number; rowsAbove?: number },
+): number => {
+  const cellSize = 40
+  const cornerRadius = cellSize * 0.5 - 0.6
+  const shape = SHAPES.find((sh) => sh.id === (opts.shapeId ?? 'O4')) ?? SHAPES[0]!
+  const cells = normalizeCellsToOrigin(shape.cells)
+  const bounds = shapeCellBounds(cells)
+  const wPx = bounds.w * cellSize
+  const hPx = bounds.h * cellSize
+
+  const HP_PER_CELL = 8
+  const hpMax = Math.max(1, Math.round(HP_PER_CELL * cells.length))
+  const isGold = !!opts.isGold
+  const xpValue = isGold ? 5 + s.stats.goldXpBonus : 1
+
+  const loop = buildCellLoop(cells)
+  const localAabb = computeLocalAabbPx(cells, cellSize)
+
+  let avgX = 0
+  let avgY = 0
+  for (const c of cells) {
+    avgX += c.x + 0.5
+    avgY += c.y + 0.5
+  }
+  avgX /= Math.max(1, cells.length)
+  avgY /= Math.max(1, cells.length)
+  let best = { x: (cells[0]?.x ?? 0) + 0.5, y: (cells[0]?.y ?? 0) + 0.5 }
+  let bestD = Infinity
+  for (const c of cells) {
+    const cx = c.x + 0.5
+    const cy = c.y + 0.5
+    const d = (cx - avgX) ** 2 + (cy - avgY) ** 2
+    if (d < bestD) {
+      bestD = d
+      best = { x: cx, y: cy }
+    }
+  }
+  const hpAnchorLocalPx = { x: best.x * cellSize, y: best.y * cellSize }
+
+  const layout = getArenaLayout(s.view)
+  const topWorldY = screenTopWorldY(s.view, layout)
+  const laneFrac = clamp(opts.laneFrac ?? 0.5, 0, 1)
+  const x = clamp(laneFrac * s.view.width - wPx / 2, 4, Math.max(4, s.view.width - wPx - 4))
+  const y = topWorldY - hPx - (opts.rowsAbove ?? 1) * cellSize
+
+  const block: BlockEntity = {
+    id: s.nextBlockId++,
+    cells,
+    cellSize,
+    cornerRadius,
+    pos: { x, y },
+    vel: { x: 0, y: 0 },
+    hpMax,
+    hp: hpMax,
+    xpValue,
+    isGold,
+    kind: opts.kind ?? 'normal',
+    dropAnimExtra: 0,
+    shieldFlashSec: 0,
+    loop,
+    localAabb,
+    hpAnchorLocalPx,
+  }
+  s.blocks.push(block)
+  return block.id
+}
+
 // Shatter payload: when a shatter piece dies it breaks into one full-HP 1x1
 // "normal" block per cell of its footprint, materialized in place (same grid
 // cells the parent occupied at the moment of death) so the threat multiplies

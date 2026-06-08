@@ -10,7 +10,7 @@ import {
 } from './pieces'
 import { healthFill, relativeLuma } from './draw'
 
-export type SwatchKind = 'fast' | 'armored' | 'shatter' | 'mirror' | 'splitter'
+export type SwatchKind = 'fast' | 'armored' | 'shatter' | 'gold' | 'mirror' | 'splitter'
 
 // Scale an "rgb(r g b)" string toward black by `f` (0..1+). Used to derive the
 // extruded side-wall shading from the top fill, matching piecesGL.
@@ -28,7 +28,7 @@ const scaleRgb = (cssRgb: string, f: number) => {
 // kind overlay. Static (music-off baseline) so the key never drifts.
 const drawBlockSwatch = (
   ctx: CanvasRenderingContext2D,
-  kind: 'fast' | 'armored' | 'shatter',
+  kind: 'fast' | 'armored' | 'shatter' | 'gold',
   box: number,
 ) => {
   // A 2x2 footprint, centered with margin and lifted a touch to leave room for
@@ -56,7 +56,9 @@ const drawBlockSwatch = (
     { x: 1, y: 1 },
   ]
 
-  const fillBase = healthFill(1)
+  // Gold pieces wear a warm metallic body; everything else uses the standard
+  // full-health fill (the routing-kind overlay supplies its glyph on top).
+  const fillBase = kind === 'gold' ? 'rgb(240 196 74)' : healthFill(1)
   const lum = relativeLuma(fillBase)
 
   // Contact shadow on the "floor" so the slab feels placed, not floating.
@@ -70,7 +72,7 @@ const drawBlockSwatch = (
   // Side walls: the silhouette extruded straight down by H, filled with a
   // top-bright / base-dark gradient derived from the fill (mirrors piecesGL).
   // Armored pieces use a steel wall so the armored look wraps the bottom/front.
-  const wallBase = kind === 'armored' ? 'rgb(107 120 145)' : fillBase
+  const wallBase = kind === 'armored' ? 'rgb(107 120 145)' : kind === 'gold' ? 'rgb(176 132 36)' : fillBase
   drawRoundedPolyomino(ctx, loop, { x: ax, y: ay + H }, cellSize, cornerRadius)
   const wall = ctx.createLinearGradient(0, ay, 0, ay + h + H)
   wall.addColorStop(0, scaleRgb(wallBase, 0.82))
@@ -110,10 +112,11 @@ const drawBlockSwatch = (
   ctx.strokeStyle = lum > 0.62 ? 'rgba(40,18,60,0.70)' : 'rgba(255,245,220,0.35)'
   ctx.stroke()
 
-  // Routing-kind overlay.
+  // Routing-kind overlay. Gold has no routing glyph (its value is the point);
+  // the metallic body alone reads it, so use the no-op 'normal' overlay.
   drawBlockKindOverlay(
     ctx,
-    kind,
+    kind === 'gold' ? 'normal' : kind,
     { ax, ay, w, h, cellSize, cornerRadius, loop, pos, cells },
     { tNow: 0.6, shieldFlashSec: 0, blockId: 0 },
   )
