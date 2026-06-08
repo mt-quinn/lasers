@@ -12,7 +12,7 @@ import {
   addHighScore,
   entriesForDate,
   getBestDepth,
-  getBestScore,
+  getBestScoreForDate,
   loadHighScores,
   loadLastPlayerName,
   localDates,
@@ -308,7 +308,7 @@ export default function App() {
   // "BEST" label can render.
   useEffect(() => {
     stateRef.current.bestDepthLocal = getBestDepth(highScores)
-    stateRef.current.bestScoreLocal = getBestScore(highScores)
+    stateRef.current.bestScoreLocal = getBestScoreForDate(highScores, stateRef.current.dateKey)
   }, [highScores])
 
   // Pointer input: the single control surface is the gravity-well puck.
@@ -918,7 +918,7 @@ export default function App() {
     fresh.view = prev.view
     fresh.input = prev.input
     fresh.bestDepthLocal = getBestDepth(highScores)
-    fresh.bestScoreLocal = getBestScore(highScores)
+    fresh.bestScoreLocal = getBestScoreForDate(highScores, fresh.dateKey)
     Object.assign(prev, fresh)
     handledGameOverRef.current = false
     setHud({
@@ -1032,7 +1032,7 @@ export default function App() {
       saveGameState(s)
       // Update local bests immediately for the live HUD labels on subsequent runs.
       s.bestDepthLocal = getBestDepth(next)
-      s.bestScoreLocal = getBestScore(next)
+      s.bestScoreLocal = getBestScoreForDate(next, s.dateKey)
       // Re-submit globally with the chosen name so the daily row shows it too.
       if (convexConfigured) {
         submitDailyGlobal({

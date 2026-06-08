@@ -106,6 +106,11 @@ export const getBestScore = (scores: HighScoreEntry[]) =>
 export const getBestDepth = (scores: HighScoreEntry[]) =>
   scores.reduce((m, e) => Math.max(m, e.depth), 0)
 
+// Best stored score for a single calendar day — the HUD "BEST" target, which is
+// the score to beat *today*, not the lifetime peak.
+export const getBestScoreForDate = (scores: HighScoreEntry[], dateKey: string) =>
+  scores.reduce((m, e) => (e.dateKey === dateKey ? Math.max(m, e.score) : m), 0)
+
 // The local runs for one calendar day, ranked best-first.
 export const entriesForDate = (scores: HighScoreEntry[], dateKey: string): HighScoreEntry[] =>
   scores.filter((e) => e.dateKey === dateKey).sort(byScore)
