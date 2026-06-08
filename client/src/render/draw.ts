@@ -1998,6 +1998,31 @@ export const drawFrame = (
       roundedRectPath(gx2 + 1, gy2 + (gh2 - fh) + 1, gw2 - 2, Math.max(0, fh - 2), 9)
       ctx.fill()
 
+      // Banking the NEXT charge: motes collected during a surge bank separately
+      // and seed the next charge when the surge ends. Show it as a cool-cyan
+      // underlay rising from the bottom (distinct from the draining gold surge),
+      // so collecting mid-Overdrive visibly pays.
+      if (overdriveOn && s.heatNext > 0) {
+        const bh = gh2 * clamp(s.heatNext, 0, 1)
+        ctx.fillStyle = hsl(190, 92, 62, 0.5)
+        roundedRectPath(gx2 + 2, gy2 + (gh2 - bh), gw2 - 4, bh, 9)
+        ctx.fill()
+      }
+
+      // Segment the groove into 4 pips so partial charge ("almost there") reads
+      // at a glance instead of as one ambiguous float.
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = 'rgba(0,0,0,0.34)'
+      ctx.lineWidth = 1
+      for (let i = 1; i < 4; i++) {
+        const ty2 = gy2 + (gh2 * i) / 4
+        ctx.beginPath()
+        ctx.moveTo(gx2 + 1.5, ty2)
+        ctx.lineTo(gx2 + gw2 - 1.5, ty2)
+        ctx.stroke()
+      }
+      ctx.globalCompositeOperation = 'lighter'
+
       // Armed: a breathing glow ring hugging the whole groove so the charged
       // meter pops even in peripheral vision while the eye is on the beam.
       if (armed) {
@@ -2057,6 +2082,38 @@ export const drawFrame = (
         ctx.stroke()
         ctx.fillStyle = 'rgba(255,246,213,0.92)'
         ctx.fillText(label, cxBar, ty)
+      }
+      ctx.restore()
+    }
+
+    // Gauge floaters: "+N" feedback popped on mote collection so the player SEES
+    // a pickup's worth — and that combo/gold make motes worth more. Color codes
+    // the state: gold charge, cool-cyan banked-to-next, bright-gold overflow score.
+    if (s.gaugeFx.length > 0) {
+      const fxCx = barX + barW / 2
+      const fxTop = barY + 22
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.font = "900 13px 'Oxanium', system-ui, sans-serif"
+      for (const fx of s.gaugeFx) {
+        const p = clamp(fx.t / fx.dur, 0, 1)
+        const a = (1 - p) * 0.95
+        const rise = 24 * p
+        const jitter = ((fx.id % 5) - 2) * 7
+        const col =
+          fx.kind === 'score'
+            ? hsl(45, 100, 70, a)
+            : fx.kind === 'bank'
+              ? hsl(190, 92, 70, a)
+              : hsl(48, 96, 76, a)
+        ctx.fillStyle = col
+        // Anchored floaters (e.g. overflow score absorbed by the well) pop at
+        // their own screen point; the rest rise from the gauge.
+        const ax = fx.x != null ? fx.x : fxCx
+        const ay = fx.y != null ? fx.y : fxTop
+        ctx.fillText(fx.text, ax + jitter, ay - rise)
       }
       ctx.restore()
     }
@@ -2174,6 +2231,8 @@ export const drawFrame = (
       ctx.lineCap = 'round'
       for (const m of s.heatMotes) {
         const mHue = hueAt(m.x, m.y)
+        // Surge-spawned debris is worth a fraction of charge, so it reads dimmer.
+        const dimMul = m.dim ? 0.5 : 1
         if (m.collecting) {
           // Fly from the projected capture point to the screen-space gauge, with a
           // short comet tail pointing back along the flight path.
@@ -2189,21 +2248,21 @@ export const drawFrame = (
           const tlen = (14 + 26 * (1 - tt)) * z
           const bx = px - (dxs / dl) * tlen
           const by = py - (dys / dl) * tlen
-          ctx.strokeStyle = heat(mHue, 255, 150, 70, 85, 60, 0.5)
+          ctx.strokeStyle = heat(mHue, 255, 150, 70, 85, 60, 0.5 * dimMul)
           ctx.lineWidth = Math.max(1, r * 1.1)
           ctx.beginPath()
           ctx.moveTo(bx, by)
           ctx.lineTo(px, py)
           ctx.stroke()
-          ctx.fillStyle = heat(mHue, 255, 180, 90, 85, 66, 0.32)
+          ctx.fillStyle = heat(mHue, 255, 180, 90, 85, 66, 0.32 * dimMul)
           ctx.beginPath()
           ctx.arc(px, py, r * 2.4, 0, Math.PI * 2)
           ctx.fill()
-          ctx.fillStyle = heat(mHue, 255, 222, 140, 85, 72, 0.95)
+          ctx.fillStyle = heat(mHue, 255, 222, 140, 85, 72, 0.95 * dimMul)
           ctx.beginPath()
           ctx.arc(px, py, r, 0, Math.PI * 2)
           ctx.fill()
-          ctx.fillStyle = `rgba(255,250,240,0.9)`
+          ctx.fillStyle = `rgba(255,250,240,${(0.9 * dimMul).toFixed(3)})`
           ctx.beginPath()
           ctx.arc(px, py, Math.max(0.7, r * 0.5), 0, Math.PI * 2)
           ctx.fill()
@@ -2214,7 +2273,7 @@ export const drawFrame = (
           const flick = 0.7 + 0.3 * Math.sin(tNow * (8 + (m.seed % 5)) + m.seed)
           const sp = project(m.x, m.y - s.dropAnimOffset)
           const z = sp.scale
-          const a = (m.hooked ? 1 : 0.9) * flick
+          const a = (m.hooked ? 1 : 0.9) * flick * dimMul
           const r = m.size * 0.85 * z + 0.9
           // LOD: far up the board a mote is only a few px; the halo/tail/twinkle
           // are imperceptible there, so collapse to a single ember dot.

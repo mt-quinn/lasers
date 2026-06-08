@@ -31,8 +31,11 @@ type SavedRunState = Omit<
   | 'comboTimerSec'
   | 'crescendo'
   | 'heat'
+  | 'heatNext'
   | 'overdriveSec'
   | 'overdriveArmed'
+  | 'gaugeFx'
+  | 'nextGaugeFxId'
   | 'sinceStepSec'
   | 'lastBeatToken'
 >

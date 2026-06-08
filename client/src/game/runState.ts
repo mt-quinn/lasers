@@ -72,6 +72,9 @@ export type HeatMote = {
   life: number
   // Heat (0..1 contribution) delivered to the gauge when this mote arrives.
   heat: number
+  // True for motes spawned by an Overdrive-surge kill: they carry a reduced
+  // charge value (so a surge can't fund its own sequel) and render dimmer.
+  dim: boolean
   // Identity hue seed (used when the music-reactive palette is on).
   hue: number
   size: number
@@ -88,6 +91,23 @@ export type HeatMote = {
   // start of the delivery flight toward the screen-space gauge).
   cfx: number
   cfy: number
+}
+
+// Short-lived text/number floater that pops at the Heat gauge when a mote is
+// collected, so the player SEES what a pickup is worth in the current state:
+//   'charge' -> "+N" charge toward Overdrive (building)
+//   'score'  -> "+N" bonus score (collecting while charged/armed; overflow)
+//   'bank'   -> "+N" banked toward the next charge (collecting during a surge)
+export type GaugeFx = {
+  id: number
+  t: number
+  dur: number
+  text: string
+  kind: 'charge' | 'score' | 'bank'
+  // Optional screen-space anchor. When set, the floater pops here (e.g. over the
+  // well, for overflow score absorbed by the black hole) instead of at the gauge.
+  x?: number
+  y?: number
 }
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
@@ -375,6 +395,11 @@ export type RunState = {
   // and unleashes the surge on demand with a tap (see fireOverdrive), choosing
   // the moment: cash it on a dense cluster, or clutch it to dig out a backlog.
   heat: number
+  // Charge accumulated from motes collected DURING an active surge. It is held
+  // separately (so the surge's visible drain isn't disturbed) and seeded into
+  // `heat` when the surge ends — this is how mote-collection stays productive
+  // mid-Overdrive without letting a surge instantly re-arm itself.
+  heatNext: number
   overdriveSec: number
   // True once heat tops out and the surge is charged but not yet spent. Held
   // (heat pinned at 1) until the player taps to fire. Transient (not saved).
@@ -412,6 +437,9 @@ export type RunState = {
   // the heat gauge (see HeatMote).
   heatMotes: HeatMote[]
   nextMoteId: number
+  // Gauge floaters: "+N" feedback popped at the Heat gauge on mote collection.
+  gaugeFx: GaugeFx[]
+  nextGaugeFxId: number
 
   blocks: BlockEntity[]
   nextBlockId: number
@@ -537,6 +565,7 @@ export const createInitialRunState = (): RunState => {
       intensity: 0.8,
     },
     heat: 0,
+    heatNext: 0,
     overdriveSec: 0,
     overdriveArmed: false,
     xp: 0,
@@ -561,6 +590,8 @@ export const createInitialRunState = (): RunState => {
     weld: { blockId: -1, x: 0, y: 0, dwell: 0 },
     heatMotes: [],
     nextMoteId: 1,
+    gaugeFx: [],
+    nextGaugeFxId: 1,
     blocks: [],
     nextBlockId: 1,
     features: [],

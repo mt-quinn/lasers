@@ -1,6 +1,6 @@
 import { add, clamp, mul, normalize, reflect } from './math'
 import type { Vec2 } from './math'
-import type { RunState, MirrorFeature, BlockEntity } from './runState'
+import type { RunState, MirrorFeature, BlockEntity, HeatMote, GaugeFx } from './runState'
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing, spawnPrismAt, spawnShatterChildren } from './spawn'
 import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
@@ -44,11 +44,27 @@ const WELL_NEAR_BITE_POWER = 10
 // Score-attack tuning.
 export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to keep the combo
 
-// Heat / Overdrive: the skill-expressed, self-resetting beam amplifier. Heat
-// builds from chained kills and decays when idle; topping out fires a short
-// Overdrive surge (more damage, more pierces, double score) that then drains it.
-const HEAT_PER_KILL = 0.06 // base heat per kill (scaled up by combo + piece value)
-const HEAT_DECAY = 0.11 // heat lost per second when not killing / not in overdrive
+// Heat / Overdrive: the bankable beam amplifier. Heat is CHARGE you earn ONLY by
+// vacuuming motes with the well; topping it out ARMS a surge you unleash on
+// demand (fireOverdrive). The economy is built so the core verb (collecting
+// motes) ALWAYS pays — building charge, overflowing to score when full, or
+// banking toward the next charge during a surge — and so a surge can't fund its
+// own sequel (its debris is worth a fraction).
+const HEAT_PER_KILL = 0.085 // base charge per kill (scaled by combo + piece value); tuned so the FIRST charge is ~12-15s of clean play
+// No always-on decay anymore (that made the early build a losing rate-race vs a
+// constant leak). Charge is sticky while you're actively fighting; it only
+// bleeds once your combo has fully lapsed — i.e. you've genuinely disengaged.
+const HEAT_IDLE_BLEED = 0.08 // charge lost per second ONLY while combo == 0
+// Motes spawned by Overdrive-surge kills are worth this fraction of normal
+// charge (and render dimmer). A 5s surge produces a big debris flood; at full
+// value it would instantly re-arm the meter (the old "trivial to chain"). At a
+// fraction it helps a little but you must still earn most of the next charge
+// from normal play — so banking and picking your moment is a real decision.
+const OVERDRIVE_MOTE_CHARGE_MULT = 0.2
+// Collecting while the meter is full/armed (holding the bomb) converts the
+// overflow to bonus score: a mote's charge value x this x depth-scaled factor.
+// Keeps sweeping rewarding even when you're saving the surge for a cluster.
+const OVERDRIVE_OVERFLOW_SCORE = 700
 
 // Heat motes (destroyed-block debris the player vacuums with the well). World
 // units; radii are world px (≈ screen px at the near plane). The well is
@@ -97,6 +113,8 @@ export const fireOverdrive = (s: RunState): boolean => {
   s.overdriveArmed = false
   s.overdriveSec = OVERDRIVE_DURATION
   s.heat = 1
+  // Mid-surge collections bank here and seed the next charge when it ends.
+  s.heatNext = 0
   s.levelUpNotificationFx = { t: 0, displayDur: 1.0, fadeDur: 0.35 }
   s.crescendo = clamp(s.crescendo + 0.5, 0, 1)
   // A short triple-tap of haptics so the unleash lands physically on mobile.
@@ -153,10 +171,52 @@ const updateWellPuck = (s: RunState, dt: number) => {
   }
 }
 
+// Charge is presented to the player on a 0..100 scale (the bar fills to 100),
+// so a mote's internal 0..1 value reads as a clean "+N" on pickup.
+const CHARGE_DISPLAY = 100
+const GAUGE_FX_DUR = 0.75
+
+const pushGaugeFx = (s: RunState, text: string, kind: GaugeFx['kind'], x?: number, y?: number) => {
+  s.gaugeFx.push({ id: s.nextGaugeFxId++, t: 0, dur: GAUGE_FX_DUR, text, kind, x, y })
+  // Cap so a dense surge can't grow the list unbounded.
+  if (s.gaugeFx.length > 24) s.gaugeFx.splice(0, s.gaugeFx.length - 24)
+}
+
+// Bonus score awarded when a mote is collected while the charge is full (the
+// black hole absorbs it instead of feeding the maxed gauge).
+const overflowScore = (s: RunState, m: HeatMote) =>
+  Math.round(m.heat * OVERDRIVE_OVERFLOW_SCORE * (1 + s.depth * 0.01))
+
+// Pay out a collected mote into the correct bucket for the CURRENT state, and
+// pop a "+N" floater so the player sees the value. The core verb (vacuuming
+// motes) always pays — building charge, overflowing to score when full, or
+// banking toward the next charge during a surge.
+const deliverMote = (s: RunState, m: HeatMote) => {
+  if (s.overdriveSec > 0) {
+    // Surge active: bank toward the NEXT charge (held separately so the surge's
+    // visible drain isn't disturbed).
+    s.heatNext = clamp(s.heatNext + m.heat, 0, 1)
+    pushGaugeFx(s, `+${Math.max(1, Math.round(m.heat * CHARGE_DISPLAY))}`, 'bank')
+  } else if (s.heat >= 1 || s.overdriveArmed) {
+    // Charged & holding the bomb: overflow converts to bonus score so sweeping
+    // still pays while you save the surge for the right cluster. (Normally
+    // intercepted at capture so it pops over the well; this is the rare case
+    // where the meter fills mid-flight.)
+    const bonus = overflowScore(s, m)
+    s.score += bonus
+    pushGaugeFx(s, `+${bonus}`, 'score')
+  } else {
+    // Building: fill the charge. Topping out arms the surge.
+    s.heat = clamp(s.heat + m.heat, 0, 1)
+    if (s.heat >= 1) s.overdriveArmed = true
+    pushGaugeFx(s, `+${Math.max(1, Math.round(m.heat * CHARGE_DISPLAY))}`, 'charge')
+  }
+}
+
 // Burst a destroyed block into heat motes spread across its footprint. `heatBudget`
 // (the heat this kill is worth) is divided evenly across the motes; collecting them
 // with the well is what actually fills the gauge.
-const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: number) => {
+const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: number, surge: boolean) => {
   const cells = b.cells.length
   // Half as many motes as before -> each carries double the heat (perHeat scales
   // automatically since the budget is fixed and just divided across the count).
@@ -164,7 +224,10 @@ const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: nu
     MOTE_MIN_COUNT,
     Math.min(MOTE_MAX_COUNT, Math.round(1 + b.xpValue * 0.55 + cells * 0.35)),
   )
-  const perHeat = heatBudget / count
+  // Surge-spawned debris is worth a fraction (and rendered dim) so a surge can't
+  // fund its own sequel.
+  const budget = surge ? heatBudget * OVERDRIVE_MOTE_CHARGE_MULT : heatBudget
+  const perHeat = budget / count
   const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
   const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
   for (let i = 0; i < count; i++) {
@@ -189,6 +252,7 @@ const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: nu
       age: 0,
       life: MOTE_LIFE_MIN + Math.random() * (MOTE_LIFE_MAX - MOTE_LIFE_MIN),
       heat: perHeat,
+      dim: surge,
       hue,
       size: 1.6 + Math.random() * 1.8,
       seed: Math.random() * 1000,
@@ -431,6 +495,11 @@ export const stepSim = (s: RunState, dt: number) => {
     for (const g of s.weldGlows) g.age += dt
     s.weldGlows = s.weldGlows.filter((g) => g.age < g.life)
   }
+  // Gauge floaters: age out the "+N" mote-collection feedback.
+  if (s.gaugeFx.length > 0) {
+    for (const fx of s.gaugeFx) fx.t += dt
+    s.gaugeFx = s.gaugeFx.filter((fx) => fx.t < fx.dur)
+  }
   // Fade out the armored "deflected" flash after the last wrong-side hit.
   for (const b of s.blocks) {
     if (b.shieldFlashSec > 0) b.shieldFlashSec = Math.max(0, b.shieldFlashSec - dt)
@@ -493,7 +562,7 @@ export const stepSim = (s: RunState, dt: number) => {
       if (m.collecting) {
         m.ct += dt
         if (m.ct >= m.cdur) {
-          if (s.overdriveSec <= 0) s.heat = clamp(s.heat + m.heat, 0, 1)
+          deliverMote(s, m)
           dead.push(m.id)
         }
         continue
@@ -510,6 +579,15 @@ export const stepSim = (s: RunState, dt: number) => {
         const dy = well.pos.y - m.y
         const dist = Math.hypot(dx, dy)
         if (dist < MOTE_CAPTURE_R) {
+          // Charge full (and not mid-surge): the black hole simply absorbs the
+          // mote and pays out bonus score right there — no flight to the gauge.
+          if (s.heat >= 1 && s.overdriveSec <= 0) {
+            const bonus = overflowScore(s, m)
+            s.score += bonus
+            pushGaugeFx(s, `+${bonus}`, 'score', well.pos.x, well.pos.y)
+            dead.push(m.id)
+            continue
+          }
           m.collecting = true
           m.ct = 0
           m.cfx = m.x
@@ -542,17 +620,29 @@ export const stepSim = (s: RunState, dt: number) => {
   // when idle, and on topping out ARMS a surge the player unleashes on demand.
   if (s.overdriveSec > 0) {
     s.overdriveSec = Math.max(0, s.overdriveSec - dt)
-    // The meter visibly drains across the surge, then resets so it must rebuild.
-    s.heat = s.overdriveSec > 0 ? clamp(s.overdriveSec / OVERDRIVE_DURATION, 0, 1) : 0
-    if (s.overdriveSec <= 0) s.overdriveArmed = false
+    if (s.overdriveSec > 0) {
+      // The meter visibly drains across the surge.
+      s.heat = clamp(s.overdriveSec / OVERDRIVE_DURATION, 0, 1)
+    } else {
+      // Surge ended: seed the next charge with whatever was banked DURING it
+      // (motes collected mid-Overdrive). Surge debris is worth a fraction, so
+      // this is usually a partial head-start, not a free re-arm.
+      s.heat = clamp(s.heatNext, 0, 1)
+      s.heatNext = 0
+      s.overdriveArmed = s.heat >= 1
+    }
   } else if (s.overdriveArmed || s.heat >= 1) {
     // Charged: hold at full and wait for the player to tap (fireOverdrive).
     // Banking the surge is the whole decision — cash it on a dense cluster, or
-    // clutch it to punch through a backlog at the fail line.
+    // clutch it to punch through a backlog at the fail line. Collecting motes
+    // while held overflows to bonus score (see deliverMote), so the verb stays
+    // worthwhile instead of going dead.
     s.overdriveArmed = true
     s.heat = 1
   } else {
-    s.heat = Math.max(0, s.heat - HEAT_DECAY * dt)
+    // No always-on decay. Charge is sticky while you're actively fighting; it
+    // only bleeds once the combo has fully lapsed (you've genuinely disengaged).
+    if (s.combo <= 0) s.heat = Math.max(0, s.heat - HEAT_IDLE_BLEED * dt)
   }
 
   // Fail line sits just above the bottom rail. Single life: a block crossing it
@@ -867,7 +957,7 @@ export const stepSim = (s: RunState, dt: number) => {
       // budget. The player vacuums them with the well to fill the gauge (replaces
       // the old melt-into-XP-orb flow). Gold blocks burst brighter (their large
       // heat budget is simply spread across the standard mote count).
-      spawnHeatMotes(s, b, heatBudget, 0)
+      spawnHeatMotes(s, b, heatBudget, 0, s.overdriveSec > 0)
 
       // Check if this destroyed block should spawn a splitter (prism)
       if (s.stats.splitterChance > 0 && Math.random() < s.stats.splitterChance) {
