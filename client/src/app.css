@@ -276,22 +276,101 @@
     0 0 0 1px rgba(0, 0, 0, 0.4),
     0 30px 90px rgba(0, 0, 0, 0.7),
     0 0 70px rgba(120, 90, 255, 0.18);
-  padding: 1.3rem 1.2rem 1.1rem;
-  /* Bound the panel to the viewport so taller content (game-over with the
-     global board) scrolls within the panel instead of clipping the actions
-     below the fold. overflow-x stays hidden to preserve the rounded corners. */
-  max-height: 90vh;
+  padding: 1.1rem 1.2rem 1rem;
+  /* The game-over leaderboard is paginated to a fixed page size, so the panel's
+     content is bounded and normally fits without scrolling. max-height +
+     overflow-y stay as a defensive fallback for unusually short viewports so
+     the Play Again button can never be clipped off-screen; overflow-x stays
+     hidden to preserve the rounded corners. */
+  max-height: 92vh;
   overflow-y: auto;
   overflow-x: hidden;
   animation: menuPop 0.28s cubic-bezier(0.2, 1.3, 0.4, 1) both;
 }
 
-/* Global leaderboard can be long; keep it to a scrollable band so the rest of
-   the game-over panel (and the Play Again button) stays reachable. */
-.menuScoreListGlobal {
-  max-height: 9.5rem;
-  overflow-y: auto;
-  padding-right: 2px;
+/* Game-over leaderboard: bounded, tabbed, paginated. Fixed page size keeps the
+   region a constant height so the panel never needs to scroll. */
+.lbTabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+.lbTab {
+  flex: 1 1 0;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 246, 213, 0.6);
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.7rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.lbTab:hover {
+  color: rgba(255, 246, 213, 0.85);
+}
+.lbTab.active {
+  background: rgba(140, 100, 255, 0.2);
+  border-color: rgba(185, 140, 255, 0.5);
+  color: rgba(255, 250, 240, 0.98);
+}
+
+/* Fixed height for the page so the panel doesn't jump between pages. */
+.lbList {
+  min-height: 10.1rem;
+  align-content: start;
+}
+
+/* Pinned "your row" when it's off the current page. */
+.menuScoreRow.pinned {
+  margin-top: 0.25rem;
+  border: 1px dashed rgba(185, 140, 255, 0.4);
+}
+
+.lbPager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  margin-top: 0.55rem;
+}
+.lbPagerBtn {
+  appearance: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 246, 213, 0.9);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.lbPagerBtn:hover:not(:disabled) {
+  background: rgba(140, 100, 255, 0.22);
+}
+.lbPagerBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.lbPagerLabel {
+  font-family: 'Oxanium', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: rgba(255, 246, 213, 0.6);
+  min-width: 3.2rem;
+  text-align: center;
 }
 
 /* Highlight the local player's own row in the global board. */
@@ -357,7 +436,7 @@
 
 /* Hero score block. */
 .menuHero {
-  margin-top: 1rem;
+  margin-top: 0.7rem;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -377,7 +456,7 @@
   font-family: 'Oxanium', system-ui, sans-serif;
   font-weight: 950;
   font-variant-numeric: tabular-nums;
-  font-size: 2.8rem;
+  font-size: 2.4rem;
   line-height: 1;
   color: #fff8e6;
   text-shadow:
@@ -387,7 +466,7 @@
 
 /* Compact secondary stat chips. */
 .menuChips {
-  margin-top: 1rem;
+  margin-top: 0.7rem;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
@@ -423,7 +502,7 @@
 
 /* Sections (top scores, name prompt). */
 .menuSection {
-  margin-top: 1rem;
+  margin-top: 0.85rem;
 }
 
 .menuSectionTitle {
@@ -554,7 +633,7 @@
 }
 
 .menuActions {
-  margin-top: 1.2rem;
+  margin-top: 0.95rem;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;

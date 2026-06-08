@@ -9,6 +9,11 @@ export type HighScoreEntry = {
 const SCORES_KEY = 'laser_game_high_scores_v1'
 const NAME_KEY = 'laser_game_player_name_v1'
 
+// Local board keeps many personal runs (the global board only ever keeps the
+// player's single best). The game-over UI paginates this list so a large cap
+// never blows out the panel height.
+export const MAX_LOCAL_SCORES = 50
+
 const clampLen = (s: string, max: number) => (s.length > max ? s.slice(0, max) : s)
 
 const sanitizeName = (raw: string) => {
@@ -33,7 +38,7 @@ const normalize = (list: HighScoreEntry[]): HighScoreEntry[] => {
       ts: Math.max(0, Math.floor(e.ts)),
     }))
     .sort((a, b) => (b.score !== a.score ? b.score - a.score : a.ts - b.ts))
-    .slice(0, 5)
+    .slice(0, MAX_LOCAL_SCORES)
 }
 
 export const loadHighScores = (): HighScoreEntry[] => {
@@ -64,7 +69,7 @@ export const getBestDepth = (scores: HighScoreEntry[]) =>
 
 export const qualifiesTop5 = (scores: HighScoreEntry[], score: number) => {
   const sc = Math.max(0, Math.floor(score))
-  if (scores.length < 5) return sc > 0
+  if (scores.length < MAX_LOCAL_SCORES) return sc > 0
   return sc >= scores[scores.length - 1]!.score
 }
 

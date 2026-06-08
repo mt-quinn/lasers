@@ -35,6 +35,11 @@ type HudSnapshot = {
   gameOver: boolean
 }
 
+// Game-over leaderboard: rows shown per page. Kept small so the panel stays
+// within the viewport (no scrolling) regardless of how many entries exist;
+// the player flips through pages with the prev/next chevrons.
+const GAMEOVER_LB_PAGE_SIZE = 5
+
 // Legend shown in the pause menu: the special pieces/features and what each one
 // does, in plain language. Each row renders the REAL in-game artwork (via the
 // shared piece renderer) rather than a stand-in glyph, so it's instantly
@@ -138,6 +143,9 @@ export default function App() {
   const [pendingScoreDepth, setPendingScoreDepth] = useState<number | null>(null)
   const [pendingScore, setPendingScore] = useState<number | null>(null)
   const handledGameOverRef = useRef(false)
+  // Game-over leaderboard view: which board, and which page within it.
+  const [lbTab, setLbTab] = useState<'daily' | 'local'>('daily')
+  const [lbPage, setLbPage] = useState(0)
 
   // Anonymous identity + global leaderboard wiring. All of this no-ops cleanly
   // when no Convex deployment is configured (queries skip, mutations unused),
@@ -582,6 +590,8 @@ export default function App() {
       setShowNamePrompt(false)
       setPendingScoreDepth(null)
       setPendingScore(null)
+      setLbTab('daily')
+      setLbPage(0)
       return
     }
     if (handledGameOverRef.current) return
@@ -648,6 +658,26 @@ export default function App() {
     return computePauseStats(stateRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hud.paused, hud.gameOver, hud.depth, hud.score])
+
+  // Game-over leaderboard view model: a single bounded, tabbed, paginated
+  // region so the panel never grows past the viewport no matter how many rows
+  // exist. The active tab falls back to whichever board has data.
+  const dailyRows = convexConfigured && globalDailyScores ? globalDailyScores : []
+  const hasDaily = dailyRows.length > 0
+  const hasLocal = highScores.length > 0
+  const activeTab: 'daily' | 'local' =
+    lbTab === 'daily' ? (hasDaily ? 'daily' : 'local') : hasLocal ? 'local' : 'daily'
+  const lbRows = activeTab === 'daily' ? dailyRows : highScores
+  const lbPageCount = Math.max(1, Math.ceil(lbRows.length / GAMEOVER_LB_PAGE_SIZE))
+  const lbSafePage = Math.min(Math.max(0, lbPage), lbPageCount - 1)
+  const lbStart = lbSafePage * GAMEOVER_LB_PAGE_SIZE
+  const lbPageRows = lbRows.slice(lbStart, lbStart + GAMEOVER_LB_PAGE_SIZE)
+  // On the daily board, pin the player's own row when it falls off the visible
+  // page so they can always see their standing without hunting through pages.
+  const myDailyIdx =
+    activeTab === 'daily' ? dailyRows.findIndex((e) => e.playerId === playerIdRef.current) : -1
+  const myOnPage = myDailyIdx >= lbStart && myDailyIdx < lbStart + GAMEOVER_LB_PAGE_SIZE
+  const lbPinnedMe = myDailyIdx >= 0 && !myOnPage ? dailyRows[myDailyIdx]! : null
 
   return (
     <div className="lg-viewport">
@@ -818,7 +848,7 @@ export default function App() {
 
                   {showNamePrompt && (
                     <div className="menuSection">
-                      <div className="menuSectionTitle">New Top 5 — enter your name</div>
+                      <div className="menuSectionTitle">New high score — enter your name</div>
                       <input
                         className="menuInput"
                         value={nameDraft}
@@ -838,42 +868,96 @@ export default function App() {
                     </div>
                   )}
 
-                  {highScores.length > 0 && (
-                    <div className="menuSection">
-                      <div className="menuSectionTitle">Your Best</div>
-                      <ol className="menuScoreList">
-                        {highScores.slice(0, 5).map((e, i) => (
-                          <li key={`${e.ts}-${i}`} className="menuScoreRow">
-                            <span className="rank">{i + 1}</span>
-                            <span className="name">{e.name}</span>
-                            <span className="val">
-                              {e.score.toLocaleString()}
-                              <span className="depth">d{e.depth}</span>
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
-
-                  {convexConfigured && globalDailyScores && globalDailyScores.length > 0 && (
-                    <div className="menuSection">
-                      <div className="menuSectionTitle">Daily Global Top</div>
-                      <ol className="menuScoreList menuScoreListGlobal">
-                        {globalDailyScores.slice(0, 10).map((e, i) => (
-                          <li
-                            key={`${e.playerId}-${i}`}
-                            className={`menuScoreRow${e.playerId === playerIdRef.current ? ' isMe' : ''}`}
+                  {!showNamePrompt && (hasDaily || hasLocal) && (
+                    <div className="menuSection menuLeaderboard">
+                      <div className="lbTabs" role="tablist">
+                        {hasDaily && (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'daily'}
+                            className={`lbTab${activeTab === 'daily' ? ' active' : ''}`}
+                            onClick={() => {
+                              setLbTab('daily')
+                              setLbPage(0)
+                            }}
                           >
-                            <span className="rank">{i + 1}</span>
-                            <span className="name">{e.name}</span>
+                            Daily Global
+                          </button>
+                        )}
+                        {hasLocal && (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'local'}
+                            className={`lbTab${activeTab === 'local' ? ' active' : ''}`}
+                            onClick={() => {
+                              setLbTab('local')
+                              setLbPage(0)
+                            }}
+                          >
+                            Your Best
+                          </button>
+                        )}
+                      </div>
+
+                      <ol className="menuScoreList lbList">
+                        {lbPageRows.map((e, i) => {
+                          const rank = lbStart + i + 1
+                          const mine =
+                            activeTab === 'daily' &&
+                            'playerId' in e &&
+                            e.playerId === playerIdRef.current
+                          const key =
+                            'playerId' in e ? `${e.playerId}-${rank}` : `${e.ts}-${rank}`
+                          return (
+                            <li key={key} className={`menuScoreRow${mine ? ' isMe' : ''}`}>
+                              <span className="rank">{rank}</span>
+                              <span className="name">{e.name}</span>
+                              <span className="val">
+                                {e.score.toLocaleString()}
+                                <span className="depth">d{e.depth}</span>
+                              </span>
+                            </li>
+                          )
+                        })}
+                        {lbPinnedMe && (
+                          <li className="menuScoreRow isMe pinned">
+                            <span className="rank">{myDailyIdx + 1}</span>
+                            <span className="name">{lbPinnedMe.name}</span>
                             <span className="val">
-                              {e.score.toLocaleString()}
-                              <span className="depth">d{e.depth}</span>
+                              {lbPinnedMe.score.toLocaleString()}
+                              <span className="depth">d{lbPinnedMe.depth}</span>
                             </span>
                           </li>
-                        ))}
+                        )}
                       </ol>
+
+                      {lbPageCount > 1 && (
+                        <div className="lbPager">
+                          <button
+                            type="button"
+                            className="lbPagerBtn"
+                            disabled={lbSafePage === 0}
+                            aria-label="Previous page"
+                            onClick={() => setLbPage((p) => Math.max(0, p - 1))}
+                          >
+                            ‹
+                          </button>
+                          <span className="lbPagerLabel">
+                            {lbSafePage + 1} / {lbPageCount}
+                          </span>
+                          <button
+                            type="button"
+                            className="lbPagerBtn"
+                            disabled={lbSafePage >= lbPageCount - 1}
+                            aria-label="Next page"
+                            onClick={() => setLbPage((p) => Math.min(lbPageCount - 1, p + 1))}
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
