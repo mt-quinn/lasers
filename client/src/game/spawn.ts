@@ -612,7 +612,12 @@ export const spawnShatterChildren = (s: RunState, parent: BlockEntity) => {
   const localAabb = computeLocalAabbPx(childCells, cs)
   // Center of the single cell — always inside the shape.
   const hpAnchorLocalPx = { x: 0.5 * cs, y: 0.5 * cs }
-  const HP_PER_CELL = 8
+  // Children spawn at HALF the normal per-cell HP. At full HP a shatter piece
+  // cost double any other piece its size (parent + a full-HP cell per cell) —
+  // quietly the most expensive kill in the game, AND fast-class, landing right
+  // where the difficulty curve is steepest. Half-HP children keep the
+  // "multiplies the threat" identity at 1.5x total cost instead of 2x.
+  const HP_PER_CELL = 4
 
   for (const c of parent.cells) {
     const child: BlockEntity = {
