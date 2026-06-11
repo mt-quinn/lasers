@@ -13,6 +13,8 @@ import { PALETTE, gradeHue } from './theme'
 import { renderLens } from './lensGL'
 import { renderPiecesGL, type GLPiece } from './piecesGL'
 import { renderFeaturesGL, type GLFeature } from './featuresGL'
+import { renderBoardGL } from './boardGL'
+import { buildTrenchMesh } from './boardMesh'
 
 // --- Board style experiment --------------------------------------------------
 // `?board=shaft` swaps the synthwave wireframe board for the "machined shaft":
@@ -514,6 +516,7 @@ export const drawFrame = (
         // into the live hue when playing (full rainbow stays on the emissive
         // elements, not the matter).
         const structHue = 218 + (mHue - 218) * (mi * 0.35)
+        const wallHueLive = PALETTE.wallHue + (mHue - PALETTE.wallHue) * mi
         const voidC = hexToRgb(PALETTE.voidTop)
         const hash2 = (a: number, b: number) => {
           const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453
@@ -535,6 +538,61 @@ export const drawFrame = (
         const CH_R = 0.66 * W
         const LIP_H = 7
 
+        // Spectrum thirds (bass / mids / treble) — feeds both the GL mesh's
+        // emissive strips and the 2D fallback's trim lights.
+        const bandFor = (k: number) => {
+          const n = spectrum.length
+          const s0 = Math.floor((k / 3) * n)
+          const s1 = Math.max(s0 + 1, Math.floor(((k + 1) / 3) * n))
+          let acc = 0
+          for (let j = s0; j < s1; j++) acc += spectrum[j] ?? 0
+          return (acc / (s1 - s0)) * mi
+        }
+
+        // The real 3D board: build the trench mesh (boardMesh.ts) and render
+        // it through the same homography the pieces use (boardGL.ts). When
+        // WebGL is unavailable the flat 2D trench below remains the fallback.
+        let glBoardDrawn = false
+        {
+          const mesh = buildTrenchMesh({
+            W,
+            nearWorldY: proj.nearWorldY,
+            strength: proj.strength,
+            pMin: proj.pMin,
+            gridRow: GRID_ROW,
+            totalRows: ROWS,
+            gridShift,
+            depth: s.depth,
+            structHue,
+            emissiveHue: baseHue,
+            wallHue: wallHueLive,
+            mi,
+            bands: [bandFor(0), bandFor(1), bandFor(2)],
+            beat: mBeat,
+            tNow,
+          })
+          const out = renderBoardGL(
+            mesh,
+            {
+              cx: proj.cx,
+              strength: proj.strength,
+              nearWorldY: proj.nearWorldY,
+              horizonY: proj.horizonY,
+              span: proj.span,
+              pMin: proj.pMin,
+              pMax: proj.pMax,
+            },
+            s.view.width,
+            s.view.height,
+            s.view.dpr,
+          )
+          if (out) {
+            ctx.drawImage(out, 0, 0, s.view.width, s.view.height)
+            glBoardDrawn = true
+          }
+        }
+
+        if (!glBoardDrawn) {
         // Visible rows near -> far, shared by every band below.
         type TrenchRow = { yTop: number; yBot: number; key: number; near: number; rowH: number }
         const rows: TrenchRow[] = []
@@ -684,14 +742,6 @@ export const drawFrame = (
         }
 
         // ---- 2. Additive pass: trench energy + brace trims -----------------
-        const bandFor = (k: number) => {
-          const n = spectrum.length
-          const s0 = Math.floor((k / 3) * n)
-          const s1 = Math.max(s0 + 1, Math.floor(((k + 1) / 3) * n))
-          let acc = 0
-          for (let j = s0; j < s1; j++) acc += spectrum[j] ?? 0
-          return (acc / (s1 - s0)) * mi
-        }
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
         ctx.lineCap = 'round'
@@ -851,13 +901,14 @@ export const drawFrame = (
           ctx.stroke()
           ctx.restore()
         }
+        } // end 2D fallback board (!glBoardDrawn)
 
         // Bounce blooms: laser vertices that landed on a wall flare the surface.
         {
           ctx.save()
           ctx.globalCompositeOperation = 'lighter'
           const wallTol = 2.2
-          const bh = mi > 0 ? mHue : wallHue
+          const bh = mi > 0 ? mHue : wallHueLive
           for (const seg of s.laser.segments) {
             for (const v of [seg.a, seg.b]) {
               if (v.x <= wallTol || v.x >= W - wallTol) {
