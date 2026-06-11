@@ -902,7 +902,7 @@ export const drawOverlayPass = (c: FrameCtx) => {
     ctx.shadowColor = hsl(hue, 100, 62, 0.9 * fade)
     ctx.shadowBlur = 12 + 14 * intens
     ctx.fillStyle = hsl(hue, 100, 76, 0.98 * fade)
-    ctx.fillText(`SWEEP \u00d7${fx.count}`, 0, 0)
+    ctx.fillText(`\u00d7${fx.count} BITS`, 0, 0)
     ctx.shadowBlur = 4
     ctx.font = `800 ${(big * 0.62).toFixed(0)}px 'Oxanium', system-ui, sans-serif`
     ctx.fillStyle = hsl(46, 100, 80, 0.95 * fade)

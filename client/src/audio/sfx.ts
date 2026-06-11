@@ -231,14 +231,16 @@ class SfxEngine {
     }
   }
 
-  // Rising pickup ticks for the mote sweep chain: each capture walks one step
-  // up a pentatonic scale (the Peggle trick, kept polite), growing slightly
-  // louder as the chain builds. `n` is the mote's position in the chain.
+  // Rising pickup ticks for the mote sweep chain (the Peggle trick, kept
+  // polite). The pitch climbs one pentatonic step every TWO motes — a slow,
+  // long ramp with plenty of headroom for big chains — and tops out around
+  // the 35-mote mark instead of screeching early. `n` is the mote's position
+  // in the chain.
   playMoteTick(n: number) {
     const ctx = this.ctx
     if (!ctx || ctx.state !== 'running') return
     const scale = [0, 3, 5, 7, 10]
-    const step = Math.min(24, n - 1)
+    const step = Math.min(17, Math.floor((n - 1) * 0.5))
     const semis = scale[step % 5]! + 12 * Math.floor(step / 5)
     const freq = 523.25 * Math.pow(2, semis / 12)
     const t0 = Math.max(ctx.currentTime, this.lastTickAt + 0.045)
