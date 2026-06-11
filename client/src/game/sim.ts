@@ -44,6 +44,10 @@ const WELL_NEAR_BITE_POWER = 10
 
 // Score-attack tuning.
 export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to keep the combo
+// Seconds per breather -> surge -> breather cadence cycle (the run's pulse).
+// Module-scope because both the spawn pacing and the wave-trough respite key
+// off it.
+const CADENCE_PERIOD = 20
 // Combo-gated pierce: sustained chains buy beam PENETRATION, the one lever that
 // scales throughput with skill. At tier 1 the beam rakes one extra block per
 // path; at tier 2, two extra. This is what lets a hot player answer the late
@@ -385,9 +389,21 @@ export const stepSim = (s: RunState, dt: number) => {
     return { x: gx + gw / 2, y: gy + (gh - fillH) }
   }
 
-  // Respite after losing a life: no spawns for a moment.
+  // Spawn respite countdown (armed each wave trough below; this field was
+  // originally the post-life-loss breather, orphaned by the single-life rework).
   if (s.respiteSec > 0) {
     s.respiteSec = Math.max(0, s.respiteSec - dt)
+  }
+
+  // Wave-trough breather: once per cadence cycle, exactly at the trough, spawns
+  // hold for a beat. This is the run's recovery valve — the moment to sweep
+  // motes, bank Overdrive charge, and reset routing before the next surge.
+  // Pure wall-clock (identical for everyone) and skipped in the opening so the
+  // first minute keeps its momentum.
+  if (!warmup && s.timeSec > 30) {
+    const prevCycle = Math.floor((s.timeSec - dt) / CADENCE_PERIOD)
+    const cycle = Math.floor(s.timeSec / CADENCE_PERIOD)
+    if (cycle !== prevCycle) s.respiteSec = Math.max(s.respiteSec, 1.5)
   }
 
   // Spawn pacing (director-style): a deterministic target curve, with pressure
@@ -403,14 +419,17 @@ export const stepSim = (s: RunState, dt: number) => {
   // arrivals come in rhythmic crunches with calm between, instead of a flat drip
   // — this is the run's pulse. Phase is pure wall-clock (identical for everyone)
   // and only modulates PACING, never the seeded piece sequence. Intensity ramps
-  // with `prog`, so early waves are gentle and late ones bite.
-  const CADENCE_PERIOD = 20 // seconds per breather -> surge -> breather cycle
+  // with `progCap`, so early waves are gentle and late ones bite.
+  //
+  // The wave is meant to be FELT: the old breather was only ~10% slower than
+  // baseline (it read as noise), so the breathers are now genuinely calm
+  // (~45% slower, a couple of on-screen slots removed) while surges stay sharp.
+  // The breather is also where motes get swept and Overdrive gets banked — the
+  // run's recovery valve, not just a pause.
   const cadenceWave = 0.5 - 0.5 * Math.cos((s.timeSec / CADENCE_PERIOD) * Math.PI * 2) // 0..1
   const surge01 = Math.pow(cadenceWave, 2.2) * (0.4 + 0.6 * progCap) // sharpen into peaks + ramp in
-  // Surge: arrivals up to ~50% faster with a few extra on-screen slots; breather
-  // eases off ~10% so you actually get to breathe.
-  const cadenceInterval = 1.1 - 0.55 * surge01
-  const cadenceCap = Math.round(4 * surge01)
+  const cadenceInterval = 1.45 - 0.9 * surge01
+  const cadenceCap = Math.round(6 * surge01) - 2 // -2 in the trough .. +4 at full surge
 
   // Pressure: if blocks are close to failing, slow/stop spawns to preserve fairness.
   const dangerY = layout.failY - 2 * cellSize
