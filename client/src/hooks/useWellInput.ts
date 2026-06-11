@@ -132,6 +132,21 @@ export const useWellInput = (opts: {
 
     const onPointerMove = (e: PointerEvent) => {
       const s = stateRef.current
+      // Desktop first-class input: with a mouse and no button held, the well
+      // simply follows the cursor (no click-hold needed). Click stays the
+      // overdrive tap, click-drag still steers + throws like touch.
+      if (e.pointerType === 'mouse' && steerId === null && e.buttons === 0) {
+        if (s.paused || s.gameOver || s.jit || musicPanelOpenRef.current) return
+        if (onUi(e)) return
+        const p = getPoint(e)
+        if (!p) return
+        s.well.pos.x = p.x
+        s.well.pos.y = p.y
+        s.well.vel.x = 0
+        s.well.vel.y = 0
+        s.well.placed = true
+        return
+      }
       if (e.pointerId === steerId) {
         const p = getPoint(e)
         if (!p) return

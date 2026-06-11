@@ -1590,3 +1590,75 @@
   margin-top: 0.25rem;
 }
 
+
+/* ---- Title screen ------------------------------------------------------ */
+.titlePanel {
+  text-align: center;
+}
+.titleLogo {
+  font: 900 40px 'Oxanium', system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  margin: 6px 0 2px;
+  background: linear-gradient(180deg, #fff 20%, hsl(var(--accent-hue, 200) 90% 68%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 28px hsl(var(--accent-hue, 200) 90% 60% / 0.35);
+}
+.titleSub {
+  color: rgba(235, 240, 255, 0.62);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.titleChips {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  min-height: 22px;
+}
+.titleChip {
+  font: 700 11px 'Oxanium', system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: hsl(var(--accent-hue, 200) 90% 78%);
+  background: hsl(var(--accent-hue, 200) 80% 60% / 0.12);
+  border: 1px solid hsl(var(--accent-hue, 200) 80% 65% / 0.35);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.titleName {
+  margin-bottom: 4px;
+}
+.titleName .menuInput {
+  text-align: center;
+  width: 100%;
+}
+.titlePlay {
+  width: 100%;
+}
+
+/* ---- Settings panel ---------------------------------------------------- */
+.settingsPanel {
+  min-width: 280px;
+}
+.settingsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 12px 0;
+}
+.settingsLabel {
+  color: rgba(235, 240, 255, 0.78);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.settingsRow input[type='range'] {
+  flex: 1;
+  accent-color: hsl(var(--accent-hue, 200) 90% 60%);
+}
+.settingsRow input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: hsl(var(--accent-hue, 200) 90% 60%);
+}

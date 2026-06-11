@@ -44,6 +44,7 @@ import { PIECE_KEY, PieceSwatch } from './components/pieceKey'
 import { MusicHud } from './components/MusicHud'
 import { GameOverScreen, stepDateKey } from './components/GameOverScreen'
 import { useWellInput } from './hooks/useWellInput'
+import { SettingsPanel } from './components/SettingsPanel'
 
 type HudSnapshot = {
   paused: boolean
@@ -123,16 +124,37 @@ export default function App() {
       // Only resume a saved mid-run once the tutorial is complete; if onboarding
       // is still pending (first-time player, or ?tutorial=1), ignore any stale
       // save and (re)start the warmup so the override is honored.
-      if (isTutorialDone()) {
-        const saved = loadGameState()
-        if (saved) return saved
-        return createInitialRunState()
-      }
-      const fresh = createInitialRunState()
-      startTutorial(fresh)
-      return fresh
+      const boot = (() => {
+        if (isTutorialDone()) {
+          const saved = loadGameState()
+          if (saved) return saved
+          return createInitialRunState()
+        }
+        const fresh = createInitialRunState()
+        startTutorial(fresh)
+        return fresh
+      })()
+      // The title screen owns the boot moment: hold the sim paused until the
+      // player presses Play (a restored game-over skips the title and lands on
+      // its own screen).
+      if (!boot.gameOver) boot.paused = true
+      return boot
     })()
   )
+  // Whether boot restored a mid-run save (title shows Resume + Restart).
+  const bootHadSaveRef = useRef(
+    stateRef.current.timeSec > 0.5 && !stateRef.current.gameOver,
+  )
+  // 'title' until the player presses Play; the Esc/Space handlers and the
+  // pause overlay are gated on this so the title can't be escaped around.
+  const [screen, setScreen] = useState<'title' | 'playing'>(() =>
+    stateRef.current.gameOver ? 'playing' : 'title',
+  )
+  const screenRef = useRef(screen)
+  useEffect(() => {
+    screenRef.current = screen
+  }, [screen])
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const computePauseBtnBottomPx = useCallback(() => {
     const s = stateRef.current
@@ -171,7 +193,7 @@ export default function App() {
   }, [])
 
   const [hud, setHud] = useState<HudSnapshot>(() => ({
-    paused: false,
+    paused: stateRef.current.paused,
     pauseBtnBottomPx: computePauseBtnBottomPx(),
     depth: stateRef.current.depth,
     score: stateRef.current.score,
@@ -404,6 +426,7 @@ export default function App() {
   musicPanelOpenRef.current = musicPanelOpen
   dockActionsRef.current.toggleMusic = toggleDockMusicPanel
   dockActionsRef.current.togglePause = () => {
+    if (screenRef.current !== 'playing') return
     if (stateRef.current.gameOver) return
     // A just-in-time coachmark owns the pause; the OK card resumes it.
     if (stateRef.current.jit) return
@@ -416,6 +439,7 @@ export default function App() {
       // Spacebar fires overdrive on desktop (mirrors the tap-to-fire gesture).
       if (e.key === ' ' || e.code === 'Space') {
         if (e.repeat) return
+        if (screenRef.current !== 'playing') return
         e.preventDefault()
         const s = stateRef.current
         if (s.paused || s.gameOver) return
@@ -424,6 +448,7 @@ export default function App() {
       }
       if (e.key !== 'Escape') return
       if (e.repeat) return
+      if (screenRef.current !== 'playing') return
       e.preventDefault()
       if (stateRef.current.gameOver) return
       // A just-in-time coachmark owns the pause; only its OK button resumes.
@@ -858,6 +883,44 @@ export default function App() {
     restart()
   }, [showNamePrompt, savedThisRun, saveRunScore, nameDraft, restart])
 
+  // ---- Title screen ------------------------------------------------------
+  // Streak: consecutive calendar days (ending today, or yesterday if today
+  // hasn't been played yet) with at least one locally recorded run.
+  const streak = useMemo(() => {
+    const days = new Set(highScores.map((e) => e.dateKey))
+    let d = todayKey
+    if (!days.has(d)) d = stepDateKey(d, -1)
+    let n = 0
+    while (days.has(d)) {
+      n += 1
+      d = stepDateKey(d, -1)
+    }
+    return n
+  }, [highScores, todayKey])
+
+  // Play / Resume: commits the name (so the global board never shows PLAYER
+  // for want of asking), unlocks audio inside the click gesture (the iOS
+  // tap-to-resume fix), and releases the sim.
+  const startPlay = useCallback(() => {
+    const clean = nameDraft.trim() || 'PLAYER'
+    setNameDraft(clean)
+    saveLastPlayerName(clean)
+    sfxEngine.unlock()
+    if (musicEngine.isWantPlaying()) void musicEngine.start()
+    stateRef.current.paused = false
+    setHud((h) => ({ ...h, paused: false }))
+    setScreen('playing')
+  }, [nameDraft])
+
+  // Title "Restart today's run": discard the restored save but stay on the
+  // title; the Play button then starts the fresh run.
+  const restartFromTitle = useCallback(() => {
+    restart()
+    stateRef.current.paused = true
+    setHud((h) => ({ ...h, paused: true }))
+    bootHadSaveRef.current = false
+  }, [restart])
+
   // Local placement of the just-finished run within ITS day (1-based), for the
   // "New high score" banner. Computed before this run was inserted.
   const runLocalRank = useMemo(() => {
@@ -1073,7 +1136,7 @@ export default function App() {
 
             {/* Pause overlay. Suppressed while a just-in-time coachmark owns the
                 pause (its own OK card shows instead). */}
-            {hud.paused && !hud.gameOver && !hud.jitKind && pauseStats && (
+            {screen === 'playing' && hud.paused && !hud.gameOver && !hud.jitKind && pauseStats && (
               <div className="menuOverlay" role="dialog" aria-label="Paused">
                 <div className="menuPanel">
                   <div className="menuKicker">Run in progress</div>
@@ -1123,11 +1186,76 @@ export default function App() {
                     </button>
                   </div>
 
+                  <button type="button" className="menuLink" onClick={() => setSettingsOpen(true)}>
+                    Settings
+                  </button>
                   <button type="button" className="menuLink ftueReplayLink" onClick={replayTutorial}>
                     Replay tutorial
                   </button>
                 </div>
               </div>
+            )}
+
+            {/* Title screen: the daily ritual's front door. Frames today's
+                board, carries the streak, takes the player's name up front
+                (so the global board isn't full of PLAYER), and gives the
+                music a real gesture to start from. */}
+            {screen === 'title' && !hud.gameOver && (
+              <div className="menuOverlay titleOverlay" role="dialog" aria-label="laserburn">
+                <div className="menuPanel titlePanel">
+                  <div className="titleLogo">LASERBURN</div>
+                  <div className="titleSub">
+                    Today&apos;s board ·{' '}
+                    {new Date().toLocaleDateString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                  </div>
+                  <div className="titleChips">
+                    {streak > 0 && <span className="titleChip">{streak}-day streak</span>}
+                    {getBestScoreForDate(highScores, todayKey) > 0 && (
+                      <span className="titleChip">
+                        Best today {getBestScoreForDate(highScores, todayKey).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="nameSaveRow titleName">
+                    <input
+                      className="menuInput"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') startPlay()
+                      }}
+                      maxLength={16}
+                      placeholder="PLAYER"
+                      aria-label="Your name"
+                    />
+                  </div>
+                  <div className="menuActions">
+                    <button type="button" className="menuBtn primary titlePlay" onClick={startPlay}>
+                      {bootHadSaveRef.current ? 'Resume' : 'Play'}
+                    </button>
+                  </div>
+                  {bootHadSaveRef.current && (
+                    <button type="button" className="menuLink" onClick={restartFromTitle}>
+                      Restart today&apos;s run
+                    </button>
+                  )}
+                  <button type="button" className="menuLink" onClick={() => setSettingsOpen(true)}>
+                    Settings
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {settingsOpen && (
+              <SettingsPanel
+                musicVolume={volume}
+                onMusicVolume={changeVolume}
+                onClose={() => setSettingsOpen(false)}
+              />
             )}
 
             {/* Game-over overlay. Appears after a short wind-down beat; the name
