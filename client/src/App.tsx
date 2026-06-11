@@ -118,7 +118,7 @@ const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
   {
     kind: 'armored',
     name: 'Armored block',
-    desc: 'A reflective bottom requires damaging it from the sides or top.',
+    desc: 'Its mirrored bottom deflects your laser and resists damage. Hit the sides or top.',
   },
   {
     kind: 'shatter',

@@ -88,6 +88,12 @@ const OVERDRIVE_BEAM_WIDEN = 1.35 // beam forgiveness multiplier during overdriv
 // How long an armored block keeps flashing its "deflected, no damage" cue after
 // the last wrong-side hit (the renderer fades it out over this window).
 const SHIELD_FLASH_SEC = 0.3
+// Armored underside: the bottom face DEFLECTS the beam (it reflects at the call
+// sites) but is no longer fully immune — it takes this fraction of normal
+// damage as chip. A wall of armored pieces is a slow grind from below instead
+// of an impossible one; routing to a side or the top is still 4x faster and
+// remains the intended answer.
+const ARMORED_UNDERSIDE_DMG = 0.25
 // Fraction of the beam's DPS a mirror absorbs (as wear) each frame of contact.
 // The rest reflects. Sized with MIRROR_HP so a mirror lasts several seconds of
 // continuous contact — a reliable tool you can still deliberately burn down.
@@ -857,47 +863,48 @@ export const stepSim = (s: RunState, dt: number) => {
     const b = s.blocks.find((bb) => bb.id === blockId)
     if (!b) return
 
-    // Armored underside: a hit on the bottom face deflects (deals nothing — the
-    // beam still pierces past it at the call site), so the straight-up beam can
-    // never damage it; you must route the beam around to a side or the top. The
-    // bottom face's outward normal points DOWN (+y), so a downward-pointing hit
-    // normal means the beam struck the armored underside. Make that obvious:
-    // spray cold blue-white "deflection" sparks and flag the block so the
-    // renderer flashes a no-damage cue on the armored base.
-    if (b.kind === 'armored') {
-      if (normal.y >= 0.45) {
-        b.shieldFlashSec = SHIELD_FLASH_SEC
-        const tx = -normal.y
-        const ty = normal.x
-        for (let i = 0; i < 3; i++) {
-          const along = (Math.random() * 2 - 1) * (150 + Math.random() * 170)
-          const out = 70 + Math.random() * 130
-          s.sparks.push({
-            x: point.x,
-            y: point.y,
-            vx: tx * along + normal.x * out + (Math.random() * 2 - 1) * 30,
-            vy: ty * along + normal.y * out + (Math.random() * 2 - 1) * 30,
-            age: 0,
-            life: 0.1 + Math.random() * 0.14,
-            size: 1.0 + Math.random() * 1.8,
-            heat: 1,
-            cold: true,
-          })
-        }
-        if (s.sparks.length > MAX_SPARKS) s.sparks.splice(0, s.sparks.length - MAX_SPARKS)
-        return
+    // Armored underside: a hit on the bottom face DEFLECTS (the beam reflects at
+    // the call site) and only chips — ARMORED_UNDERSIDE_DMG of normal damage —
+    // so grinding from below is possible but routing to a side/top stays the
+    // clearly better answer. The bottom face's outward normal points DOWN (+y),
+    // so a downward-pointing hit normal means the beam struck the armored
+    // underside. Make the resist obvious: spray cold blue-white "deflection"
+    // sparks and flag the block so the renderer flashes a cue on the armored
+    // base (the hot welding FX below are skipped for these hits).
+    const armoredDeflect = b.kind === 'armored' && normal.y >= 0.45
+    if (armoredDeflect) {
+      b.shieldFlashSec = SHIELD_FLASH_SEC
+      const tx = -normal.y
+      const ty = normal.x
+      for (let i = 0; i < 3; i++) {
+        const along = (Math.random() * 2 - 1) * (150 + Math.random() * 170)
+        const out = 70 + Math.random() * 130
+        s.sparks.push({
+          x: point.x,
+          y: point.y,
+          vx: tx * along + normal.x * out + (Math.random() * 2 - 1) * 30,
+          vy: ty * along + normal.y * out + (Math.random() * 2 - 1) * 30,
+          age: 0,
+          life: 0.1 + Math.random() * 0.14,
+          size: 1.0 + Math.random() * 1.8,
+          heat: 1,
+          cold: true,
+        })
       }
+      if (s.sparks.length > MAX_SPARKS) s.sparks.splice(0, s.sparks.length - MAX_SPARKS)
     }
 
     const overdriveMult = s.overdriveSec > 0 ? OVERDRIVE_DPS_MULT : 1
-    b.hp -= s.stats.dps * overdriveMult * dt * intensity
+    const dmgMult = armoredDeflect ? ARMORED_UNDERSIDE_DMG : 1
+    b.hp -= s.stats.dps * overdriveMult * dt * intensity * dmgMult
     didDamageBlockThisFrame = true
     s.laser.hitBlockId = blockId
 
     // Sparks. Emission swells with musical onsets so impacts crackle a little
     // harder with the track (smooth onset envelope, not the discrete beat).
+    // Deflected (chip-damage) hits keep their cold spray only.
     const musicSparkBoost = 1 + s.music.intensity * s.music.onset * 1.6
-    const sparksPerSec = 130 * clamp(intensity, 0.15, 1) * musicSparkBoost
+    const sparksPerSec = armoredDeflect ? 0 : 130 * clamp(intensity, 0.15, 1) * musicSparkBoost
     s.sparkEmitAcc += sparksPerSec * dt
     const emitN = Math.min(6, Math.floor(s.sparkEmitAcc))
     if (emitN > 0) s.sparkEmitAcc -= emitN
@@ -940,7 +947,7 @@ export const stepSim = (s: RunState, dt: number) => {
       s.weld.y = point.y
     }
 
-    if (b.hp > 0) {
+    if (b.hp > 0 && !armoredDeflect) {
       const bloom = 1 + 1.15 * s.weld.dwell
       s.weldGlows.push({
         x: point.x,
