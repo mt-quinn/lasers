@@ -424,6 +424,13 @@ export type RunState = {
   // stepping while > 0, letting multi-kills "land"). Both transient.
   trauma: number
   hitStopSec: number
+  // Mote sweep chain: collecting motes in quick succession builds a chain
+  // whose window EXTENDS as it grows and whose per-mote score bonus keeps
+  // climbing (tier = count - 2, uncapped) — incidental trickle (1-2 motes)
+  // stays exactly as before. `sweepFx` is the end-of-chain celebration pop.
+  // Both transient.
+  sweep: { count: number; timerSec: number; bonus: number }
+  sweepFx: null | { t: number; dur: number; count: number; bonus: number; x: number; y: number }
 
   // FX
   pieceBursts: PieceBurstFx[]
@@ -588,6 +595,8 @@ export const createInitialRunState = (): RunState => {
     bestScoreLocal: 0,
     trauma: 0,
     hitStopSec: 0,
+    sweep: { count: 0, timerSec: 0, bonus: 0 },
+    sweepFx: null,
     pieceBursts: [],
     nextPieceBurstId: 1,
     sparks: [],

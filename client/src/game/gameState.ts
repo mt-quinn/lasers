@@ -30,6 +30,8 @@ type SavedRunState = Omit<
   | 'crescendo'
   | 'trauma'
   | 'hitStopSec'
+  | 'sweep'
+  | 'sweepFx'
   // In-flight feedback FX (not worth persisting).
   | 'gaugeFx'
   | 'nextGaugeFxId'

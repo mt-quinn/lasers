@@ -196,6 +196,41 @@ const updateWellPuck = (s: RunState, dt: number) => {
 const CHARGE_DISPLAY = 100
 const GAUGE_FX_DUR = 1.0
 
+// ---- Mote sweep chain --------------------------------------------------
+// Collecting motes in quick succession builds a CHAIN. Motes 1-2 in a window
+// are the incidental trickle and pay exactly what they always did; from the
+// 3rd mote on, each capture also pays a score bonus whose tier keeps climbing
+// with the chain (uncapped), and every capture EXTENDS the window — so a
+// sustained, deliberate vacuum run escalates further and further. Rising
+// pickup ticks + an end-of-chain SWEEP pop celebrate it (politely Peggle).
+const SWEEP_WINDOW_BASE = 0.7 // seconds granted by the first capture
+const SWEEP_WINDOW_PER = 0.06 // extra window per mote already in the chain
+const SWEEP_WINDOW_MAX = 1.8
+const SWEEP_MIN_CELEBRATE = 4 // chains shorter than this end silently
+const SWEEP_BONUS_BASE = 3 // per-mote bonus seed (scaled by depth and tier)
+
+// A mote was CAPTURED by the well (either flight-to-gauge or full-charge
+// absorb): advance the sweep chain, pay the escalating bonus, and harden the
+// feedback at milestones.
+const onMoteCaptured = (s: RunState) => {
+  const sw = s.sweep
+  sw.count += 1
+  sw.timerSec = Math.min(SWEEP_WINDOW_MAX, SWEEP_WINDOW_BASE + sw.count * SWEEP_WINDOW_PER)
+  if (sw.count >= 2) sfxEngine.playMoteTick(sw.count)
+  const tier = sw.count - 2
+  if (tier >= 1) {
+    const per = Math.round((SWEEP_BONUS_BASE + 0.18 * s.depth) * tier)
+    s.score += per
+    sw.bonus += per
+    pushGaugeFx(s, `+${per}`, 'score', s.well.pos.x, s.well.pos.y, true)
+  }
+  // Milestones (5, 10, 15, 20, ...) thump a little harder as the chain grows.
+  if (sw.count >= 5 && sw.count % 5 === 0) {
+    s.trauma = Math.min(1, s.trauma + 0.07)
+    s.crescendo = clamp(s.crescendo + 0.12, 0, 1)
+  }
+}
+
 const pushGaugeFx = (s: RunState, text: string, kind: GaugeFx['kind'], x?: number, y?: number, world?: boolean) => {
   s.gaugeFx.push({ id: s.nextGaugeFxId++, t: 0, dur: GAUGE_FX_DUR, text, kind, x, y, world })
   // Cap so a dense surge can't grow the list unbounded.
@@ -478,6 +513,34 @@ export const stepSim = (s: RunState, dt: number) => {
   if (s.trauma > 0) {
     s.trauma = Math.max(0, s.trauma - dt * 1.8)
   }
+  // Sweep chain window: counts down between captures; on expiry a worthwhile
+  // chain gets its celebration (pop + arpeggio + jolt scaled by length), then
+  // the chain resets. The fx itself just ages out.
+  if (s.sweep.timerSec > 0) {
+    s.sweep.timerSec = Math.max(0, s.sweep.timerSec - dt)
+    if (s.sweep.timerSec === 0) {
+      if (s.sweep.count >= SWEEP_MIN_CELEBRATE) {
+        s.sweepFx = {
+          t: 0,
+          dur: 1.5,
+          count: s.sweep.count,
+          bonus: s.sweep.bonus,
+          x: s.well.pos.x,
+          y: s.well.pos.y,
+        }
+        s.trauma = Math.min(1, s.trauma + Math.min(0.3, 0.05 + s.sweep.count * 0.012))
+        s.crescendo = clamp(s.crescendo + Math.min(0.5, s.sweep.count * 0.03), 0, 1)
+        sfxEngine.playSweepEnd(s.sweep.count)
+        vibrate(s.sweep.count >= 8 ? [12, 30, 18] : 14)
+      }
+      s.sweep.count = 0
+      s.sweep.bonus = 0
+    }
+  }
+  if (s.sweepFx) {
+    s.sweepFx.t += dt
+    if (s.sweepFx.t >= s.sweepFx.dur) s.sweepFx = null
+  }
 
   // Field descent: the board steps down one cell on a deterministic metronome
   // (dropIntervalSec, set by the difficulty schedule above). The descent is
@@ -614,10 +677,12 @@ export const stepSim = (s: RunState, dt: number) => {
             const bonus = overflowScore(s, m)
             s.score += bonus
             pushGaugeFx(s, `+${bonus}`, 'score', well.pos.x, well.pos.y, true)
+            onMoteCaptured(s)
             dead.push(m.id)
             continue
           }
           m.collecting = true
+          onMoteCaptured(s)
           m.ct = 0
           m.cfx = m.x
           // Capture from the on-screen (animated) position for a seamless handoff.

@@ -839,4 +839,89 @@ export const drawOverlayPass = (c: FrameCtx) => {
         ring(pp.x, pp.y, rHole, 50)
       }
     }
+  // ---- Mote sweep chain feedback -----------------------------------------
+  // Drawn last (above the gravity-well lens) so the text never warps. Two
+  // parts: a live readout while a chain is building (xN + the extending
+  // window bar draining over the well), then the end-of-chain SWEEP pop with
+  // expanding rings — louder, bigger and brighter the longer the chain ran.
+  if (s.sweep.count >= 3 && s.sweep.timerSec > 0 && !s.gameOver) {
+    const p = project(s.well.pos.x, s.well.pos.y)
+    const n = s.sweep.count
+    const hue = mi > 0 ? mHue : 46
+    const size = Math.min(26, 13 + n * 0.7)
+    const y0 = p.y - 34 - size * 0.4
+    ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.font = `900 ${size.toFixed(0)}px 'Oxanium', system-ui, sans-serif`
+    ctx.shadowColor = hsl(hue, 95, 60, 0.8)
+    ctx.shadowBlur = 8 + Math.min(10, n * 0.5)
+    ctx.fillStyle = hsl(hue, 100, 70, 0.95)
+    ctx.fillText(`\u00d7${n}`, p.x, y0)
+    ctx.shadowBlur = 0
+    // Window bar: drains toward the chain's end; every capture refills AND
+    // lengthens it, so a hot streak visibly buys more time.
+    const winLen = Math.min(1.8, 0.7 + n * 0.06)
+    const frac = clamp(s.sweep.timerSec / winLen, 0, 1)
+    const bw = 38
+    ctx.lineCap = 'round'
+    ctx.lineWidth = 2.5
+    ctx.strokeStyle = hsl(hue, 40, 40, 0.35)
+    ctx.beginPath()
+    ctx.moveTo(p.x - bw / 2, y0 + 6)
+    ctx.lineTo(p.x + bw / 2, y0 + 6)
+    ctx.stroke()
+    ctx.strokeStyle = hsl(hue, 95, 64, 0.9)
+    ctx.beginPath()
+    ctx.moveTo(p.x - (bw * frac) / 2, y0 + 6)
+    ctx.lineTo(p.x + (bw * frac) / 2, y0 + 6)
+    ctx.stroke()
+    ctx.restore()
+  }
+  if (s.sweepFx) {
+    const fx = s.sweepFx
+    const p = project(fx.x, fx.y)
+    const tp = clamp(fx.t / fx.dur, 0, 1)
+    const popIn = clamp(fx.t / 0.16, 0, 1)
+    // Pop-in with a small overshoot, drift upward, fade out at the tail.
+    const scale = 0.65 + 0.55 * popIn - 0.2 * Math.max(0, popIn * 1.4 - 1)
+    const rise = 26 * tp
+    const fade = tp < 0.72 ? 1 : 1 - (tp - 0.72) / 0.28
+    const intens = Math.min(1, fx.count / 14)
+    const hue = mi > 0 ? mHue : 46
+    const cy = p.y - 40 - rise
+    ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.translate(p.x, cy)
+    ctx.scale(scale, scale)
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    const big = 17 + Math.min(15, fx.count * 0.8)
+    ctx.font = `900 ${big.toFixed(0)}px 'Oxanium', system-ui, sans-serif`
+    ctx.shadowColor = hsl(hue, 100, 62, 0.9 * fade)
+    ctx.shadowBlur = 12 + 14 * intens
+    ctx.fillStyle = hsl(hue, 100, 76, 0.98 * fade)
+    ctx.fillText(`SWEEP \u00d7${fx.count}`, 0, 0)
+    ctx.shadowBlur = 4
+    ctx.font = `800 ${(big * 0.62).toFixed(0)}px 'Oxanium', system-ui, sans-serif`
+    ctx.fillStyle = hsl(46, 100, 80, 0.95 * fade)
+    ctx.fillText(`+${fx.bonus.toLocaleString()}`, 0, big * 0.78)
+    ctx.restore()
+    // Expanding rings (additive); a third ring joins on double-digit chains.
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const rings = fx.count >= 10 ? 3 : 2
+    for (let r = 0; r < rings; r++) {
+      const rt = clamp((fx.t - r * 0.09) / 0.6, 0, 1)
+      if (rt <= 0 || rt >= 1) continue
+      const rad = 18 + 90 * rt * (0.7 + 0.5 * intens)
+      ctx.strokeStyle = hsl(hue, 95, 70, 0.5 * (1 - rt) * fade)
+      ctx.lineWidth = 2.5 * (1 - rt) + 0.5
+      ctx.beginPath()
+      ctx.arc(p.x, p.y - 6, rad, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
 }

@@ -43,6 +43,9 @@ class SfxEngine {
   // SFX bus volume (settings panel). Sits between the voices and the limiter.
   private master: GainNode | null = null
   private lastAlarmAt = 0
+  // Rolling schedule cursor for sweep ticks: motes swallowed in the same frame
+  // play as a fast rising arpeggio instead of one chord.
+  private lastTickAt = 0
   private buffer: AudioBuffer | null = null
   // Raw bytes fetched up front (no AudioContext needed) so the sample is ready
   // to decode the instant the context exists.
@@ -200,6 +203,60 @@ class SfxEngine {
     }
     beep(now, 920, 640)
     beep(now + 0.16, 700, 470)
+  }
+
+  // One synthesized pluck, used by the sweep-chain feedback below.
+  private pluck(t0: number, freq: number, vol: number, dur = 0.16, type: OscillatorType = 'sine') {
+    const ctx = this.ctx
+    const out = this.master ?? this.limiter
+    if (!ctx || !out) return
+    const osc = ctx.createOscillator()
+    osc.type = type
+    osc.frequency.value = freq
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0, t0)
+    g.gain.linearRampToValueAtTime(vol, t0 + 0.008)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur)
+    osc.connect(g)
+    g.connect(out)
+    osc.start(t0)
+    osc.stop(t0 + dur + 0.02)
+    osc.onended = () => {
+      try {
+        osc.disconnect()
+        g.disconnect()
+      } catch {
+        // Already torn down.
+      }
+    }
+  }
+
+  // Rising pickup ticks for the mote sweep chain: each capture walks one step
+  // up a pentatonic scale (the Peggle trick, kept polite), growing slightly
+  // louder as the chain builds. `n` is the mote's position in the chain.
+  playMoteTick(n: number) {
+    const ctx = this.ctx
+    if (!ctx || ctx.state !== 'running') return
+    const scale = [0, 3, 5, 7, 10]
+    const step = Math.min(24, n - 1)
+    const semis = scale[step % 5]! + 12 * Math.floor(step / 5)
+    const freq = 523.25 * Math.pow(2, semis / 12)
+    const t0 = Math.max(ctx.currentTime, this.lastTickAt + 0.045)
+    this.lastTickAt = t0
+    this.pluck(t0, freq, 0.1 + Math.min(0.1, n * 0.006))
+  }
+
+  // End-of-chain flourish: a quick ascending arpeggio that gains notes (and a
+  // little sparkle) with the chain length.
+  playSweepEnd(count: number) {
+    const ctx = this.ctx
+    if (!ctx || ctx.state !== 'running') return
+    const t0 = ctx.currentTime
+    const semis = count >= 16 ? [0, 7, 12, 19, 24] : count >= 10 ? [0, 7, 12, 19] : [0, 7, 12]
+    semis.forEach((sm, i) => {
+      const freq = 659.26 * Math.pow(2, sm / 12)
+      this.pluck(t0 + i * 0.055, freq, 0.15, 0.22, i === semis.length - 1 ? 'triangle' : 'sine')
+    })
   }
 }
 
