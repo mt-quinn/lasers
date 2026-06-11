@@ -1,4 +1,9 @@
 import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from '../game/runState'
+import {
+  COMBO_PIERCE_TIER1,
+  COMBO_PIERCE_TIER2,
+  COMBO_SCORE_MULT_CAP,
+} from '../game/sim'
 import type { RunState, BlockEntity, MirrorFeature, PrismFeature } from '../game/runState'
 import type { Vec2 } from '../game/math'
 import { clamp } from '../game/math'
@@ -2004,7 +2009,11 @@ export const drawFrame = (
     // fires Overdrive (a beam surge); during the surge it drains back to empty.
     const heatFrac = clamp(s.heat, 0, 1)
     const overdriveOn = s.overdriveSec > 0
-    const comboMult = s.combo > 0 ? 1 + 0.1 * (s.combo - 1) : 1
+    const comboMult =
+      s.combo > 0 ? Math.min(COMBO_SCORE_MULT_CAP, 1 + 0.1 * (s.combo - 1)) : 1
+    // Active combo pierce tier (the beam rakes +N extra blocks while hot).
+    const comboPierceTier =
+      s.combo >= COMBO_PIERCE_TIER2 ? 2 : s.combo >= COMBO_PIERCE_TIER1 ? 1 : 0
     // The corner dial ring now reflects the crescendo (big-play surge).
     const crescendoArc = clamp(s.crescendo, 0, 1)
 
@@ -2399,6 +2408,16 @@ export const drawFrame = (
         ctx.fillStyle = hsl(comboHue, 100, 62 + 12 * fresh, (0.85 + 0.15 * fresh) * fade)
         ctx.fillText(label, insetR - scoreW - 9, ty)
         ctx.shadowBlur = 0
+        // Combo pierce tier: a small "PIERCE +N" tag under the multiplier so the
+        // earned beam penetration is legible (it's the chain's real payoff).
+        if (comboPierceTier > 0) {
+          ctx.font = "800 9px 'Oxanium', system-ui, sans-serif"
+          ctx.shadowColor = hsl(comboHue, 100, 60, 0.4 * fade)
+          ctx.shadowBlur = 4
+          ctx.fillStyle = hsl(comboHue, 90, 74, 0.9 * fade)
+          ctx.fillText(`PIERCE +${comboPierceTier}`, insetR - scoreW - 9, ty + 13)
+          ctx.shadowBlur = 0
+        }
       }
       ctx.restore()
     }

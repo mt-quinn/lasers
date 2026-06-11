@@ -44,6 +44,18 @@ const WELL_NEAR_BITE_POWER = 10
 
 // Score-attack tuning.
 export const COMBO_WINDOW_SEC = 4.0 // a kill must land within this window to keep the combo
+// Combo-gated pierce: sustained chains buy beam PENETRATION, the one lever that
+// scales throughput with skill. At tier 1 the beam rakes one extra block per
+// path; at tier 2, two extra. This is what lets a hot player answer the late
+// board (the pierce cap of 1 otherwise hard-limits sustainable kill rate at
+// ~36 hp/s while the board's demands keep growing) — and it's earned every
+// run, decays with disengagement, and can't break the opening (combo starts
+// at 0), which is why the base cap stays at 1.
+export const COMBO_PIERCE_TIER1 = 8 // combo >= this: +1 pierce
+export const COMBO_PIERCE_TIER2 = 16 // combo >= this: +2 pierce
+// Score multiplier from combo is CAPPED so late-game score isn't dominated by
+// a single unbounded variable (pierce tiers keep riding the raw combo).
+export const COMBO_SCORE_MULT_CAP = 4
 
 // Heat / Overdrive: the bankable beam amplifier. Heat is CHARGE you earn ONLY by
 // vacuuming motes with the well; topping it out ARMS a surge you unleash on
@@ -440,11 +452,16 @@ export const stepSim = (s: RunState, dt: number) => {
   // positioned by App). The beam path is solved from this each frame.
   updateWellPuck(s, dt)
 
-  // Combo + crescendo decay. The combo lapses if no kill lands inside the rolling
-  // window; the crescendo (visual surge) eases back continuously.
+  // Combo + crescendo decay. A lapse no longer wipes the chain: it HALVES it
+  // (rounding down) and re-arms the window, so one bad beat costs a tier of
+  // momentum, not the whole run's — repeated disengagement still decays to zero
+  // in a few windows. The crescendo (visual surge) eases back continuously.
   if (s.comboTimerSec > 0) {
     s.comboTimerSec = Math.max(0, s.comboTimerSec - dt)
-    if (s.comboTimerSec === 0) s.combo = 0
+    if (s.comboTimerSec === 0 && s.combo > 0) {
+      s.combo = Math.floor(s.combo / 2)
+      if (s.combo > 0) s.comboTimerSec = COMBO_WINDOW_SEC
+    }
   }
   if (s.crescendo > 0) {
     s.crescendo = Math.max(0, s.crescendo - dt * 0.9)
@@ -987,7 +1004,7 @@ export const stepSim = (s: RunState, dt: number) => {
       killsThisFrame += 1
       const multiKillMult = Math.min(3, 1 + 0.4 * (killsThisFrame - 1))
 
-      const comboMult = 1 + 0.1 * (s.combo - 1)
+      const comboMult = Math.min(COMBO_SCORE_MULT_CAP, 1 + 0.1 * (s.combo - 1))
       const routeBonus = viaOptics ? 1.75 : 1
       const overdriveScore = s.overdriveSec > 0 ? OVERDRIVE_SCORE_MULT : 1
       const depthBase = 10 + s.depth * 0.5
@@ -1111,12 +1128,16 @@ export const stepSim = (s: RunState, dt: number) => {
   }
 
   // The beam always exists as a straight-up ray from the muzzle; the field bends it.
+  // Pierce budget = base + combo tiers (skill-elastic throughput) + overdrive bonus.
+  const comboPierce =
+    s.combo >= COMBO_PIERCE_TIER2 ? 2 : s.combo >= COMBO_PIERCE_TIER1 ? 1 : 0
   enqueueRay({
     o: { ...s.emitter.pos },
     d: { x: 0, y: -1 },
     intensity: 1,
     bouncesLeft: s.stats.maxBounces,
-    piercesLeft: s.stats.maxPierces + (overdrive ? OVERDRIVE_BONUS_PIERCES : 0),
+    piercesLeft:
+      s.stats.maxPierces + comboPierce + (overdrive ? OVERDRIVE_BONUS_PIERCES : 0),
     minT: 0,
     ignorePrismId: -1,
     viaOptics: false,
