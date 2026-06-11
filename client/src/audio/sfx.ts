@@ -17,6 +17,8 @@
 // "ambient" audio session so the effect mixes with other app audio instead of
 // interrupting it. It unlocks on the same first gesture as the music.
 
+import { getPrefs } from '../game/settings'
+
 const POP_URL = `${import.meta.env.BASE_URL}pop.wav`
 
 // Fixed playback level for the pop SFX (0..1): 50%, independent of the music
@@ -38,6 +40,9 @@ type NavigatorWithAudioSession = Navigator & {
 class SfxEngine {
   private ctx: AudioContext | null = null
   private limiter: DynamicsCompressorNode | null = null
+  // SFX bus volume (settings panel). Sits between the voices and the limiter.
+  private master: GainNode | null = null
+  private lastAlarmAt = 0
   private buffer: AudioBuffer | null = null
   // Raw bytes fetched up front (no AudioContext needed) so the sample is ready
   // to decode the instant the context exists.
@@ -83,8 +88,12 @@ class SfxEngine {
       limiter.attack.value = 0.003
       limiter.release.value = 0.12
       limiter.connect(ctx.destination)
+      const master = ctx.createGain()
+      master.gain.value = getPrefs().sfxVolume
+      master.connect(limiter)
       this.ctx = ctx
       this.limiter = limiter
+      this.master = master
       void this.decode()
     } catch {
       // No Web Audio available; stay silent.
@@ -133,7 +142,7 @@ class SfxEngine {
     gain.gain.value = POP_VOLUME
 
     src.connect(gain)
-    gain.connect(limiter)
+    gain.connect(this.master ?? limiter)
 
     this.activeVoices += 1
     src.onended = () => {
@@ -148,6 +157,49 @@ class SfxEngine {
 
     // Up to ~6ms of start jitter further decorrelates same-frame multi-kills.
     src.start(ctx.currentTime + Math.random() * 0.006)
+  }
+
+  // SFX bus volume 0..1 (independent of the music slider). Driven by the
+  // settings panel; persisted there via game/settings.
+  setVolume(v: number) {
+    if (this.master) this.master.gain.value = Math.min(1, Math.max(0, v))
+  }
+
+  // Fail-grace alarm: two short descending beeps, fully synthesized (no
+  // asset). Fired when a block first crosses the fail line and the one-step
+  // grace arms — the "one step from death" telegraph. Throttled so repeated
+  // re-arms can't machine-gun it.
+  playAlarm() {
+    const ctx = this.ctx
+    const out = this.master ?? this.limiter
+    if (!ctx || !out || ctx.state !== 'running') return
+    const now = ctx.currentTime
+    if (now - this.lastAlarmAt < 1.1) return
+    this.lastAlarmAt = now
+    const beep = (t0: number, f0: number, f1: number) => {
+      const osc = ctx.createOscillator()
+      osc.type = 'triangle'
+      osc.frequency.setValueAtTime(f0, t0)
+      osc.frequency.exponentialRampToValueAtTime(f1, t0 + 0.1)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, t0)
+      g.gain.linearRampToValueAtTime(0.24, t0 + 0.012)
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12)
+      osc.connect(g)
+      g.connect(out)
+      osc.start(t0)
+      osc.stop(t0 + 0.14)
+      osc.onended = () => {
+        try {
+          osc.disconnect()
+          g.disconnect()
+        } catch {
+          // Already torn down.
+        }
+      }
+    }
+    beep(now, 920, 640)
+    beep(now + 0.16, 700, 470)
   }
 }
 

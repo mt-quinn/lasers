@@ -695,8 +695,14 @@ export const stepSim = (s: RunState, dt: number) => {
       // Nothing past the line (player cleared it, or never reached it): disarm.
       s.failGraceDepth = -1
     } else if (s.failGraceDepth < 0) {
-      // First detection: arm the grace at the current step. Not fatal yet.
+      // First detection: arm the grace at the current step. Not fatal yet —
+      // but make the brush with death unmistakable: alarm beeps, a haptic
+      // buzz, a camera jolt, and (in the renderer) the fail line going to its
+      // alarm state with brackets on the offending block.
       s.failGraceDepth = s.depth
+      sfxEngine.playAlarm()
+      vibrate([30, 40, 30])
+      s.trauma = Math.min(1, s.trauma + 0.18)
     } else if (s.depth > s.failGraceDepth) {
       // A descent step has elapsed and a block is still past the line: end the run.
       s.lives = 0

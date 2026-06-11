@@ -45,7 +45,47 @@ const getLensOut = (wDev: number, hDev: number) => {
 // black-hole lens snapshots the background, so these get lensed for free.
 // `mag` scales brightness/size (a few rare "hero" stars anchor the field); `ti`
 export const drawOverlayPass = (c: FrameCtx) => {
-  const { ctx, s, ui, layout, proj, project, mi, mHue, dpr, hsl, roundedRectPath } = c
+  const { ctx, s, ui, layout, proj, project, mi, mHue, tNow, dpr, hsl, roundedRectPath } = c
+
+  // Fail-grace telegraph: bracket the block(s) sitting past the fail line in
+  // pulsing red while the one-step grace is armed, so the player sees exactly
+  // what must die (or be survived) this descent step.
+  if (s.failGraceDepth >= 0 && !s.gameOver) {
+    const failY = layout.failY
+    const flash = 0.55 + 0.45 * Math.sin(tNow * 12)
+    ctx.save()
+    ctx.lineWidth = 2.5
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = hsl(PALETTE.dangerHue, 95, 64, 0.35 + 0.6 * flash)
+    ctx.shadowColor = hsl(PALETTE.dangerHue, 100, 55, 0.8)
+    ctx.shadowBlur = 9
+    for (const b of s.blocks) {
+      const vy = b.pos.y - s.dropAnimOffset - b.dropAnimExtra
+      if (vy + b.localAabb.maxY < failY) continue
+      // Projected trapezoid of the piece's AABB (lifted to cover the 3D top).
+      const lift = 18
+      const tl = project(b.pos.x + b.localAabb.minX, vy + b.localAabb.minY)
+      const tr = project(b.pos.x + b.localAabb.maxX, vy + b.localAabb.minY)
+      const bl = project(b.pos.x + b.localAabb.minX, vy + b.localAabb.maxY)
+      const br = project(b.pos.x + b.localAabb.maxX, vy + b.localAabb.maxY)
+      const pad = 6
+      const corners: Array<[number, number, number, number]> = [
+        [tl.x - pad, tl.y - pad - lift * tl.scale, 1, 1],
+        [tr.x + pad, tr.y - pad - lift * tr.scale, -1, 1],
+        [bl.x - pad, bl.y + pad, 1, -1],
+        [br.x + pad, br.y + pad, -1, -1],
+      ]
+      const len = Math.min(15, (br.x - bl.x) * 0.28)
+      for (const [cx2, cy2, dx, dy] of corners) {
+        ctx.beginPath()
+        ctx.moveTo(cx2 + dx * len, cy2)
+        ctx.lineTo(cx2, cy2)
+        ctx.lineTo(cx2, cy2 + dy * len)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+  }
     // Control dock (pause + music): drawn ON the canvas as part of the HUD, so
     // the gravity-well lens below samples and warps it exactly like the rest of
     // the UI (the DOM-overlay version could never be lensed). Hit-testing lives

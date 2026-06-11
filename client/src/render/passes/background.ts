@@ -882,14 +882,18 @@ export const drawBackgroundPass = (c: FrameCtx) => {
     // present; an amber glow ignites and pulses as the nearest piece nears it.
     const failY = layout.failY
     {
-      let danger = 0
+      // Fail-grace alarm: while a block sits past the line (one descent step
+      // from ending the run) the threshold goes to a fast, full-strength
+      // strobe so the player KNOWS they're in the grace window.
+      const graceArmed = s.failGraceDepth >= 0 && !s.gameOver
+      let danger = graceArmed ? 1 : 0
       for (const b of s.blocks) {
         const by = b.pos.y - s.dropAnimOffset - b.dropAnimExtra + b.localAabb.maxY
         danger = Math.max(danger, 1 - clamp((failY - by) / 160, 0, 1))
       }
       const fa = project(0, failY)
       const fb = project(s.view.width, failY)
-      const pulse = 0.6 + 0.4 * Math.sin(tNow * 4)
+      const pulse = graceArmed ? 0.45 + 0.55 * Math.sin(tNow * 12) : 0.6 + 0.4 * Math.sin(tNow * 4)
       const DH = PALETTE.dangerHue // reserved danger red
       ctx.save()
       ctx.lineCap = 'round'
