@@ -14,13 +14,16 @@
 //   - the offline preview rasterizer (dev harness) — software-shades the
 //     identical triangles so the board can be art-directed headlessly.
 //
-// Vertex layout (12 floats): wx, wy, z, nx, ny, nz, cr, cg, cb, er, eg, eb
+// Vertex layout (13 floats): wx, wy, z, nx, ny, nz, cr, cg, cb, er, eg, eb, mat
+// mat 0 = standard lit steel; mat 1 = MIRROR (the parapet walls): the fragment
+// stage swaps to a procedural chrome — scrolling specular streak bands keyed to
+// world y/z — so the surfaces the beam bounces off read as machined mirror.
 // Colors are pre-faded by distance on the CPU; the fragment stage applies
 // lighting:  col = base * (0.40 + 0.66 * max(0, dot(N, L))) * ao(z) + emissive
 // with ao(z) = clamp(1 + z * 0.022, 0.55, 1) so the recessed channel and lip
 // faces self-shadow.
 
-export const FLOATS_PER_BOARD_VERT = 12
+export const FLOATS_PER_BOARD_VERT = 13
 
 // Shared light direction (matches piecesGL's key light).
 export const BOARD_LIGHT: [number, number, number] = (() => {
@@ -35,7 +38,11 @@ export const BOARD_LIGHT: [number, number, number] = (() => {
 export const TRENCH_CH_L = 0.34
 export const TRENCH_CH_R = 0.66
 export const TRENCH_CH_DEPTH = 12 // channel recess below deck (px)
-export const TRENCH_WALL_Z = 26 // parapet height above deck (px)
+export const TRENCH_WALL_Z = 44 // parapet height above deck (px)
+// Inward chamfer at the wall top: the lip leans into the shaft and catches
+// light, so the raised edge reads dimensionally instead of as a flat strip.
+const WALL_CHAMFER_IN = 5.5
+const WALL_CHAMFER_UP = 5
 const BRACE_H = 12
 const BRACE_D = 12
 const RING_EVERY = 4
@@ -100,7 +107,7 @@ export const buildTrenchMesh = (o: TrenchMeshOpts): Float32Array => {
   // Distance fade baked into vertex colors (the far shaft melts into the fog).
   const fadeAt = (y: number) => Math.min(1, Math.max(0, 0.08 + 1.05 * pAt(y)))
 
-  const push = (pos: V3, n: V3, c: RGB, e: RGB, fade: number) => {
+  const push = (pos: V3, n: V3, c: RGB, e: RGB, fade: number, mat: number) => {
     arr.push(
       pos.x,
       pos.y,
@@ -114,21 +121,22 @@ export const buildTrenchMesh = (o: TrenchMeshOpts): Float32Array => {
       e[0] * fade,
       e[1] * fade,
       e[2] * fade,
+      mat,
     )
   }
   const NOE: RGB = [0, 0, 0]
   // Quad a-b-c-d (a/b far edge, d/c near edge or any consistent winding).
-  const quad = (a: V3, b: V3, c: V3, d: V3, n: V3, col: RGB, emi: RGB = NOE) => {
+  const quad = (a: V3, b: V3, c: V3, d: V3, n: V3, col: RGB, emi: RGB = NOE, mat = 0) => {
     const fa = fadeAt(a.y)
     const fb = fadeAt(b.y)
     const fc = fadeAt(c.y)
     const fd = fadeAt(d.y)
-    push(a, n, col, emi, fa)
-    push(b, n, col, emi, fb)
-    push(c, n, col, emi, fc)
-    push(a, n, col, emi, fa)
-    push(c, n, col, emi, fc)
-    push(d, n, col, emi, fd)
+    push(a, n, col, emi, fa, mat)
+    push(b, n, col, emi, fb, mat)
+    push(c, n, col, emi, fc, mat)
+    push(a, n, col, emi, fa, mat)
+    push(c, n, col, emi, fc, mat)
+    push(d, n, col, emi, fd, mat)
   }
 
   const W = o.W
@@ -339,14 +347,21 @@ export const buildTrenchMesh = (o: TrenchMeshOpts): Float32Array => {
       emiAccent(idle * 1.6 + 0.5 * mids),
     )
 
-    // --- Outer parapet walls --------------------------------------------
+    // --- Outer parapet walls: raised MIRROR surfaces ----------------------
+    // The bounce surfaces. Tall chrome faces (mat 1: the shader swaps to a
+    // procedural mirror with scrolling streak bands), an inward-leaning
+    // chamfer lip that catches the key light, and an emissive cap rail riding
+    // the lip's crest.
+    const MIRROR = 1
     quad(
       { x: 0, y: yTop, z: WZ },
       { x: 0, y: yBot, z: WZ },
       { x: 0, y: yBot, z: 0 },
       { x: 0, y: yTop, z: 0 },
       NL,
-      steel(17, 2),
+      steel(26, 2),
+      NOE,
+      MIRROR,
     )
     quad(
       { x: W, y: yBot, z: WZ },
@@ -354,23 +369,46 @@ export const buildTrenchMesh = (o: TrenchMeshOpts): Float32Array => {
       { x: W, y: yTop, z: 0 },
       { x: W, y: yBot, z: 0 },
       NR,
-      steel(17, 2),
+      steel(26, 2),
+      NOE,
+      MIRROR,
     )
-    // Wall cap rails (emissive top edge).
+    // Chamfer lips: lean into the shaft so the raised edge reads as a bevel.
     quad(
       { x: 0, y: yTop, z: WZ },
-      { x: 3, y: yTop, z: WZ },
-      { x: 3, y: yBot, z: WZ },
+      { x: WALL_CHAMFER_IN, y: yTop, z: WZ + WALL_CHAMFER_UP },
+      { x: WALL_CHAMFER_IN, y: yBot, z: WZ + WALL_CHAMFER_UP },
       { x: 0, y: yBot, z: WZ },
+      { x: 0.66, y: 0, z: 0.75 },
+      steel(30, 2),
+      NOE,
+      MIRROR,
+    )
+    quad(
+      { x: W - WALL_CHAMFER_IN, y: yTop, z: WZ + WALL_CHAMFER_UP },
+      { x: W, y: yTop, z: WZ },
+      { x: W, y: yBot, z: WZ },
+      { x: W - WALL_CHAMFER_IN, y: yBot, z: WZ + WALL_CHAMFER_UP },
+      { x: -0.66, y: 0, z: 0.75 },
+      steel(30, 2),
+      NOE,
+      MIRROR,
+    )
+    // Cap rails (emissive) ride the chamfer crest.
+    quad(
+      { x: WALL_CHAMFER_IN - 1, y: yTop, z: WZ + WALL_CHAMFER_UP + 0.2 },
+      { x: WALL_CHAMFER_IN + 2.4, y: yTop, z: WZ + WALL_CHAMFER_UP + 0.2 },
+      { x: WALL_CHAMFER_IN + 2.4, y: yBot, z: WZ + WALL_CHAMFER_UP + 0.2 },
+      { x: WALL_CHAMFER_IN - 1, y: yBot, z: WZ + WALL_CHAMFER_UP + 0.2 },
       NUP,
       [0, 0, 0],
       emiWall(0.85),
     )
     quad(
-      { x: W - 3, y: yTop, z: WZ },
-      { x: W, y: yTop, z: WZ },
-      { x: W, y: yBot, z: WZ },
-      { x: W - 3, y: yBot, z: WZ },
+      { x: W - WALL_CHAMFER_IN - 2.4, y: yTop, z: WZ + WALL_CHAMFER_UP + 0.2 },
+      { x: W - WALL_CHAMFER_IN + 1, y: yTop, z: WZ + WALL_CHAMFER_UP + 0.2 },
+      { x: W - WALL_CHAMFER_IN + 1, y: yBot, z: WZ + WALL_CHAMFER_UP + 0.2 },
+      { x: W - WALL_CHAMFER_IN - 2.4, y: yBot, z: WZ + WALL_CHAMFER_UP + 0.2 },
       NUP,
       [0, 0, 0],
       emiWall(0.85),

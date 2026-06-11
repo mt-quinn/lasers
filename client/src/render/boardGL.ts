@@ -30,6 +30,7 @@ attribute float aZ;
 attribute vec3 aNormal;
 attribute vec3 aColor;
 attribute vec3 aEmissive;
+attribute float aMat;
 
 uniform float uCx;
 uniform float uStrength;
@@ -44,6 +45,8 @@ varying vec3 vColor;
 varying vec3 vEmissive;
 varying vec3 vN;
 varying float vZ;
+varying float vWy;
+varying float vMat;
 
 void main() {
   float p = 1.0 / (1.0 + uStrength * (uNearWorldY - aWorld.y));
@@ -59,6 +62,8 @@ void main() {
   vEmissive = aEmissive;
   vN = aNormal;
   vZ = aZ;
+  vWy = aWorld.y;
+  vMat = aMat;
 }
 `
 
@@ -68,11 +73,29 @@ varying vec3 vColor;
 varying vec3 vEmissive;
 varying vec3 vN;
 varying float vZ;
+varying float vWy;
+varying float vMat;
 uniform vec3 uLightDir;
 
 void main() {
   vec3 N = normalize(vN);
   float dif = max(0.0, dot(N, uLightDir));
+  if (vMat > 0.5) {
+    // MIRROR (parapet walls): procedural chrome. Specular streak bands keyed
+    // to world y (so they scroll with the board) and height, over the steel
+    // base — a fake reflection that reads as machined mirror without an env
+    // map. Brightness is modulated by the CPU-baked distance fade carried in
+    // vColor, so the chrome melts into the fog like everything else.
+    float band = pow(0.5 + 0.5 * sin(vWy * 0.05 + vZ * 0.30), 3.0);
+    float band2 = 0.5 + 0.5 * sin(vWy * 0.011 + vZ * 0.07 + 4.7);
+    float refl = 0.22 + 0.55 * band + 0.30 * band2 * band2;
+    float fadeK = clamp(length(vColor) * 3.0, 0.0, 1.0);
+    vec3 col = vColor * (0.45 + 1.7 * refl);
+    col += vec3(0.50, 0.58, 0.66) * refl * 0.35 * fadeK;
+    col += vEmissive;
+    gl_FragColor = vec4(col, 1.0);
+    return;
+  }
   float ao = clamp(1.0 + vZ * 0.022, 0.55, 1.0);
   vec3 col = vColor * (0.40 + 0.66 * dif) * ao + vEmissive;
   gl_FragColor = vec4(col, 1.0);
@@ -146,6 +169,7 @@ const init = (): boolean => {
       aNormal: g.getAttribLocation(prog, 'aNormal'),
       aColor: g.getAttribLocation(prog, 'aColor'),
       aEmissive: g.getAttribLocation(prog, 'aEmissive'),
+      aMat: g.getAttribLocation(prog, 'aMat'),
     }
     gl = g
     program = prog
@@ -196,6 +220,7 @@ export const renderBoardGL = (
   fp(aLoc.aNormal!, 3, 3)
   fp(aLoc.aColor!, 3, 6)
   fp(aLoc.aEmissive!, 3, 9)
+  fp(aLoc.aMat!, 1, 12)
 
   g.uniform1f(u.uCx, proj.cx)
   g.uniform1f(u.uStrength, proj.strength)
