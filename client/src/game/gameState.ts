@@ -125,6 +125,9 @@ export const saveGameState = (state: RunState) => {
       nextFeatureId: state.nextFeatureId,
       normalBlocksSinceFeature: state.normalBlocksSinceFeature,
       spawnTimer: state.spawnTimer,
+      // Armored lane-separation memory (deterministic; must survive a refresh
+      // so the resumed sequence keeps spacing armored lanes correctly).
+      lastArmoredLaneFrac: state.lastArmoredLaneFrac,
       nextOrbId: state.nextOrbId,
       nextMeltId: state.nextMeltId,
       // Score persists with the run so a refresh keeps depth and score in sync.
@@ -183,6 +186,8 @@ export const loadGameState = (): RunState | null => {
     if (!Number.isFinite(freshState.stats.pierceFalloff)) freshState.stats.pierceFalloff = 0.8
     // MIGRATION: the fail-line grace marker may be missing on older saves.
     if (!Number.isFinite(freshState.failGraceDepth)) freshState.failGraceDepth = -1
+    // MIGRATION: armored lane-separation memory may be missing on older saves.
+    if (!Number.isFinite(freshState.lastArmoredLaneFrac)) freshState.lastArmoredLaneFrac = -1
     // MIGRATION: ensure routing-kind fields exist on any merged blocks. (The old
     // per-block `vulnNormal` is gone — armored is now a fixed armored-underside,
     // so any leftover field on a saved block is simply ignored.)

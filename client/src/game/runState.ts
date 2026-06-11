@@ -509,6 +509,11 @@ export type RunState = {
   // Requirement: at least 3 normal blocks must spawn between each feature.
   normalBlocksSinceFeature: number
   spawnTimer: number
+  // Preferred lane (0..1 x-fraction) of the most recent armored spawn, or -1.
+  // The next armored's lane is forced well away from it so armored pieces can't
+  // wall off adjacent columns. Deterministic (the spawn sequence is identical
+  // for everyone), persisted with the run.
+  lastArmoredLaneFrac: number
 
   // Daily seeded board. The run belongs to `dateKey` (YYYY-MM-DD); `dailySeed`
   // is its hash. Each scheduled board-spawn draws an independent RNG seeded from
@@ -668,6 +673,7 @@ export const createInitialRunState = (): RunState => {
     nextFeatureId: 1,
     // Allow features immediately at the start (no prior feature to "cool down" from).
     normalBlocksSinceFeature: 3,
+    lastArmoredLaneFrac: -1,
     dailySeed: hashDateKey(dateKey),
     dateKey,
     boardSpawnIndex: 0,
