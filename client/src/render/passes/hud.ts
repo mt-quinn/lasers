@@ -1,7 +1,12 @@
 import type { FrameCtx } from '../frame'
 import { clamp } from '../../game/math'
 import { PALETTE } from '../theme'
-import { COMBO_PIERCE_TIER1, COMBO_PIERCE_TIER2, COMBO_SCORE_MULT_CAP } from '../../game/sim'
+import {
+  COMBO_PIERCE_TIER1,
+  COMBO_PIERCE_TIER2,
+  COMBO_SCORE_MULT_CAP,
+  COMBO_WINDOW_SEC,
+} from '../../game/sim'
 
 export const drawHudPass = (c: FrameCtx) => {
   const { ctx, s, layout, project, mi, mHue, hsl, roundedRectPath } = c
@@ -413,6 +418,32 @@ export const drawHudPass = (c: FrameCtx) => {
         ctx.fillStyle = hsl(comboHue, 100, 62 + 12 * fresh, (0.85 + 0.15 * fresh) * fade)
         ctx.fillText(label, insetR - scoreW - 9, ty)
         ctx.shadowBlur = 0
+        // Draining window bar above the multiplier: the rolling combo window
+        // made visible (full = just refreshed, empty = about to halve), so
+        // keeping the chain alive is a conscious skill instead of a hidden
+        // timer. Cools from the combo hue to amber to red as it runs out,
+        // with a pulse in the final stretch.
+        {
+          const frac = clamp(s.comboTimerSec / COMBO_WINDOW_SEC, 0, 1)
+          const lw = ctx.measureText(label).width
+          const bx1 = insetR - scoreW - 9 // right edge (label is right-aligned)
+          const bx0 = bx1 - lw
+          const by = ty - 10.5
+          ctx.lineCap = 'round'
+          ctx.lineWidth = 2
+          ctx.strokeStyle = hsl(comboHue, 30, 40, 0.28)
+          ctx.beginPath()
+          ctx.moveTo(bx0, by)
+          ctx.lineTo(bx1, by)
+          ctx.stroke()
+          const barHue = frac > 0.5 ? comboHue : frac > 0.25 ? 38 : 4
+          const pulse = frac < 0.25 ? 0.5 + 0.5 * Math.sin(s.timeSec * 11) : 0
+          ctx.strokeStyle = hsl(barHue, 95, 62, 0.72 + 0.28 * pulse)
+          ctx.beginPath()
+          ctx.moveTo(bx1 - lw * frac, by)
+          ctx.lineTo(bx1, by)
+          ctx.stroke()
+        }
         // Combo pierce tier: a small "PIERCE +N" tag under the multiplier so the
         // earned beam penetration is legible (it's the chain's real payoff).
         if (comboPierceTier > 0) {
