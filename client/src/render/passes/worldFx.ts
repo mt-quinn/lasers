@@ -1,39 +1,9 @@
 import type { FrameCtx } from '../frame'
 import { PIECE_EXTRUDE, lerp } from '../frame'
 import { clamp } from '../../game/math'
-import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from '../../game/runState'
 
 export const drawWorldFxPass = (c: FrameCtx) => {
   const { ctx, s, layout, project, scaleAt, tNow, hueAt, heat } = c
-    // XP orbs (condense -> fly).
-    if (s.xpOrbs.length > 0) {
-      ctx.save()
-      ctx.globalCompositeOperation = 'lighter'
-      for (const orb of s.xpOrbs) {
-        // The orb starts on the (projected) dying piece and flies to the XP
-        // gauge, which is screen-space HUD. So project the start, then lerp in
-        // screen space toward the unprojected gauge target, easing the depth
-        // scale back to 1 as it arrives at the HUD.
-        const fromS = project(orb.from.x, orb.from.y)
-        const tt = Math.pow(clamp(orb.t / XP_ORB_FLY_DUR, 0, 1), 0.75)
-        const px = orb.phase === 'condense' ? fromS.x : fromS.x + (orb.to.x - fromS.x) * tt
-        const py = orb.phase === 'condense' ? fromS.y : fromS.y + (orb.to.y - fromS.y) * tt
-        const z = orb.phase === 'condense' ? fromS.scale : lerp(fromS.scale, 1, tt)
-        const r = (orb.phase === 'condense' ? 16 * (1 - clamp(orb.t / XP_ORB_CONDENSE_DUR, 0, 1)) + 4 : 5) * z
-        // Dead-piece ember: follows the live hue (red when music off).
-        const oHue = hueAt(orb.from.x, orb.from.y)
-        ctx.fillStyle = heat(oHue, 255, 59, 92, 85, 60, 0.32)
-        ctx.beginPath()
-        ctx.arc(px, py, r * 2.2, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillStyle = heat(oHue, 255, 59, 92, 85, 62, 0.92)
-        ctx.beginPath()
-        ctx.arc(px, py, r, 0, Math.PI * 2)
-        ctx.fill()
-      }
-      ctx.restore()
-    }
-
     // Heat motes: glowing debris from destroyed blocks. Loose motes hover in the
     // field (world-space, projected like sparks); once the well captures one it
     // flies (screen-space) to the heat gauge and winks out as it delivers.

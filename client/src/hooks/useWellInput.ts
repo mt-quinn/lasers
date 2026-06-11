@@ -83,7 +83,7 @@ export const useWellInput = (opts: {
       const py = e.clientY - rect.top
       const d = getArenaLayout(s.view).dock
       const slop = d.btnR + 6
-      if (!s.levelUpActive && Math.hypot(px - d.pause.cx, py - d.pause.cy) <= slop) return 'pause'
+      if (Math.hypot(px - d.pause.cx, py - d.pause.cy) <= slop) return 'pause'
       if (Math.hypot(px - d.music.cx, py - d.music.cy) <= slop) return 'music'
       return null
     }

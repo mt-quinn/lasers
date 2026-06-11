@@ -1,6 +1,6 @@
 import type { Vec2 } from './math'
 import { add, clamp, cross, dot, len, mul, normalize, sub } from './math'
-import type { BlockEntity, BlackHoleFeature, BoardFeature, MirrorFeature, PrismFeature } from './runState'
+import type { BlockEntity, BoardFeature, MirrorFeature, PrismFeature } from './runState'
 
 // Pieces above this WORLD y are culled from the beam. With the perspective
 // renderer the shaft is visible well above the old screen-top (y=0), so this is
@@ -19,7 +19,7 @@ export type SceneHit = {
   t: number
   point: Vec2
   normal: Vec2
-  kind: 'block' | 'mirror' | 'prism' | 'blackHole' | 'wall'
+  kind: 'block' | 'mirror' | 'prism' | 'wall'
   id: number
 }
 
@@ -257,77 +257,6 @@ const raycastSceneCircles = (
   return best
 }
 
-const rayAabb = (
-  o: Vec2,
-  d: Vec2,
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number,
-): { t: number; p: Vec2; n: Vec2 } | null => {
-  // Slab intersection (t>=0). Returns entry hit.
-  // If already inside, treat as immediate hit.
-  if (o.x > minX && o.x < maxX && o.y > minY && o.y < maxY) {
-    return { t: 0, p: { x: o.x, y: o.y }, n: normalize({ x: -d.x, y: -d.y }) }
-  }
-  const invDx = Math.abs(d.x) > 1e-9 ? 1 / d.x : Infinity
-  const invDy = Math.abs(d.y) > 1e-9 ? 1 / d.y : Infinity
-
-  let tmin = (minX - o.x) * invDx
-  let tmax = (maxX - o.x) * invDx
-  let nxMin = -1
-  let nyMin = 0
-  if (tmin > tmax) {
-    ;[tmin, tmax] = [tmax, tmin]
-    nxMin = 1
-    nyMin = 0
-  }
-
-  let tymin = (minY - o.y) * invDy
-  let tymax = (maxY - o.y) * invDy
-  let nxY = 0
-  let nyY = -1
-  if (tymin > tymax) {
-    ;[tymin, tymax] = [tymax, tymin]
-    nxY = 0
-    nyY = 1
-  }
-
-  if (tmin > tymax || tymin > tmax) return null
-  if (tymin > tmin) {
-    tmin = tymin
-    nxMin = nxY
-    nyMin = nyY
-  }
-  const tEntry = tmin
-  if (tEntry < 0) return null
-  const p = add(o, mul(d, tEntry))
-  return { t: tEntry, p, n: normalize({ x: nxMin, y: nyMin }) }
-}
-
-const raycastSceneAabbs = (
-  o: Vec2,
-  dIn: Vec2,
-  aabbs: Array<{ kind: SceneHit['kind']; id: number; minX: number; minY: number; maxX: number; maxY: number }>,
-  maxDist: number,
-  minT: number,
-): SceneHit | null => {
-  const d = normalize(dIn)
-  let best: SceneHit | null = null
-  for (const a of aabbs) {
-    if (a.maxY < VISIBLE_CULL_Y) continue
-    if (!quickRejectRayAabb(o, d, a.minX, a.minY, a.maxX, a.maxY)) continue
-    const hit = rayAabb(o, d, a.minX, a.minY, a.maxX, a.maxY)
-    if (!hit) continue
-    // Black holes must absorb even on extremely tiny t (especially with curved step integration).
-    const effectiveMinT = a.kind === 'blackHole' ? 0 : minT
-    if (hit.t < effectiveMinT) continue
-    if (hit.t > maxDist) continue
-    if (!best || hit.t < best.t) best = { t: hit.t, point: hit.p, normal: hit.n, kind: a.kind, id: a.id }
-  }
-  return best
-}
-
 const raycastSceneWalls = (
   o: Vec2,
   d: Vec2,
@@ -427,7 +356,6 @@ export const raycastSceneThick = (
   }
 
   const circles: Array<{ kind: SceneHit['kind']; id: number; c: Vec2; r: number; maxY: number }> = []
-  const aabbs: Array<{ kind: SceneHit['kind']; id: number; minX: number; minY: number; maxX: number; maxY: number }> = []
   for (const f of features) {
     if (f.kind === 'prism') {
       const p = f as PrismFeature
@@ -442,27 +370,11 @@ export const raycastSceneThick = (
         r: p.r,
         maxY: p.pos.y + p.localAabb.maxY,
       })
-    } else if (f.kind === 'blackHole') {
-      const bh = f as BlackHoleFeature
-      aabbs.push({
-        kind: 'blackHole',
-        id: bh.id,
-        minX: bh.pos.x,
-        minY: bh.pos.y,
-        maxX: bh.pos.x + bh.cellSize,
-        maxY: bh.pos.y + bh.cellSize,
-      })
     }
   }
 
   const offsets = radius <= 0.01 ? [0] : [0, -radius, radius]
   let best: SceneHit | null = null
-
-  // Important gameplay feel: black holes should bend light when you pass nearby, and only absorb
-  // when you actually hit the 1x1 tile. Using thick-ray offsets for black holes makes them feel
-  // like they "eat" the beam the moment you enter the influence radius (edge rays clip the tile).
-  // So we collide black holes using the center ray only.
-  const hitAabbCenter = aabbs.length ? raycastSceneAabbs(o, d, aabbs, maxDist, minT) : null
 
   for (const off of offsets) {
     const oo = off === 0 ? o : add(o, mul(perp, off))
@@ -474,11 +386,9 @@ export const raycastSceneThick = (
     let hitObj: SceneHit | null = null
     const a = hitPoly
     const b = hitCircle
-    const c = hitAabbCenter
-    // pick the closest among a/b/c/mirror
+    // pick the closest among poly/circle/mirror
     hitObj = a
     if (b && (!hitObj || b.t < hitObj.t)) hitObj = b
-    if (c && (!hitObj || c.t < hitObj.t)) hitObj = c
     if (hitMirror && (!hitObj || hitMirror.t < hitObj.t)) hitObj = hitMirror
     const hit = hitObj && hitWall ? (hitObj.t <= hitWall.t ? hitObj : hitWall) : hitObj ?? hitWall
     if (!hit) continue

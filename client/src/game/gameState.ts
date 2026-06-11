@@ -14,8 +14,6 @@ type SavedRunState = Omit<
   | 'reticle'
   | 'laser'
   | 'music'
-  | 'xpOrbs'
-  | 'meltFx'
   | 'pieceBursts'
   | 'nextPieceBurstId'
   | 'sparks'
@@ -67,20 +65,12 @@ const isValidSavedState = (x: unknown): x is SavedRunState => {
     obj.stats !== null &&
     typeof obj.emitter === 'object' &&
     obj.emitter !== null &&
-    Number.isFinite(obj.xp) &&
-    Number.isFinite(obj.xpCap) &&
-    Number.isFinite(obj.level) &&
-    Number.isFinite(obj.pendingLevelUps) &&
-    typeof obj.levelUpActive === 'boolean' &&
-    Array.isArray(obj.levelUpOptions) &&
     Array.isArray(obj.blocks) &&
     Number.isFinite(obj.nextBlockId) &&
     Array.isArray(obj.features) &&
     Number.isFinite(obj.nextFeatureId) &&
     Number.isFinite(obj.normalBlocksSinceFeature) &&
-    Number.isFinite(obj.spawnTimer) &&
-    Number.isFinite(obj.nextOrbId) &&
-    Number.isFinite(obj.nextMeltId)
+    Number.isFinite(obj.spawnTimer)
   )
   
   return isValid
@@ -113,12 +103,6 @@ export const saveGameState = (state: RunState) => {
       dropAnimDuration: state.dropAnimDuration,
       stats: state.stats,
       emitter: state.emitter,
-      xp: state.xp,
-      xpCap: state.xpCap,
-      level: state.level,
-      pendingLevelUps: state.pendingLevelUps,
-      levelUpActive: state.levelUpActive,
-      levelUpOptions: state.levelUpOptions,
       blocks: state.blocks,
       nextBlockId: state.nextBlockId,
       features: state.features,
@@ -128,8 +112,6 @@ export const saveGameState = (state: RunState) => {
       // Armored lane-separation memory (deterministic; must survive a refresh
       // so the resumed sequence keeps spacing armored lanes correctly).
       lastArmoredLaneFrac: state.lastArmoredLaneFrac,
-      nextOrbId: state.nextOrbId,
-      nextMeltId: state.nextMeltId,
       // Score persists with the run so a refresh keeps depth and score in sync.
       score: state.score,
       bestScoreLocal: state.bestScoreLocal,
@@ -201,11 +183,8 @@ export const loadGameState = (): RunState | null => {
       freshState.dropTimerSec = freshState.dropIntervalSec
     }
     
-    // If the player was in a level-up screen, keep it paused and preserve the options
-    // Otherwise, resume gameplay
-    if (!freshState.levelUpActive) {
-      freshState.paused = false
-    }
+    // Resume gameplay (the pause overlay is session UI, not run state).
+    freshState.paused = false
 
     // Daily-only: a saved run from a previous day is stale (different board).
     // Drop it so the player starts fresh on today's seeded board.

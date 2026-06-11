@@ -17,7 +17,6 @@ import {
 } from './game/tutorial'
 import { drawFrame } from './render/draw'
 import { clamp } from './game/math'
-// import { computeXpCap, getRarityColor } from './game/levelUp'  // Unused after upgrade system removal
 import { getArenaLayout } from './game/layout'
 import { makeProjection } from './render/projection'
 import {
@@ -406,7 +405,6 @@ export default function App() {
   dockActionsRef.current.toggleMusic = toggleDockMusicPanel
   dockActionsRef.current.togglePause = () => {
     if (stateRef.current.gameOver) return
-    if (stateRef.current.levelUpActive) return
     // A just-in-time coachmark owns the pause; the OK card resumes it.
     if (stateRef.current.jit) return
     setPaused(!stateRef.current.paused)
@@ -420,16 +418,13 @@ export default function App() {
         if (e.repeat) return
         e.preventDefault()
         const s = stateRef.current
-        if (s.paused || s.gameOver || s.levelUpActive) return
+        if (s.paused || s.gameOver) return
         fireOverdrive(s)
         return
       }
       if (e.key !== 'Escape') return
       if (e.repeat) return
       e.preventDefault()
-      // While the upgrade chooser is open, do not allow manual unpause.
-      // The only way to resume is to pick an upgrade.
-      if (stateRef.current.levelUpActive) return
       if (stateRef.current.gameOver) return
       // A just-in-time coachmark owns the pause; only its OK button resumes.
       if (stateRef.current.jit) return
@@ -896,7 +891,7 @@ export default function App() {
   // Run stats for the menus (pause + game over). Recomputed only when a menu
   // is actually open.
   const pauseStats = useMemo(() => {
-    const menuOpen = (hud.paused && !stateRef.current.levelUpActive) || hud.gameOver
+    const menuOpen = hud.paused || hud.gameOver
     if (!menuOpen) return null
     return computePauseStats(stateRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1073,7 +1068,7 @@ export default function App() {
 
             {/* Pause overlay. Suppressed while a just-in-time coachmark owns the
                 pause (its own OK card shows instead). */}
-            {hud.paused && !stateRef.current.levelUpActive && !hud.gameOver && !hud.jitKind && pauseStats && (
+            {hud.paused && !hud.gameOver && !hud.jitKind && pauseStats && (
               <div className="menuOverlay" role="dialog" aria-label="Paused">
                 <div className="menuPanel">
                   <div className="menuKicker">Run in progress</div>
@@ -1168,66 +1163,6 @@ export default function App() {
             )}
 
 
-            {/* Upgrade system disabled - automatic +1 DPS per level now */}
-            {/*
-            {stateRef.current.levelUpActive && (
-              <div className="upgradeOverlay" role="dialog" aria-label="Choose an upgrade">
-                <div className="upgradePanel">
-                  <div className="upgradeCards" aria-label="Upgrade choices">
-                    {stateRef.current.levelUpOptions.map((opt, idx) => {
-                      const prev = getOfferPreview(stateRef.current, opt)
-                      const rarityColor = getRarityColor(opt.rarity)
-                      return (
-                        <button
-                          key={opt.type + opt.rarity + idx}
-                          type="button"
-                          className="upgradeCard"
-                          data-rarity={opt.rarity}
-                          style={{
-                            borderColor: `${rarityColor}66`,
-                            boxShadow: `0 0 0 1px rgba(0,0,0,0.35), 0 18px 55px rgba(0,0,0,0.55), 0 0 42px ${rarityColor}33`,
-                          }}
-                          onClick={() => {
-                            const s = stateRef.current
-                            applyOffer(s, opt)
-                            s.level += 1
-                            s.xpCap = computeXpCap(s.level)
-                            s.levelUpActive = false
-                            s.levelUpOptions = []
-                            // Micro "breather" after choices so the board doesn't immediately re-spawn into pressure.
-                            s.spawnTimer = Math.max(s.spawnTimer, 0.75)
-                            // Resume; sim will re-open if more pending levels.
-                            s.paused = false
-                          }}
-                        >
-                          <div className="upgradeCardTop">
-                            <div className="upgradeRarity" style={{ color: rarityColor }}>
-                              {opt.rarity.toUpperCase()}
-                            </div>
-                            <div className="upgradeCardTitle">{opt.title}</div>
-                          </div>
-
-                          <div className="upgradeDelta">
-                            <div className="upgradeDeltaLabel">{prev.label}</div>
-                            <div className="upgradeDeltaValues">
-                              <span className="before">{prev.before}</span>
-                              <span className="arrow">→</span>
-                              <span className="after">{prev.after}</span>
-                            </div>
-                            {prev.delta && <div className="upgradeDeltaPill">{prev.delta}</div>}
-                          </div>
-
-                          <div className="upgradeCardCta">
-                            <span>Take</span>
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-            */}
           </div>
         </main>
       </div>

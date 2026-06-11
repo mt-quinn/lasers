@@ -1,37 +1,7 @@
 import type { Vec2 } from './math'
 import { getTodayDateKey, hashDateKey } from './rng'
 
-export const XP_ORB_CONDENSE_DUR = 0.5
-export const XP_ORB_FLY_DUR = 0.55
-export const BLOCK_MELT_DUR = 0.5
-
 export type BlockCell = { x: number; y: number }
-
-export type XpOrb = {
-  id: string
-  from: Vec2
-  to: Vec2
-  t: number
-  phase: 'condense' | 'fly'
-  value: number
-}
-
-export type MeltFx = {
-  id: string
-  pos: Vec2
-  cellSize: number
-  cornerRadius: number
-  loop: Vec2[]
-  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
-  t: number
-  dur: number
-  // Where the molten blob collapses into (gravity squish target).
-  orbFrom: Vec2
-  // Where the XP orb flies to (usually the XP gauge target).
-  orbTo: Vec2
-  value: number
-  seed: number
-}
 
 // Brief "piece dissolving into motes" flash. Captures the dead block's
 // silhouette so the renderer can pop + fade it in-place as the motes burst out,
@@ -128,17 +98,6 @@ export type GaugeFx = {
   world?: boolean
 }
 
-export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
-
-export type UpgradeType = 'damage' | 'bounces' | 'dropSlow' | 'life' | 'splitterChance' | 'noWallPenalty' | 'extraChoice' | 'bounceTrade'
-
-export type UpgradeOffer = {
-  type: UpgradeType
-  rarity: Rarity
-  title: string
-  description: string
-}
-
 // Routing-focused block variety. None of these are HP sponges — they change HOW
 // you must route the beam, not how long you hold it:
 // - normal: damageable from anywhere; the beam pierces it.
@@ -180,7 +139,7 @@ export type BlockEntity = {
   hpAnchorLocalPx: Vec2
 }
 
-export type BoardFeatureKind = 'mirror' | 'prism' | 'blackHole'
+export type BoardFeatureKind = 'mirror' | 'prism'
 
 export type MirrorFeature = {
   id: number
@@ -218,19 +177,7 @@ export type PrismFeature = {
   localAabb: { minX: number; minY: number; maxX: number; maxY: number }
 }
 
-export type BlackHoleFeature = {
-  id: number
-  kind: 'blackHole'
-  pos: Vec2 // top-left in world coords
-  cellSize: number
-  // absorber core radius (px) around center
-  rCore: number
-  // influence radius (px) around center, within which beams curve
-  rInfluence: number
-  localAabb: { minX: number; minY: number; maxX: number; maxY: number }
-}
-
-export type BoardFeature = MirrorFeature | PrismFeature | BlackHoleFeature
+export type BoardFeature = MirrorFeature | PrismFeature
 
 // ---- First-time onboarding (FTUE) -----------------------------------------
 // The directed warmup is a short, action-gated piloted segment that teaches the
@@ -463,17 +410,6 @@ export type RunState = {
   // (heat pinned at 1) until the player taps to fire. Transient (not saved).
   overdriveArmed: boolean
 
-  // XP orbs are kept purely as kill juice (the melt orb that flies to the corner
-  // gauge). xp/level are vestigial now (power is fixed; no leveling).
-  xp: number
-  xpCap: number
-  level: number
-  pendingLevelUps: number
-  levelUpActive: boolean
-  levelUpOptions: UpgradeOffer[]
-  xpOrbs: XpOrb[]
-  nextOrbId: number
-
   // Score-attack: depth x combo. `score` is the leaderboard value; `combo`
   // counts kills inside a rolling window (resets when comboTimerSec hits 0);
   // `crescendo` (0..1) is a visual surge the renderer amplifies on big plays.
@@ -485,8 +421,6 @@ export type RunState = {
   bestScoreLocal: number
 
   // FX
-  meltFx: MeltFx[]
-  nextMeltId: number
   pieceBursts: PieceBurstFx[]
   nextPieceBurstId: number
   sparks: SparkParticle[]
@@ -641,22 +575,12 @@ export const createInitialRunState = (): RunState => {
     heatNext: 0,
     overdriveSec: 0,
     overdriveArmed: false,
-    xp: 0,
-    xpCap: 5,
-    level: 0,
-    pendingLevelUps: 0,
-    levelUpActive: false,
-    levelUpOptions: [],
-    xpOrbs: [],
-    nextOrbId: 1,
-    score: 0,
+  score: 0,
     combo: 0,
     comboBest: 0,
     comboTimerSec: 0,
     crescendo: 0,
     bestScoreLocal: 0,
-    meltFx: [],
-    nextMeltId: 1,
     pieceBursts: [],
     nextPieceBurstId: 1,
     sparks: [],

@@ -4,7 +4,6 @@ import type { RunState, MirrorFeature, BlockEntity, HeatMote, GaugeFx } from './
 import { raycastSceneThick } from './raycast'
 import { spawnBoardThing, spawnPrismAt, spawnShatterChildren } from './spawn'
 import { stepTutorial, scanJitTrigger, WARMUP_HEAT_PER_KILL } from './tutorial'
-import { XP_ORB_CONDENSE_DUR, XP_ORB_FLY_DUR } from './runState'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
 import { sfxEngine } from '../audio/sfx'
@@ -379,16 +378,6 @@ export const stepSim = (s: RunState, dt: number) => {
   const layout = getArenaLayout(s.view)
   const cellSize = 40
 
-  const xpOrbTarget = (): Vec2 => {
-    // Aim for the *current* top of the filled portion of the Heat bar.
-    const gx = layout.xpGauge.x
-    const gy = layout.xpGauge.y
-    const gw = layout.xpGauge.w
-    const gh = layout.xpGauge.h
-    const fillH = gh * clamp(s.heat, 0, 1)
-    return { x: gx + gw / 2, y: gy + (gh - fillH) }
-  }
-
   // Spawn respite countdown (armed each wave trough below; this field was
   // originally the post-life-loss breather, orphaned by the single-life rework).
   if (s.respiteSec > 0) {
@@ -579,57 +568,11 @@ export const stepSim = (s: RunState, dt: number) => {
     if (f.kind === 'prism' && f.lit > 0) f.lit = Math.max(0, f.lit - dt / 0.18)
   }
 
-  // Melt FX: blocks collapse into a molten blob, then release an XP orb that flies away.
-  if (s.meltFx.length > 0) {
-    const done: string[] = []
-    for (const fx of s.meltFx) {
-      fx.t += dt
-      if (fx.t >= fx.dur) {
-        // Spawn the XP orb in fly phase at the end of the melt.
-        s.xpOrbs.push({
-          id: `orb-${s.nextOrbId++}`,
-          from: { ...fx.orbFrom },
-          to: xpOrbTarget(),
-          t: 0,
-          phase: 'fly',
-          value: fx.value,
-        })
-        done.push(fx.id)
-      }
-    }
-    if (done.length > 0) {
-      s.meltFx = s.meltFx.filter((f) => !done.includes(f.id))
-    }
-  }
-
   // Piece-dissolve flashes: advance and cull.
   if (s.pieceBursts.length > 0) {
     for (const fx of s.pieceBursts) fx.t += dt
     if (s.pieceBursts.some((f) => f.t >= f.dur)) {
       s.pieceBursts = s.pieceBursts.filter((f) => f.t < f.dur)
-    }
-  }
-
-  // Update XP orbs (condense -> fly -> deliver).
-  if (s.xpOrbs.length > 0) {
-    const delivered: string[] = []
-    for (const orb of s.xpOrbs) {
-      orb.t += dt
-      if (orb.phase === 'condense') {
-        if (orb.t >= XP_ORB_CONDENSE_DUR) {
-          orb.phase = 'fly'
-          orb.t = 0
-        }
-      } else {
-        if (orb.t >= XP_ORB_FLY_DUR) {
-          // Orbs are pure kill juice now (power is fixed); they just wink out at
-          // the gauge. Heat is added at kill time for responsive feedback.
-          delivered.push(orb.id)
-        }
-      }
-    }
-    if (delivered.length > 0) {
-      s.xpOrbs = s.xpOrbs.filter((o) => !delivered.includes(o.id))
     }
   }
 
@@ -755,10 +698,6 @@ export const stepSim = (s: RunState, dt: number) => {
       s.lives = 0
       s.gameOver = true
       s.paused = true
-      s.levelUpActive = false
-      s.levelUpOptions = []
-      s.pendingLevelUps = 0
-      s.xpOrbs = []
       s.bestScoreLocal = Math.max(s.bestScoreLocal, s.score)
 
       // Stronger end-of-run haptic.

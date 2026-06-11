@@ -79,8 +79,8 @@ export const drawOverlayPass = (c: FrameCtx) => {
         ctx.restore()
       }
 
-      // Pause / play button. Hidden during the (currently unused) upgrade pause.
-      if (!s.levelUpActive) {
+      // Pause / play button.
+      {
         const c = d.pause
         ctx.fillStyle = 'rgba(255,255,255,0.04)'
         ctx.beginPath()
