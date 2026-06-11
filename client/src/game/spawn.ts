@@ -195,7 +195,9 @@ const placeAabb = (s: RunState, wPx: number, hPx: number, opts: PlaceOpts = {}) 
   const topWorldY = screenTopWorldY(s.view, getArenaLayout(s.view))
   const spawnMargin = 28
   const baseY = topWorldY - hPx - spawnMargin
-  const maxBacklog = Math.max(260, s.view.height * 0.65)
+  // Fixed (not screen-relative) so the off-screen stacking allowance — and
+  // therefore burst pressure after a stall — is identical on every device.
+  const maxBacklog = 540
   const backlogFloor = baseY - maxBacklog
 
   let placedX = genX()

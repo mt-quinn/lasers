@@ -38,14 +38,20 @@ export type Projection = {
 // the top edge are inherently coupled, so the horizon position is the primary
 // knob: the closer the horizon sits to the top edge, the more pronounced the
 // recede.
-//   HORIZON_FRAC  - vanishing point as a fraction of view height, negative =
-//                   above the canvas. Just above the top edge (small magnitude)
-//                   => strong, pronounced perspective. Far above => subtle.
-//   DEPTH_SCREENS - how many screen-heights of WORLD depth are visible from the
-//                   near plane to the top edge (controls shrink rate / view
-//                   length independently of the horizon height).
+//   HORIZON_FRAC   - vanishing point as a fraction of view height, negative =
+//                    above the canvas. Just above the top edge (small magnitude)
+//                    => strong, pronounced perspective. Far above => subtle.
+//   DEPTH_WORLD_PX - how much WORLD depth is visible from the near plane to the
+//                    top edge (controls shrink rate / view length independently
+//                    of the horizon height). FIXED, not screen-relative: when
+//                    this was 1.6 screen-heights, a piece's spawn-to-fail-line
+//                    travel time scaled with viewport height — a short phone got
+//                    ~28 rows of reaction time where a tall desktop window got
+//                    ~44, a huge handicap range for a global daily leaderboard.
+//                    Every device now sees the same ~33 rows of shaft; taller
+//                    screens simply render that depth larger.
 const HORIZON_FRAC = -0.22
-const DEPTH_SCREENS = 1.6
+const DEPTH_WORLD_PX = 1320 // 33 rows of 40px cells
 // Clamp the projective factor for safety (off-screen spawn backlog / slider zone).
 const P_MIN = 0.04
 const P_MAX = 1.8
@@ -59,11 +65,11 @@ export const makeProjection = (view: ViewState, layout: ArenaLayout): Projection
   const nearScreenY = layout.emitterY
   // Horizon position is the primary knob. The top edge (screenY == 0) then maps
   // to p_top = -horizonY / span (size at the top), and strength is chosen so the
-  // far plane at depth D = DEPTH_SCREENS * H lands exactly at that top edge.
+  // far plane at the fixed world depth D lands exactly at that top edge.
   const horizonY = HORIZON_FRAC * H
   const span = nearScreenY - horizonY // > 0
   const pTop = -horizonY / span
-  const D = DEPTH_SCREENS * H
+  const D = DEPTH_WORLD_PX
   const strength = (1 / pTop - 1) / D
 
   const clampP = (p: number) => (p < P_MIN ? P_MIN : p > P_MAX ? P_MAX : p)
