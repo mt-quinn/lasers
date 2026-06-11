@@ -167,6 +167,12 @@ class MusicEngine {
   private analyser: AnalyserNode | null = null
   private source: MediaElementAudioSourceNode | null = null
   private gain: GainNode | null = null
+  // Pause/game-over muffle: a lowpass + small gain dip between the analyser
+  // and the volume gain. Ducking the POST-analyser path keeps the music
+  // signals (and so the menus' hue ride) fully alive while muffled.
+  private duckFilter: BiquadFilterNode | null = null
+  private duckGain: GainNode | null = null
+  private ducked = false
   private volume = readVolume()
   private freq: Uint8Array<ArrayBuffer> | null = null
 
@@ -456,6 +462,19 @@ class MusicEngine {
     if (this.gain) this.gain.gain.value = next
   }
 
+  // Muffle (paused / game over) or restore the soundtrack. A short smoothing
+  // constant makes it a swallow, not a click; the analyser sits BEFORE the
+  // filter so music-reactive visuals keep their full signal while ducked.
+  setDucked(on: boolean) {
+    if (this.ducked === on) return
+    this.ducked = on
+    const ctx = this.ctx
+    if (!ctx || !this.duckFilter || !this.duckGain) return
+    const t = ctx.currentTime
+    this.duckFilter.frequency.setTargetAtTime(on ? 760 : 18500, t, 0.09)
+    this.duckGain.gain.setTargetAtTime(on ? 0.62 : 1, t, 0.09)
+  }
+
   // Skip to the next tempo-matched track immediately. Turns music on if it was
   // off (the player explicitly asked for a track), resumes the context inside
   // the calling gesture, then picks + plays a fresh song.
@@ -594,17 +613,28 @@ class MusicEngine {
       analyser.minDecibels = -85
       analyser.maxDecibels = -8
       analyser.smoothingTimeConstant = 0.58
-      // source -> analyser -> gain -> destination. The gain node is what the
-      // volume slider drives (HTMLAudioElement.volume is a no-op on iOS).
+      // source -> analyser -> duckFilter -> duckGain -> gain -> destination.
+      // The gain node is what the volume slider drives (HTMLAudioElement.volume
+      // is a no-op on iOS); the duck pair muffles on pause/game over.
       const gain = ctx.createGain()
       gain.gain.value = this.volume
+      const duckFilter = ctx.createBiquadFilter()
+      duckFilter.type = 'lowpass'
+      duckFilter.frequency.value = this.ducked ? 760 : 18500
+      duckFilter.Q.value = 0.4
+      const duckGain = ctx.createGain()
+      duckGain.gain.value = this.ducked ? 0.62 : 1
       source.connect(analyser)
-      analyser.connect(gain)
+      analyser.connect(duckFilter)
+      duckFilter.connect(duckGain)
+      duckGain.connect(gain)
       gain.connect(ctx.destination)
       this.ctx = ctx
       this.source = source
       this.analyser = analyser
       this.gain = gain
+      this.duckFilter = duckFilter
+      this.duckGain = duckGain
       this.freq = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount))
       // Surface suspended↔running transitions so the "tap to resume" prompt
       // can show/hide itself as the OS moves the context around.

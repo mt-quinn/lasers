@@ -403,6 +403,12 @@ export default function App() {
     openMusicPanel(left, 84)
   }, [musicPanelOpen, closeMusicPanel, openMusicPanel])
 
+  // Muffle the soundtrack whenever the game isn't live (title, pause, game
+  // over): lowpass + gain dip, smoothly ramped in the engine.
+  useEffect(() => {
+    musicEngine.setDucked(hud.paused || hud.gameOver)
+  }, [hud.paused, hud.gameOver])
+
   // Close the music panel when the game transitions between play / pause /
   // game-over so a panel anchored to a now-gone trigger never lingers.
   useEffect(() => {
