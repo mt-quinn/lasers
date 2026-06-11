@@ -890,20 +890,6 @@ export default function App() {
   }, [showNamePrompt, savedThisRun, saveRunScore, nameDraft, restart])
 
   // ---- Title screen ------------------------------------------------------
-  // Streak: consecutive calendar days (ending today, or yesterday if today
-  // hasn't been played yet) with at least one locally recorded run.
-  const streak = useMemo(() => {
-    const days = new Set(highScores.map((e) => e.dateKey))
-    let d = todayKey
-    if (!days.has(d)) d = stepDateKey(d, -1)
-    let n = 0
-    while (days.has(d)) {
-      n += 1
-      d = stepDateKey(d, -1)
-    }
-    return n
-  }, [highScores, todayKey])
-
   // Play / Resume: commits the name (so the global board never shows PLAYER
   // for want of asking), unlocks audio inside the click gesture (the iOS
   // tap-to-resume fix), and releases the sim.
@@ -1219,7 +1205,6 @@ export default function App() {
                     })}
                   </div>
                   <div className="titleChips">
-                    {streak > 0 && <span className="titleChip">{streak}-day streak</span>}
                     {getBestScoreForDate(highScores, todayKey) > 0 && (
                       <span className="titleChip">
                         Best today {getBestScoreForDate(highScores, todayKey).toLocaleString()}
