@@ -487,12 +487,17 @@ export const drawFrame = (
       const baseHue = PALETTE.latticeHue + (mHue - PALETTE.latticeHue) * mi
       const baseAlpha = 0.11 + mEnergy * 0.07
 
-      // Scroll phase shared by both board styles: the exact world distance the
-      // board has visually travelled this frame (steps minus the in-progress
-      // catch-up), modulo one row — so board furniture steps and eases
-      // identically to the pieces.
-      const gridShift =
-        (((s.depth * GRID_ROW - s.dropAnimOffset) % GRID_ROW) + GRID_ROW) % GRID_ROW
+      // Scroll phase shared by both board styles. CRITICAL: the phase and the
+      // per-row content identity must derive from the SAME continuous scroll
+      // distance. Deriving the phase from (depth·row − dropAnim) but keys from
+      // raw `depth` made the board's pattern teleport one row at each step and
+      // slide back during the ease — the "scrolls forward, jumps back" bug.
+      // `scroll` is the exact world distance travelled; `scrollSteps` is its
+      // whole-row part (the key base) and `gridShift` the fractional remainder
+      // (the phase). Both flip in the same instant, so bands never relabel.
+      const scroll = s.depth * GRID_ROW - s.dropAnimOffset
+      const scrollSteps = Math.floor(scroll / GRID_ROW)
+      const gridShift = scroll - scrollSteps * GRID_ROW
 
       if (BOARD_SHAFT) {
         // ================== MACHINED TRENCH (?board=shaft) ==================
@@ -562,7 +567,7 @@ export const drawFrame = (
             gridRow: GRID_ROW,
             totalRows: ROWS,
             gridShift,
-            depth: s.depth,
+            depth: scrollSteps,
             structHue,
             emissiveHue: baseHue,
             wallHue: wallHueLive,
@@ -605,7 +610,7 @@ export const drawFrame = (
           rows.push({
             yTop,
             yBot,
-            key: i + s.depth,
+            key: i + scrollSteps,
             near: sc,
             rowH: project(0, yBot).y - project(0, yTop).y,
           })
@@ -840,8 +845,8 @@ export const drawFrame = (
             const p = project(xw, y)
             if (p.scale < 0.05) break
             // (row + depth): invariant for a material point as the board scrolls.
-            edge.push({ x: p.x, y: p.y, s: p.scale, key: i + s.depth })
-            top.push({ x: p.x, y: p.y - WALL_H * p.scale, s: p.scale, key: i + s.depth })
+            edge.push({ x: p.x, y: p.y, s: p.scale, key: i + scrollSteps })
+            top.push({ x: p.x, y: p.y - WALL_H * p.scale, s: p.scale, key: i + scrollSteps })
           }
           if (edge.length < 2) continue
           // Wall face: a dark machined parapet (occludes the void behind it).

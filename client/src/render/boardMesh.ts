@@ -47,6 +47,11 @@ export type TrenchMeshOpts = {
   pMin: number
   gridRow: number
   totalRows: number
+  // Scroll phase + whole-row scroll count. BOTH must be derived from the same
+  // continuous scroll distance S (= depth*gridRow - dropAnimOffset):
+  //   depth = floor(S / gridRow), gridShift = S - depth * gridRow.
+  // Mixing sources (e.g. raw sim depth) makes the pattern teleport a row at
+  // each step and slide back during the ease.
   gridShift: number
   depth: number
   // Visual signals
