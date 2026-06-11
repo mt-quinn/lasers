@@ -493,24 +493,22 @@ export const drawFrame = (
         (((s.depth * GRID_ROW - s.dropAnimOffset) % GRID_ROW) + GRID_ROW) % GRID_ROW
 
       if (BOARD_SHAFT) {
-        // ================== MACHINED SHAFT (?board=shaft) ===================
-        // The board as physical hardware, in the emitter's design language:
-        //  1. Floor: interlocking machined plates (lane-checkered, per-plate
-        //     tint variance, a slow specular sheen) instead of graph paper.
-        //  2. Row seams with HIERARCHY: faint joins normally, a glowing
-        //     bulkhead rib every 4th row that also ribs the walls — rhythm,
-        //     scale, and descent speed you can feel.
-        //  3. Conduit lanes: three emissive channels cut into the floor that
-        //     ARE the equalizer (bass/mid/treble), with energy packets
-        //     streaming down to feed the cannon.
-        //  4. Walls with real height: dark parapet faces, bulkhead ribs, a
-        //     bright top rail with node lights — the beam ricochets off
-        //     structure, not a line.
-        //  5. Distance fog and an iris gate at the horizon (where pieces are
-        //     born), plus a soft light pool at the muzzle.
-        // Plate/seam identity is keyed to (row - depth) so the material
-        // travels with the board; everything shares the piece projection.
-        const LANES = 8
+        // ================== MACHINED TRENCH (?board=shaft) ==================
+        // v2 — the board as a weapon trench, not a tiled floor:
+        //  1. A RECESSED CENTER CHANNEL the beam fires along (the cannon's
+        //     accelerator groove), cut below deck level with stepped lips.
+        //  2. Flanking APRONS decked with machined plates of varying widths
+        //     (1-3 segments per row, beveled edges, sheen, service lights) —
+        //     believable decking instead of a checkerboard.
+        //  3. RING BRACES every 4th row: chunky machined crossbeams that
+        //     bridge the trench (the strongest depth cue), with glowing
+        //     leading edges and wall posts.
+        //  4. The music lives in the trench: left lip trim = bass, channel
+        //     current = mids, right lip trim = treble, with energy packets
+        //     streaming down-channel to feed the cannon. Idle baseline keeps
+        //     it alive with music off.
+        // Identity is keyed to (row + depth) — invariant for a material point
+        // as the board scrolls — so plates/braces travel with the pieces.
         const mBeat = music.beat * mi
         // Structural identity: cold steel-blue when music is off; leans gently
         // into the live hue when playing (full rainbow stays on the emissive
@@ -521,7 +519,7 @@ export const drawFrame = (
           const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453
           return x - Math.floor(x)
         }
-        const bulkAt = (rowKey: number) => ((rowKey % 4) + 4) % 4 === 0
+        const ringAt = (rowKey: number) => ((rowKey % 4) + 4) % 4 === 0
         type Pt = { x: number; y: number }
         const quad = (a: Pt, b: Pt, c: Pt, d: Pt) => {
           ctx.beginPath()
@@ -531,99 +529,161 @@ export const drawFrame = (
           ctx.lineTo(d.x, d.y)
           ctx.closePath()
         }
+        // Trench cross-section (world X) and the step-down depth of the
+        // channel (screen px at the near plane, scaled with distance).
+        const CH_L = 0.34 * W
+        const CH_R = 0.66 * W
+        const LIP_H = 7
 
-        // ---- 1. Floor plates (source-over) -------------------------------
+        // Visible rows near -> far, shared by every band below.
+        type TrenchRow = { yTop: number; yBot: number; key: number; near: number; rowH: number }
+        const rows: TrenchRow[] = []
         for (let i = 0; i < ROWS; i++) {
           const yBot = Math.min(proj.nearWorldY, proj.nearWorldY - i * GRID_ROW + gridShift)
           const yTop = proj.nearWorldY - (i + 1) * GRID_ROW + gridShift
           if (yTop >= proj.nearWorldY) continue
-          const aL = project(0, yTop)
-          const cL = project(0, yBot)
-          if (cL.scale < 0.05) continue
-          const near = cL.scale
-          const rowKey = i - s.depth
-          const rowH = cL.y - aL.y
-          const atmos = clamp(0.1 + near * 1.05, 0, 1)
-          const depthDim = 0.45 + 0.55 * near
-          if (rowH < 3.2) {
-            // Too thin for the checker to read: one clean full-width plate
-            // keeps the far shaft quiet instead of noisy.
-            const bR = project(W, yTop)
-            const cR = project(W, yBot)
-            ctx.fillStyle = hsl(structHue, 30, 7.2 * depthDim + 1.2, atmos)
-            quad(aL, bR, cR, cL)
-            ctx.fill()
-            continue
-          }
-          for (let l = 0; l < LANES; l++) {
-            const x0 = (l / LANES) * W
-            const x1 = ((l + 1) / LANES) * W
-            const a = project(x0, yTop)
-            const b = project(x1, yTop)
-            const c = project(x1, yBot)
-            const d = project(x0, yBot)
-            const ck = ((rowKey + l) % 2 + 2) % 2
-            const hv = hash2(rowKey, l)
-            // Slow specular sheen sweeping diagonally across the plates, like
-            // light moving over brushed metal. Pure lightness, no extra draws.
-            const sw = 0.5 + 0.5 * Math.sin(rowKey * 0.55 + l * 0.9 - tNow * 0.55)
-            const sheen = Math.pow(sw, 6) * 2.2 * near
-            const lit = (6.2 + ck * 2.1 + hv * 1.3 + sheen) * depthDim + 1.2
-            ctx.fillStyle = hsl(structHue, 32, lit, atmos)
-            quad(a, b, c, d)
-            ctx.fill()
-          }
+          const sc = project(0, yBot).scale
+          if (sc < 0.05) break
+          rows.push({
+            yTop,
+            yBot,
+            key: i + s.depth,
+            near: sc,
+            rowH: project(0, yBot).y - project(0, yTop).y,
+          })
+        }
+        // Project a channel-floor point: deck-level projection dropped by the
+        // lip depth (scaled), so the channel reads as genuinely recessed.
+        const chProj = (x: number, y: number) => {
+          const p = project(x, y)
+          return { x: p.x, y: p.y + LIP_H * p.scale, scale: p.scale }
         }
 
-        // Conduit grooves: dark channels cut into the plates (the emissive
-        // cores render in the additive pass below).
-        for (let k = 0; k < 3; k++) {
-          const xw = (((k + 1) * 2) / LANES) * W
-          const a = project(xw, proj.nearWorldY)
-          const b = project(xw, farWorldY)
-          ctx.strokeStyle = hsl(structHue, 35, 3.5, 0.85)
-          ctx.lineWidth = 3.4
-          ctx.lineCap = 'round'
+        // ---- 1. Floor (source-over): channel, aprons, lips, braces --------
+        // Recessed channel floor: darker than the decks, one quad per row.
+        for (const r of rows) {
+          const atmos = clamp(0.1 + r.near * 1.05, 0, 1)
+          const dim = 0.45 + 0.55 * r.near
+          ctx.fillStyle = hsl(structHue, 36, 4.6 * dim + 0.8, atmos)
+          quad(chProj(CH_L, r.yTop), chProj(CH_R, r.yTop), chProj(CH_R, r.yBot), chProj(CH_L, r.yBot))
+          ctx.fill()
+        }
+        // Apron decking: 1-3 machined plates per row and side, widths from the
+        // row hash, with bevel edges and the occasional service light.
+        for (const r of rows) {
+          const atmos = clamp(0.1 + r.near * 1.05, 0, 1)
+          const dim = 0.45 + 0.55 * r.near
+          for (const side of [0, 1]) {
+            const x0 = side === 0 ? 0 : CH_R
+            const x1 = side === 0 ? CH_L : W
+            const nSeg = r.rowH < 4 ? 1 : 1 + Math.floor(hash2(r.key, 11 + side * 7) * 3)
+            let u0 = 0
+            for (let g2 = 0; g2 < nSeg; g2++) {
+              const u1 =
+                g2 === nSeg - 1 ? 1 : u0 + (1 - u0) * (0.3 + 0.5 * hash2(r.key, side * 31 + g2 * 13 + 3))
+              const sx0 = x0 + (x1 - x0) * u0
+              const sx1 = x0 + (x1 - x0) * u1
+              const a = project(sx0, r.yTop)
+              const b = project(sx1, r.yTop)
+              const c = project(sx1, r.yBot)
+              const d = project(sx0, r.yBot)
+              const hv = hash2(r.key, side * 97 + g2 * 17)
+              // Brushed-metal sheen drifting slowly across the deck.
+              const sw = 0.5 + 0.5 * Math.sin(r.key * 0.55 + (sx0 / W) * 5 - tNow * 0.5)
+              const sheen = Math.pow(sw, 6) * 2.4 * r.near
+              ctx.fillStyle = hsl(structHue, 26, (7.2 + hv * 2.4 + sheen) * dim + 1.2, atmos)
+              quad(a, b, c, d)
+              ctx.fill()
+              if (r.near > 0.3 && r.rowH >= 4) {
+                // Bevel: catch-light on the far edge, shadow on the near edge.
+                ctx.lineWidth = 1
+                ctx.strokeStyle = hsl(structHue, 22, 34, 0.1 + 0.16 * r.near)
+                ctx.beginPath()
+                ctx.moveTo(a.x, a.y)
+                ctx.lineTo(b.x, b.y)
+                ctx.stroke()
+                ctx.strokeStyle = hsl(structHue, 40, 2, 0.4 * r.near)
+                ctx.beginPath()
+                ctx.moveTo(d.x, d.y)
+                ctx.lineTo(c.x, c.y)
+                ctx.stroke()
+                if (g2 > 0) {
+                  // Vertical seam between adjacent plates.
+                  ctx.strokeStyle = hsl(structHue, 40, 2, 0.45 * r.near)
+                  ctx.beginPath()
+                  ctx.moveTo(a.x, a.y)
+                  ctx.lineTo(d.x, d.y)
+                  ctx.stroke()
+                }
+              }
+              u0 = u1
+            }
+            // Service lights: occasional tiny status LEDs on the deck.
+            if (r.near > 0.35 && hash2(r.key, side * 53 + 5) < 0.22) {
+              const ux = x0 + (x1 - x0) * (0.15 + 0.7 * hash2(r.key, side * 71 + 9))
+              const uy = r.yTop + (r.yBot - r.yTop) * (0.25 + 0.5 * hash2(r.key, side * 41 + 4))
+              const p = project(ux, uy)
+              const warm = hash2(r.key, side * 23 + 8) < 0.3
+              ctx.fillStyle = hsl(warm ? 38 : baseHue, 85, 62, 0.22 + 0.3 * r.near)
+              ctx.beginPath()
+              ctx.arc(p.x, p.y, 0.7 + 1.1 * p.scale, 0, Math.PI * 2)
+              ctx.fill()
+            }
+          }
+        }
+        // Step faces: continuous dark strips between deck level and channel
+        // floor along both lips — the visible vertical cut of the trench.
+        for (const lx of [CH_L, CH_R]) {
+          const deck: Pt[] = []
+          const floor2: Pt[] = []
+          for (const r of rows) {
+            const p = project(lx, r.yBot)
+            deck.push({ x: p.x, y: p.y })
+            floor2.push({ x: p.x, y: p.y + LIP_H * p.scale })
+          }
+          const last = rows[rows.length - 1]
+          if (last) {
+            const p = project(lx, last.yTop)
+            deck.push({ x: p.x, y: p.y })
+            floor2.push({ x: p.x, y: p.y + LIP_H * p.scale })
+          }
+          if (deck.length < 2) continue
+          ctx.beginPath()
+          ctx.moveTo(deck[0]!.x, deck[0]!.y)
+          for (const p of deck) ctx.lineTo(p.x, p.y)
+          for (let i = floor2.length - 1; i >= 0; i--) ctx.lineTo(floor2[i]!.x, floor2[i]!.y)
+          ctx.closePath()
+          ctx.fillStyle = hsl(structHue, 34, 3, 0.92)
+          ctx.fill()
+        }
+        // Ring braces: every 4th row boundary a machined crossbeam bridges the
+        // trench — drawn over channel and lips, so it visibly spans the cut.
+        for (const r of rows) {
+          if (!ringAt(r.key)) continue
+          const yB = r.yTop
+          const yT = r.yTop - 9
+          const a = project(0, yT)
+          const b = project(W, yT)
+          const c = project(W, yB)
+          const d = project(0, yB)
+          if (c.scale < 0.06) continue
+          ctx.fillStyle = hsl(structHue, 24, 12 * (0.5 + 0.5 * c.scale) + 1.5, clamp(0.3 + c.scale, 0, 1))
+          quad(a, b, c, d)
+          ctx.fill()
+          ctx.lineWidth = 1
+          ctx.strokeStyle = hsl(structHue, 20, 40, 0.18 + 0.25 * c.scale)
           ctx.beginPath()
           ctx.moveTo(a.x, a.y)
           ctx.lineTo(b.x, b.y)
           ctx.stroke()
-        }
-
-        // ---- 2+3. Additive pass: seams, bulkheads, conduit energy ---------
-        ctx.save()
-        ctx.globalCompositeOperation = 'lighter'
-        ctx.lineCap = 'round'
-        for (let i = 0; i <= ROWS; i++) {
-          const y = proj.nearWorldY - i * GRID_ROW + gridShift
-          if (y > proj.nearWorldY) continue
-          const a = project(0, y)
-          if (a.scale < 0.05) continue
-          const b = project(W, y)
-          const rowKey = i - s.depth
-          if (bulkAt(rowKey)) {
-            // Bulkhead rib: the heavy structural beat of the shaft. Breathes
-            // with the bass and flashes a touch on the musical beat.
-            const glow = 0.1 + a.scale * 0.2 + mBass * 0.08 + mBeat * 0.1
-            ctx.shadowColor = hsl(baseHue, 80, 60, 0.5)
-            ctx.shadowBlur = 7 * a.scale
-            ctx.strokeStyle = hsl(baseHue, 60, 62, clamp(glow, 0, 0.5))
-            ctx.lineWidth = 1.1 + a.scale * 1.7
-          } else {
-            // Plain plate join: barely-there, just enough to read the cells.
-            ctx.shadowBlur = 0
-            ctx.strokeStyle = hsl(structHue, 30, 55, 0.035 + a.scale * 0.05)
-            ctx.lineWidth = 0.7 + a.scale * 0.5
-          }
+          ctx.strokeStyle = hsl(structHue, 40, 2, 0.5 * c.scale)
           ctx.beginPath()
-          ctx.moveTo(a.x, a.y)
-          ctx.lineTo(b.x, b.y)
+          ctx.moveTo(d.x, d.y)
+          ctx.lineTo(c.x, c.y)
           ctx.stroke()
         }
-        ctx.shadowBlur = 0
 
-        // Conduit cores: three channels = bass / mids / treble. The floor is
-        // the equalizer; with music off they idle at a faint steady glow.
+        // ---- 2. Additive pass: trench energy + brace trims -----------------
         const bandFor = (k: number) => {
           const n = spectrum.length
           const s0 = Math.floor((k / 3) * n)
@@ -632,48 +692,106 @@ export const drawFrame = (
           for (let j = s0; j < s1; j++) acc += spectrum[j] ?? 0
           return (acc / (s1 - s0)) * mi
         }
-        for (let k = 0; k < 3; k++) {
-          const xw = (((k + 1) * 2) / LANES) * W
-          const a = project(xw, proj.nearWorldY)
-          const b = project(xw, farWorldY)
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.lineCap = 'round'
+        // Lip trim lights: the trench IS the equalizer. Left lip rides the
+        // bass, right lip the treble; both idle faintly with music off.
+        for (const [lx, k] of [
+          [CH_L, 0],
+          [CH_R, 2],
+        ] as Array<[number, number]>) {
           const band = bandFor(k)
-          ctx.shadowColor = hsl(baseHue, 85, 62, 0.4 + band * 0.4)
-          ctx.shadowBlur = 6 * band
-          ctx.strokeStyle = hsl(baseHue, 75, 62, 0.06 + 0.17 * band)
-          ctx.lineWidth = 1.3 + band * 1.7
+          const a = project(lx, proj.nearWorldY)
+          const b = project(lx, farWorldY)
+          ctx.shadowColor = hsl(baseHue, 85, 62, 0.35 + band * 0.45)
+          ctx.shadowBlur = 5 * band
+          ctx.strokeStyle = hsl(baseHue, 75, 64, clamp(0.13 + 0.24 * band, 0, 0.5))
+          ctx.lineWidth = 1.1 + band * 1.6
           ctx.beginPath()
           ctx.moveTo(a.x, a.y)
           ctx.lineTo(b.x, b.y)
           ctx.stroke()
           ctx.shadowBlur = 0
-          // Energy packets streaming down-shaft to feed the cannon.
-          for (let j = 0; j < 3; j++) {
-            const u = (tNow * (0.1 + 0.02 * k) + j / 3 + k * 0.21) % 1
-            const p = project(xw, proj.nearWorldY - (1 - u) * totalDepth)
+        }
+        // Channel current (mids): a soft glow flowing down the recessed floor,
+        // plus energy packets streaming toward the cannon.
+        {
+          const cband = bandFor(1)
+          const pts: Pt[] = []
+          for (const r of rows) {
+            const p = chProj(W / 2, r.yBot)
+            pts.push({ x: p.x, y: p.y })
+          }
+          if (pts.length >= 2) {
+            ctx.strokeStyle = hsl(baseHue, 80, 60, clamp(0.08 + 0.2 * cband + 0.04 * mEnergy, 0, 0.42))
+            ctx.lineWidth = 2.4 + 2.4 * cband
+            ctx.shadowColor = hsl(baseHue, 85, 62, 0.5)
+            ctx.shadowBlur = 8 * cband
+            ctx.beginPath()
+            ctx.moveTo(pts[0]!.x, pts[0]!.y)
+            for (const p of pts) ctx.lineTo(p.x, p.y)
+            ctx.stroke()
+            ctx.shadowBlur = 0
+          }
+          for (let j = 0; j < 4; j++) {
+            const u = (tNow * 0.11 + j / 4) % 1
+            const p = chProj(W / 2 + Math.sin(j * 9.2) * 9, proj.nearWorldY - (1 - u) * totalDepth)
             if (p.scale < 0.07) continue
             const pa =
-              (0.1 + 0.3 * band + 0.08 * mEnergy + (mi <= 0 ? 0.08 : 0)) *
+              (0.12 + 0.3 * cband + 0.08 * mEnergy + (mi <= 0 ? 0.08 : 0)) *
               clamp(p.scale * 1.4, 0, 1)
             ctx.fillStyle = hsl(baseHue + 10, 95, 76, clamp(pa, 0, 0.55))
             ctx.beginPath()
-            ctx.arc(p.x, p.y, 0.8 + 2.4 * p.scale, 0, Math.PI * 2)
+            ctx.arc(p.x, p.y, 0.8 + 2.6 * p.scale, 0, Math.PI * 2)
             ctx.fill()
+          }
+        }
+        // Brace trims: the leading edge of each ring brace glows and breathes
+        // with the bass; hazard ticks mark it as machinery, not a gridline.
+        for (const r of rows) {
+          if (!ringAt(r.key)) continue
+          const d0 = project(0, r.yTop)
+          const d1 = project(W, r.yTop)
+          if (d0.scale < 0.07) continue
+          const g = 0.1 + d0.scale * 0.18 + mBass * 0.1 + mBeat * 0.12
+          ctx.shadowColor = hsl(baseHue, 80, 60, 0.5)
+          ctx.shadowBlur = 7 * d0.scale
+          ctx.strokeStyle = hsl(baseHue, 65, 62, clamp(g, 0, 0.55))
+          ctx.lineWidth = 1 + d0.scale * 1.6
+          ctx.beginPath()
+          ctx.moveTo(d0.x, d0.y)
+          ctx.lineTo(d1.x, d1.y)
+          ctx.stroke()
+          ctx.shadowBlur = 0
+          if (d0.scale > 0.3) {
+            ctx.strokeStyle = hsl(baseHue, 60, 70, 0.22 * d0.scale)
+            ctx.lineWidth = 1
+            for (let t = 1; t <= 7; t++) {
+              const p = project((W * t) / 8, r.yTop - 4)
+              const q = project((W * t) / 8, r.yTop - 9 + 4)
+              ctx.beginPath()
+              ctx.moveTo(p.x, p.y)
+              ctx.lineTo(q.x, q.y)
+              ctx.stroke()
+            }
           }
         }
         ctx.restore()
 
-        // ---- 4. Parapet walls ---------------------------------------------
-        const WALL_H = 30 // wall height in screen px at the near plane
+        // ---- 3. Parapet walls -----------------------------------------------
+        const WALL_H = 36 // wall height in screen px at the near plane
         const wallHue = PALETTE.wallHue + (mHue - PALETTE.wallHue) * mi
         for (const xw of [0, W]) {
-          const edge: Array<{ x: number; y: number; s: number }> = []
-          const top: Array<{ x: number; y: number; s: number }> = []
+          const edge: Array<{ x: number; y: number; s: number; key: number }> = []
+          const top: Array<{ x: number; y: number; s: number; key: number }> = []
           for (let i = 0; i <= ROWS; i++) {
             const y = Math.min(proj.nearWorldY, proj.nearWorldY - i * GRID_ROW + gridShift)
             const p = project(xw, y)
             if (p.scale < 0.05) break
-            edge.push({ x: p.x, y: p.y, s: p.scale })
-            top.push({ x: p.x, y: p.y - WALL_H * p.scale, s: p.scale })
+            // (row + depth): invariant for a material point as the board scrolls.
+            edge.push({ x: p.x, y: p.y, s: p.scale, key: i + s.depth })
+            top.push({ x: p.x, y: p.y - WALL_H * p.scale, s: p.scale, key: i + s.depth })
           }
           if (edge.length < 2) continue
           // Wall face: a dark machined parapet (occludes the void behind it).
@@ -684,9 +802,9 @@ export const drawFrame = (
           ctx.closePath()
           ctx.fillStyle = hsl(structHue + 2, 30, 8, 0.94)
           ctx.fill()
-          // Vertical ribs at bulkhead rows tie the wall to the floor's rhythm.
+          // Vertical ribs where the ring braces meet the walls.
           for (let i = 0; i < edge.length; i++) {
-            if (!bulkAt(i - s.depth)) continue
+            if (!ringAt(edge[i]!.key)) continue
             ctx.strokeStyle = hsl(structHue, 24, 26, 0.22 + 0.4 * edge[i]!.s)
             ctx.lineWidth = 1 + edge[i]!.s
             ctx.beginPath()
@@ -707,13 +825,21 @@ export const drawFrame = (
           for (const p of top) ctx.lineTo(p.x, p.y)
           ctx.stroke()
           ctx.shadowBlur = 0
-          // Node lights at bulkheads only — deliberate, not a dotted line.
+          // Ring posts: at each brace the wall carries a short lit post above
+          // the rail with a beacon cap — deliberate structure, not a dotted line.
           for (let i = 0; i < top.length; i++) {
-            if (!bulkAt(i - s.depth)) continue
+            if (!ringAt(top[i]!.key)) continue
             const p = top[i]!
-            ctx.fillStyle = hsl(wallHue + 8, 85, 74, clamp(0.18 + p.s * 0.55 + mBeat * 0.2, 0, 0.85))
+            const postTop = p.y - 12 * p.s
+            ctx.strokeStyle = hsl(wallHue, 60, 64, clamp(0.2 + 0.4 * p.s, 0, 0.7))
+            ctx.lineWidth = 1 + p.s
             ctx.beginPath()
-            ctx.arc(p.x, p.y, 0.9 + 2.2 * p.s, 0, Math.PI * 2)
+            ctx.moveTo(p.x, p.y)
+            ctx.lineTo(p.x, postTop)
+            ctx.stroke()
+            ctx.fillStyle = hsl(wallHue + 8, 85, 74, clamp(0.22 + p.s * 0.55 + mBeat * 0.2, 0, 0.9))
+            ctx.beginPath()
+            ctx.arc(p.x, postTop, 0.9 + 2.2 * p.s, 0, Math.PI * 2)
             ctx.fill()
           }
           // Faint base seam where wall meets floor.
@@ -750,7 +876,7 @@ export const drawFrame = (
           ctx.restore()
         }
 
-        // ---- 5. Distance fog ----------------------------------------------
+        // ---- 4. Distance fog ----------------------------------------------
         {
           const apTopY = project(W / 2, farWorldY).y
           const fog = ctx.createLinearGradient(0, apTopY - 26, 0, apTopY + 100)
@@ -760,7 +886,7 @@ export const drawFrame = (
           ctx.fillRect(0, 0, W, Math.max(0, apTopY + 100))
         }
 
-        // ---- 6. Iris gate at the horizon -----------------------------------
+        // ---- 5. Iris gate at the horizon -----------------------------------
         // Where the pieces are born: a mechanical iris of counter-rotating arc
         // segments around a tight bloom, replacing the plain aperture glow.
         {
@@ -809,7 +935,7 @@ export const drawFrame = (
           ctx.restore()
         }
 
-        // ---- 7. Muzzle light pool ------------------------------------------
+        // ---- 6. Muzzle light pool ------------------------------------------
         // The cannon's plasma throat spills a soft pool onto the nearby plates.
         {
           const ex = W / 2
