@@ -543,7 +543,12 @@ export default function App() {
         }
       }
 
-      if (!s.paused && !s.gameOver && !audioGateRef.current) stepSim(s, dtSec)
+      // Hit-stop: a pending stop consumes frames instead of stepping the sim
+      // (the renderer keeps drawing, so the freeze reads as impact, not jank).
+      if (!s.paused && !s.gameOver && !audioGateRef.current) {
+        if (s.hitStopSec > 0) s.hitStopSec = Math.max(0, s.hitStopSec - dtSec)
+        else stepSim(s, dtSec)
+      }
 
       // Sample the soundtrack every frame (even while paused) so the visuals
       // keep breathing, then push the live signals onto the run state. Also feed

@@ -419,6 +419,11 @@ export type RunState = {
   comboTimerSec: number
   crescendo: number
   bestScoreLocal: number
+  // Screenshake trauma (0..1, decays in sim; the renderer maps trauma^2 to a
+  // small camera offset) and pending hit-stop seconds (the App loop skips sim
+  // stepping while > 0, letting multi-kills "land"). Both transient.
+  trauma: number
+  hitStopSec: number
 
   // FX
   pieceBursts: PieceBurstFx[]
@@ -581,6 +586,8 @@ export const createInitialRunState = (): RunState => {
     comboTimerSec: 0,
     crescendo: 0,
     bestScoreLocal: 0,
+    trauma: 0,
+    hitStopSec: 0,
     pieceBursts: [],
     nextPieceBurstId: 1,
     sparks: [],

@@ -8,6 +8,7 @@ import { makeProjection } from './projection'
 import { getArenaLayout } from '../game/layout'
 import type { RunState } from '../game/runState'
 import { withDpr, lerp, hslToRgb } from './frame'
+import { reducedMotion } from '../game/settings'
 import type { DrawUi, FrameCtx } from './frame'
 import { drawBackgroundPass } from './passes/background'
 import { drawPiecesPass } from './passes/piecesPass'
@@ -94,6 +95,16 @@ export const drawFrame = (
       ctx.arcTo(x, y + h, x, y, rr)
       ctx.arcTo(x, y, x + w, y, rr)
       ctx.closePath()
+    }
+
+    // Screenshake: map trauma^2 to a small pre-frame camera offset (a couple
+    // of px at typical impulses, ~7px at full trauma). Multi-frequency noise
+    // so it reads as a jolt, not a sine wobble. Honors the reduced-motion pref.
+    if (s.trauma > 0 && !reducedMotion()) {
+      const amp = s.trauma * s.trauma * 7
+      const ox = amp * (Math.sin(tNow * 91.7) * 0.6 + Math.sin(tNow * 47.3) * 0.4)
+      const oy = amp * (Math.cos(tNow * 83.1) * 0.6 + Math.cos(tNow * 59.7) * 0.4)
+      ctx.translate(ox, oy)
     }
 
     const c: FrameCtx = {

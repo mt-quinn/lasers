@@ -28,6 +28,8 @@ type SavedRunState = Omit<
   | 'well'
   // Purely-visual surge amplitude; recomputed from play.
   | 'crescendo'
+  | 'trauma'
+  | 'hitStopSec'
   // In-flight feedback FX (not worth persisting).
   | 'gaugeFx'
   | 'nextGaugeFxId'

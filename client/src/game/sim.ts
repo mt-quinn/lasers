@@ -7,6 +7,7 @@ import { stepTutorial, scanJitTrigger, WARMUP_HEAT_PER_KILL } from './tutorial'
 import { getArenaLayout } from './layout'
 import { makeProjection, screenTopWorldY } from '../render/projection'
 import { sfxEngine } from '../audio/sfx'
+import { vibrate } from './settings'
 
 const EPS = 1.0
 const MAX_SPARKS = 280
@@ -139,12 +140,9 @@ export const fireOverdrive = (s: RunState): boolean => {
   s.heatNext = 0
   s.levelUpNotificationFx = { t: 0, displayDur: 1.0, fadeDur: 0.35 }
   s.crescendo = clamp(s.crescendo + 0.5, 0, 1)
+  s.trauma = Math.min(1, s.trauma + 0.3)
   // A short triple-tap of haptics so the unleash lands physically on mobile.
-  const nav =
-    typeof navigator !== 'undefined'
-      ? (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean })
-      : undefined
-  if (nav && typeof nav.vibrate === 'function') nav.vibrate([12, 22, 36])
+  vibrate([12, 22, 36])
   return true
 }
 
@@ -474,6 +472,12 @@ export const stepSim = (s: RunState, dt: number) => {
   if (s.crescendo > 0) {
     s.crescendo = Math.max(0, s.crescendo - dt * 0.9)
   }
+  // Screenshake trauma decays quickly; impulses come from kills, overdrive
+  // and game over. (The renderer maps trauma^2 to the camera offset, so the
+  // tail is much subtler than the hit.)
+  if (s.trauma > 0) {
+    s.trauma = Math.max(0, s.trauma - dt * 1.8)
+  }
 
   // Field descent: the board steps down one cell on a deterministic metronome
   // (dropIntervalSec, set by the difficulty schedule above). The descent is
@@ -699,12 +703,10 @@ export const stepSim = (s: RunState, dt: number) => {
       s.gameOver = true
       s.paused = true
       s.bestScoreLocal = Math.max(s.bestScoreLocal, s.score)
+      s.trauma = Math.min(1, s.trauma + 0.65)
 
       // Stronger end-of-run haptic.
-      const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }
-      if (typeof nav.vibrate === 'function') {
-        nav.vibrate([18, 50, 16, 50, 24])
-      }
+      vibrate([18, 50, 16, 50, 24])
       // Freeze presentation; board remains behind the overlay.
       return
     }
@@ -962,6 +964,12 @@ export const stepSim = (s: RunState, dt: number) => {
       killsThisFrame += 1
       const multiKillMult = Math.min(3, 1 + 0.4 * (killsThisFrame - 1))
 
+      // Feel: a small camera impulse per kill, growing with the multi-kill;
+      // 2+ kills in one beam pass also earn a ~45ms hit-stop so the big play
+      // visibly lands (sim freezes, visuals keep breathing).
+      s.trauma = Math.min(1, s.trauma + 0.1 + 0.07 * (killsThisFrame - 1))
+      if (killsThisFrame >= 2) s.hitStopSec = Math.max(s.hitStopSec, 0.045)
+
       const comboMult = Math.min(COMBO_SCORE_MULT_CAP, 1 + 0.1 * (s.combo - 1))
       const routeBonus = viaOptics ? 1.75 : 1
       const overdriveScore = s.overdriveSec > 0 ? OVERDRIVE_SCORE_MULT : 1
@@ -1022,10 +1030,7 @@ export const stepSim = (s: RunState, dt: number) => {
         spawnShatterChildren(s, b)
       }
 
-      const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }
-      if (typeof nav.vibrate === 'function') {
-        nav.vibrate([10, 30, 14])
-      }
+      vibrate([10, 30, 14])
     }
   }
 
