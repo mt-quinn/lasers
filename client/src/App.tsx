@@ -37,11 +37,14 @@ import { clearGameState, loadGameState, saveGameState } from './game/gameState'
 import { musicEngine } from './audio/music'
 import type { TrackInfo } from './audio/music'
 import { sfxEngine } from './audio/sfx'
-import { drawPieceSwatch, type SwatchKind } from './render/swatch'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../convex/_generated/api'
 import { getOrCreatePlayerId, isConvexConfigured } from './game/playerId'
 import { getTodayDateKey } from './game/rng'
+import { PIECE_KEY, PieceSwatch } from './components/pieceKey'
+import { MusicHud } from './components/MusicHud'
+import { GameOverScreen, stepDateKey } from './components/GameOverScreen'
+import { useWellInput } from './hooks/useWellInput'
 
 type HudSnapshot = {
   paused: boolean
@@ -74,81 +77,6 @@ const HAS_TOUCH =
   typeof window !== 'undefined' &&
   ('ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0)
 
-// Shift a YYYY-MM-DD key by whole days, returning the new key (local calendar).
-const stepDateKey = (dateKey: string, deltaDays: number): string => {
-  const [y, m, d] = dateKey.split('-').map((n) => parseInt(n, 10))
-  const dt = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
-  dt.setDate(dt.getDate() + deltaDays)
-  const yy = dt.getFullYear()
-  const mm = String(dt.getMonth() + 1).padStart(2, '0')
-  const dd = String(dt.getDate()).padStart(2, '0')
-  return `${yy}-${mm}-${dd}`
-}
-
-// Compact, human label for the date stepper: Today / Yesterday / "Jun 8" (with
-// the year appended only when it isn't the current one).
-const formatDateLabel = (dateKey: string, todayKey: string): string => {
-  if (dateKey === todayKey) return 'Today'
-  if (dateKey === stepDateKey(todayKey, -1)) return 'Yesterday'
-  const [y, m, d] = dateKey.split('-').map((n) => parseInt(n, 10))
-  const dt = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
-  const sameYear = (y ?? 0) === new Date().getFullYear()
-  return dt.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(sameYear ? {} : { year: '2-digit' }),
-  })
-}
-
-// Legend shown in the pause menu: the special pieces/features and what each one
-// does, in plain language. Each row renders the REAL in-game artwork (via the
-// shared piece renderer) rather than a stand-in glyph, so it's instantly
-// recognizable. Block kinds are drawn as a 2x2 footprint.
-const PIECE_KEY: { kind: SwatchKind; name: string; desc: string }[] = [
-  {
-    kind: 'gold',
-    name: 'Gold block',
-    desc: 'Worth far more points and Overdrive charge.',
-  },
-  {
-    kind: 'fast',
-    name: 'Fast block',
-    desc: 'Drops 2x as far every other time it drops.',
-  },
-  {
-    kind: 'armored',
-    name: 'Armored block',
-    desc: 'Its mirrored bottom deflects your laser and resists damage. Hit the sides or top.',
-  },
-  {
-    kind: 'shatter',
-    name: 'Shatter block',
-    desc: 'Spawns a cluster of normal blocks when destroyed.',
-  },
-  {
-    kind: 'mirror',
-    name: 'Mirror',
-    desc: 'Reflects the beam off its diagonal. Burns away under sustained fire.',
-  },
-  {
-    kind: 'splitter',
-    name: 'Splitter',
-    desc: 'Splits the beam into two at the angles indicated by the arrows. Both beams maintain full power.',
-  },
-]
-
-// A single legend icon: draws the real piece artwork into a small canvas. Kept
-// compact so the (now 6-row) pause-menu Key fits on one screen without scrolling.
-const SWATCH_BOX = 36
-const PieceSwatch = ({ kind }: { kind: SwatchKind }) => {
-  const ref = useRef<HTMLCanvasElement | null>(null)
-  useEffect(() => {
-    const canvas = ref.current
-    if (canvas) drawPieceSwatch(canvas, kind, SWATCH_BOX)
-  }, [kind])
-  return <canvas ref={ref} className="menuKeyIcon" aria-hidden="true" />
-}
-
 // The menus surface only the stats that matter to an endless run: how deep
 // you got, how many pieces you cleared, and how long you lasted.
 const computePauseStats = (state: RunState) => {
@@ -160,54 +88,6 @@ const computePauseStats = (state: RunState) => {
     piecesDestroyed: blocksDestroyed,
     runTime: `${mins}:${secs.toString().padStart(2, '0')}`,
   }
-}
-
-// Auto-marquee: shows `text` statically when it fits, and gently scrolls it on a
-// seamless loop when it would otherwise be truncated. Re-measures on text change
-// and container resize (the now-playing card width is published per frame).
-function Marquee({ text, className }: { text: string; className?: string }) {
-  const clipRef = useRef<HTMLDivElement>(null)
-  const itemRef = useRef<HTMLSpanElement>(null)
-  const [shift, setShift] = useState(0) // px to travel per loop; 0 = no scroll
-
-  useLayoutEffect(() => {
-    const clip = clipRef.current
-    const item = itemRef.current
-    if (!clip || !item) return
-    const GAP = 36 // px between the repeated copies
-    const measure = () => {
-      const overflow = item.scrollWidth - clip.clientWidth
-      setShift(overflow > 2 ? item.scrollWidth + GAP : 0)
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(clip)
-    return () => ro.disconnect()
-  }, [text])
-
-  const scrolling = shift > 0
-  const SPEED = 42 // px per second
-  const trackStyle = scrolling
-    ? ({
-        '--mq-shift': `${shift}px`,
-        animationDuration: `${Math.max(4, shift / SPEED)}s`,
-      } as CSSProperties)
-    : undefined
-
-  return (
-    <div ref={clipRef} className={`mqClip${className ? ` ${className}` : ''}`}>
-      <div className={`mqTrack${scrolling ? ' scrolling' : ''}`} style={trackStyle}>
-        <span ref={itemRef} className="mqItem">
-          {text}
-        </span>
-        {scrolling && (
-          <span className="mqItem" aria-hidden="true">
-            {text}
-          </span>
-        )}
-      </div>
-    </div>
-  )
 }
 
 export default function App() {
@@ -388,219 +268,9 @@ export default function App() {
     stateRef.current.bestScoreLocal = getBestScoreForDate(highScores, stateRef.current.dateKey)
   }, [highScores])
 
-  // Pointer input: the single control surface is the gravity-well puck.
-  // Press anywhere -> the well teleports under the finger (momentum cancelled);
-  // drag -> it follows; release -> it inherits the flick velocity (a still
-  // release parks it). Physics (friction, wall bounces) run in the sim.
-  useEffect(() => {
-    // Map a pointer event to WORLD space: the well lives in the perspective
-    // playfield (like the blocks), so it scales with depth and bounces off the
-    // converging walls. We unproject the screen point through the same
-    // homography the renderer uses.
-    const getPoint = (e: PointerEvent) => {
-      const canvas = canvasRef.current
-      if (!canvas) return null
-      const rect = canvas.getBoundingClientRect()
-      const sx = e.clientX - rect.left
-      const sy = e.clientY - rect.top
-      const s = stateRef.current
-      const layout = getArenaLayout(s.view)
-      const proj = makeProjection(s.view, layout)
-      const p = proj.unproject(sx, sy)
-      // Constrain to the world playfield even while dragging, so the hole can't
-      // be pulled outside the perspective space (it stays where you drop it).
-      const topWorldY = proj.unproject(s.view.width / 2, 0).y
-      p.x = clamp(p.x, 0, s.view.width)
-      p.y = clamp(p.y, topWorldY, layout.emitterY)
-      return p
-    }
+  // Pointer input: the gravity-well puck (see hooks/useWellInput).
+  useWellInput({ stateRef, canvasRef, musicPanelOpenRef, dockActionsRef })
 
-    // Ignore presses that land on UI buttons (pause/music) so they don't also
-    // drop the well underneath.
-    const onUi = (e: PointerEvent) =>
-      e.target instanceof Element && e.target.closest('button') != null
-
-    // The STEERING pointer (the one finger dragging the well). A second finger
-    // that lands while steering is NOT allowed to grab the well — it's tracked
-    // as a tap candidate so you can keep steering with one finger and tap with
-    // another to unleash Overdrive in place.
-    let steerId: number | null = null
-    let lastX = 0
-    let lastY = 0
-    let lastT = 0
-    let vx = 0
-    let vy = 0
-    // Down position/time of the STEERING pointer in SCREEN px, so its own quick
-    // press+release (single-finger tap-to-fire) can be told apart from steering.
-    let steerDownCX = 0
-    let steerDownCY = 0
-    let steerDownT = 0
-    // Secondary pointers (extra fingers) tracked as potential taps: id -> down
-    // screen pos/time + the farthest it has strayed (to reject drags).
-    const taps = new Map<number, { cx: number; cy: number; t: number; moved: number }>()
-    const TAP_MAX_MS = 250
-    const TAP_MAX_PX = 14
-
-    const isTapGesture = (cx: number, cy: number, t: number, downX: number, downY: number, downT: number) =>
-      t - downT <= TAP_MAX_MS && Math.hypot(cx - downX, cy - downY) <= TAP_MAX_PX
-
-    // The on-canvas control dock is hit-tested here (it's drawn in draw.ts, not a
-    // DOM button). Returns which button the press landed on, in the dock's base
-    // (unwarped) position — the lens displaces the glyph visually but the touch
-    // target stays put. A tap toggles it; the gesture is consumed (no well drop).
-    const dockHit = (e: PointerEvent): 'pause' | 'music' | null => {
-      const canvas = canvasRef.current
-      const s = stateRef.current
-      if (!canvas || s.gameOver) return null
-      const rect = canvas.getBoundingClientRect()
-      const px = e.clientX - rect.left
-      const py = e.clientY - rect.top
-      const d = getArenaLayout(s.view).dock
-      const slop = d.btnR + 6
-      if (!s.levelUpActive && Math.hypot(px - d.pause.cx, py - d.pause.cy) <= slop) return 'pause'
-      if (Math.hypot(px - d.music.cx, py - d.music.cy) <= slop) return 'music'
-      return null
-    }
-    let dockPress: { id: number; hit: 'pause' | 'music'; cx: number; cy: number } | null = null
-
-    const onPointerDown = (e: PointerEvent) => {
-      const s = stateRef.current
-      // While the music panel is open, the overlay scrim owns this tap (it just
-      // dismisses the panel). Ignore it here so the dock button doesn't re-toggle
-      // and the well doesn't get grabbed.
-      if (musicPanelOpenRef.current) return
-      if (s.gameOver) return
-      // A just-in-time coachmark freezes play; its OK card (DOM) owns input.
-      if (s.jit) return
-      if (onUi(e)) return
-      const hit = dockHit(e)
-      if (hit) {
-        dockPress = { id: e.pointerId, hit, cx: e.clientX, cy: e.clientY }
-        return
-      }
-      if (steerId === null) {
-        // First finger: take steering control — teleport under it and grab.
-        const p = getPoint(e)
-        if (!p) return
-        steerId = e.pointerId
-        s.well.pos.x = p.x
-        s.well.pos.y = p.y
-        s.well.vel.x = 0
-        s.well.vel.y = 0
-        s.well.grabbed = true
-        s.well.placed = true
-        lastX = p.x
-        lastY = p.y
-        lastT = e.timeStamp
-        vx = 0
-        vy = 0
-        steerDownCX = e.clientX
-        steerDownCY = e.clientY
-        steerDownT = e.timeStamp
-        return
-      }
-      // Another finger while already steering: don't move the well or steal
-      // control — just watch for a clean tap to unleash Overdrive.
-      taps.set(e.pointerId, { cx: e.clientX, cy: e.clientY, t: e.timeStamp, moved: 0 })
-    }
-
-    const onPointerMove = (e: PointerEvent) => {
-      const s = stateRef.current
-      if (e.pointerId === steerId) {
-        const p = getPoint(e)
-        if (!p) return
-        s.well.pos.x = p.x
-        s.well.pos.y = p.y
-        // Track pointer velocity (px/sec), lightly smoothed, for the throw.
-        const dt = Math.max(0.001, (e.timeStamp - lastT) / 1000)
-        vx = vx * 0.4 + ((p.x - lastX) / dt) * 0.6
-        vy = vy * 0.4 + ((p.y - lastY) / dt) * 0.6
-        lastX = p.x
-        lastY = p.y
-        lastT = e.timeStamp
-        return
-      }
-      // A secondary finger that strays too far stops counting as a tap.
-      const tap = taps.get(e.pointerId)
-      if (tap) {
-        const d = Math.hypot(e.clientX - tap.cx, e.clientY - tap.cy)
-        if (d > tap.moved) tap.moved = d
-      }
-    }
-
-    const onPointerUp = (e: PointerEvent) => {
-      const s = stateRef.current
-      // Control-dock tap: fire the toggle if the finger lifted on the same button
-      // without straying (consumes the gesture so no well drop / overdrive).
-      if (dockPress && dockPress.id === e.pointerId) {
-        const moved = Math.hypot(e.clientX - dockPress.cx, e.clientY - dockPress.cy)
-        const which = dockPress.hit
-        dockPress = null
-        if (moved <= TAP_MAX_PX) {
-          if (which === 'pause') dockActionsRef.current.togglePause()
-          else dockActionsRef.current.toggleMusic()
-        }
-        return
-      }
-      // Secondary finger lifting: a clean tap fires Overdrive IN PLACE — the
-      // steering finger keeps control and the well doesn't move.
-      const tap = taps.get(e.pointerId)
-      if (tap) {
-        taps.delete(e.pointerId)
-        const moved = Math.max(tap.moved, Math.hypot(e.clientX - tap.cx, e.clientY - tap.cy))
-        if (e.timeStamp - tap.t <= TAP_MAX_MS && moved <= TAP_MAX_PX) fireOverdrive(s)
-        return
-      }
-      if (e.pointerId !== steerId) return
-      steerId = null
-      s.well.grabbed = false
-      // Single-finger tap-to-unleash: a quick press+release that didn't really
-      // move fires the surge where the finger landed (the well teleported there
-      // on press), and the gesture is consumed so the puck stays put.
-      if (
-        isTapGesture(e.clientX, e.clientY, e.timeStamp, steerDownCX, steerDownCY, steerDownT) &&
-        fireOverdrive(s)
-      ) {
-        s.well.vel.x = 0
-        s.well.vel.y = 0
-        return
-      }
-      // A throw only if the finger was still moving at release; otherwise park.
-      const sinceMove = (e.timeStamp - lastT) / 1000
-      if (sinceMove > 0.05) {
-        vx = 0
-        vy = 0
-      }
-      s.well.vel.x = vx
-      s.well.vel.y = vy
-    }
-
-    // Cancel (OS gesture, palm rejection, etc.): clean up without firing.
-    const onPointerCancel = (e: PointerEvent) => {
-      if (dockPress && dockPress.id === e.pointerId) {
-        dockPress = null
-        return
-      }
-      if (taps.delete(e.pointerId)) return
-      if (e.pointerId !== steerId) return
-      steerId = null
-      const s = stateRef.current
-      s.well.grabbed = false
-      s.well.vel.x = 0
-      s.well.vel.y = 0
-    }
-
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('pointermove', onPointerMove)
-    window.addEventListener('pointerup', onPointerUp)
-    window.addEventListener('pointercancel', onPointerCancel)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('pointermove', onPointerMove)
-      window.removeEventListener('pointerup', onPointerUp)
-      window.removeEventListener('pointercancel', onPointerCancel)
-    }
-  }, [])
 
   // Attach the DOM <audio> element to the music engine once mounted.
   useEffect(() => {
@@ -1278,140 +948,27 @@ export default function App() {
           <div className="lg-arena">
             <canvas ref={canvasRef} className="lg-canvas" />
 
-            {/* "Now playing" corner card — pops in when a new song starts, holds
-                briefly, then fades. Also re-shown (pinned) for as long as the music
-                panel is open. Non-interactive so taps pass to gameplay. */}
-            {(() => {
-              const card = musicPanelOpen ? panelTrack ?? nowPlaying : nowPlaying
-              // While the panel is open the card is always present (placeholder
-              // when no track is known yet); otherwise it only auto-pops.
-              if (!card && !musicPanelOpen) return null
-              const hasArt = !!card?.artwork && card.artwork !== brokenArtSrc
-              const cls = `${musicPanelOpen ? 'nowPlaying pinned' : `nowPlaying${npLeaving ? ' leaving' : ''}`}${
-                hasArt ? '' : ' noArt'
-              }`
-              return (
-                <div className={cls} role="status" aria-live="polite">
-                  {hasArt && (
-                    <img
-                      className="npArt"
-                      src={card!.artwork}
-                      alt=""
-                      aria-hidden="true"
-                      onError={() => setBrokenArtSrc(card!.artwork ?? null)}
-                    />
-                  )}
-                  <div className="npText">
-                    <div className="npEyebrow">Now Playing</div>
-                    <Marquee className="npTitle" text={card ? card.title : 'Nothing playing'} />
-                    {card && <Marquee className="npArtist" text={card.artist} />}
-                    {card && (card.album || card.genre) && (
-                      <Marquee className="npAlbum" text={card.album || card.genre || ''} />
-                    )}
-                  </div>
-                </div>
-              )
-            })()}
+            {/* Music UI: now-playing card, corner trigger, transport popover. */}
+            <MusicHud
+              musicOn={musicOn}
+              musicPanelOpen={musicPanelOpen}
+              musicPanelPos={musicPanelPos}
+              panelTrack={panelTrack}
+              nowPlaying={nowPlaying}
+              npLeaving={npLeaving}
+              brokenArtSrc={brokenArtSrc}
+              setBrokenArtSrc={setBrokenArtSrc}
+              showCornerBtn={hud.paused || (hud.gameOver && gameOverReady)}
+              toggleCornerMusicPanel={toggleCornerMusicPanel}
+              closeMusicPanel={closeMusicPanel}
+              toggleMusicPlayback={toggleMusicPlayback}
+              nextTrack={nextTrack}
+              volumeOpen={volumeOpen}
+              setVolumeOpen={setVolumeOpen}
+              volume={volume}
+              changeVolume={changeVolume}
+            />
 
-            {/* Music control: bottom-right button on the pause / game-over overlays
-                (in-game the canvas dock button opens the same panel). Plus the
-                shared popover (Pause / Next / Volume) and an outside-tap scrim. */}
-            {(hud.paused || (hud.gameOver && gameOverReady)) && (
-              <button
-                type="button"
-                className={`musicCornerBtn${musicOn ? ' on' : ''}`}
-                aria-label="Music controls"
-                aria-expanded={musicPanelOpen}
-                onClick={toggleCornerMusicPanel}
-              >
-                <span className="musicCornerGlyph" aria-hidden="true">♪</span>
-              </button>
-            )}
-
-            {musicPanelOpen && (
-              <>
-                <div
-                  className="musicScrim"
-                  onPointerDown={closeMusicPanel}
-                  aria-hidden="true"
-                />
-                <div
-                  className="musicPanel"
-                  role="dialog"
-                  aria-label="Music controls"
-                  style={{ left: musicPanelPos.left, bottom: musicPanelPos.bottom }}
-                >
-                  <div className="musicPanelRow">
-                    <button
-                      type="button"
-                      className="musicBtn"
-                      aria-label={musicOn ? 'Pause music' : 'Play music'}
-                      onClick={toggleMusicPlayback}
-                    >
-                      {musicOn ? (
-                        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                          <rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" />
-                          <rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" />
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                          <path d="M8 5.5 L8 18.5 L19 12 Z" fill="currentColor" />
-                        </svg>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="musicBtn"
-                      aria-label="Next track"
-                      onClick={nextTrack}
-                    >
-                      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                        <path d="M6 5.5 L6 18.5 L15 12 Z" fill="currentColor" />
-                        <rect x="16" y="5" width="3" height="14" rx="1.2" fill="currentColor" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      className={`musicBtn${volumeOpen ? ' active' : ''}`}
-                      aria-label="Volume"
-                      aria-expanded={volumeOpen}
-                      onClick={() => setVolumeOpen((v) => !v)}
-                    >
-                      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                        <path
-                          d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"
-                          fill="currentColor"
-                        />
-                        {volume > 0.02 && (
-                          <path
-                            d="M16 8.5 A5 5 0 0 1 16 15.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.8"
-                            strokeLinecap="round"
-                          />
-                        )}
-                      </svg>
-                    </button>
-                  </div>
-                  {volumeOpen && (
-                    <div className="musicVolumeRow">
-                      <input
-                        className="musicVolume"
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        value={volume}
-                        aria-label="Volume level"
-                        style={{ '--vol': `${Math.round(volume * 100)}%` } as CSSProperties}
-                        onChange={(e) => changeVolume(parseFloat(e.target.value))}
-                      />
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
 
             {/* The pause + music control dock is drawn ON the canvas (see
                 drawControlDock in draw.ts) so the gravity-well lens warps it
@@ -1577,190 +1134,39 @@ export default function App() {
                 save is inline and non-blocking (leaderboard + Play Again stay
                 visible the whole time). */}
             {hud.gameOver && gameOverReady && (
-              <div className="menuOverlay" role="dialog" aria-label="Game over">
-                <div className="menuPanel">
-                  <div className="menuKicker">Run ended</div>
-                  <div className="menuTitle">Game Over</div>
-
-                  <div className="menuHero">
-                    <span className="menuHeroLabel">Final Score</span>
-                    <span className="menuHeroValue">{hud.score.toLocaleString()}</span>
-                  </div>
-
-                  {pauseStats && (
-                    <div className="menuChips">
-                      <div className="menuChip">
-                        <span className="v">{hud.depth}</span>
-                        <span className="k">Depth</span>
-                      </div>
-                      <div className="menuChip">
-                        <span className="v">{pauseStats.piecesDestroyed}</span>
-                        <span className="k">Pieces</span>
-                      </div>
-                      <div className="menuChip">
-                        <span className="v">{pauseStats.runTime}</span>
-                        <span className="k">Time</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {showReplayTip && (
-                    <div className="ftueReplayNote" role="note">
-                      <div className="ftueReplayHeading">Try today&apos;s level again</div>
-                      <div className="ftueReplayBody">
-                        Today&apos;s level is the same every time you play it. Each day has its
-                        own local and global leaderboards &mdash; replay it to beat your score
-                        and climb the ranks.
-                      </div>
-                    </div>
-                  )}
-
-                  {showNamePrompt && !savedThisRun && (
-                    <div className="menuSection nameSave">
-                      <div className="nameSaveBadge">
-                        {isGlobalBest
-                          ? `New Global High Score${runGlobalRank ? ` · #${runGlobalRank}` : ''}`
-                          : `New Local High Score · #${runLocalRank}`}
-                      </div>
-                      <div className="nameSaveRow">
-                        <input
-                          className="menuInput"
-                          value={nameDraft}
-                          onChange={(e) => setNameDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') submitHighScore()
-                          }}
-                          maxLength={16}
-                          placeholder="PLAYER"
-                          aria-label="Your name"
-                          autoFocus
-                        />
-                        <button
-                          type="button"
-                          className="menuBtn primary nameSaveBtn"
-                          onClick={submitHighScore}
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {showNamePrompt && savedThisRun && (
-                    <div className="nameSaved" role="status">
-                      Saved as <strong>{nameDraft.trim() || 'PLAYER'}</strong>
-                    </div>
-                  )}
-
-                  {showLeaderboard && (
-                    <div className="menuSection menuLeaderboard">
-                      <div className="lbTabs" role="tablist">
-                        {showGlobalTab && (
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={activeTab === 'daily'}
-                            className={`lbTab${activeTab === 'daily' ? ' active' : ''}`}
-                            onClick={() => setLbTab('daily')}
-                          >
-                            Global
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={activeTab === 'local'}
-                          className={`lbTab${activeTab === 'local' ? ' active' : ''}`}
-                          onClick={() => setLbTab('local')}
-                        >
-                          Local
-                        </button>
-                      </div>
-
-                      <ol className="menuScoreList lbList">
-                        {lbTopRows.length === 0 ? (
-                          <li className="lbEmpty">No runs on this day</li>
-                        ) : (
-                          lbTopRows.map((e, i) => {
-                            const rank = i + 1
-                            // Global board: the player's own actor row. Local board:
-                            // the run that just finished (matched by score+depth+day).
-                            const mine =
-                              activeTab === 'daily'
-                                ? 'playerId' in e && e.playerId === playerIdRef.current
-                                : 'ts' in e &&
-                                  pendingScore != null &&
-                                  e.score === pendingScore &&
-                                  e.depth === pendingScoreDepth &&
-                                  e.dateKey === stateRef.current.dateKey
-                            const key =
-                              'playerId' in e ? `${e.playerId}-${rank}` : `${e.ts}-${rank}`
-                            return (
-                              <li key={key} className={`menuScoreRow${mine ? ' isMe' : ''}`}>
-                                <span className="rank">{rank}</span>
-                                <span className="name">
-                                  {e.name}
-                                  {mine && activeTab === 'daily' && (
-                                    <span className="youTag">(YOU)</span>
-                                  )}
-                                </span>
-                                <span className="val">
-                                  {e.score.toLocaleString()}
-                                  <span className="depth">d{e.depth}</span>
-                                </span>
-                              </li>
-                            )
-                          })
-                        )}
-                        {lbPinnedMe && (
-                          <li className="menuScoreRow isMe pinned">
-                            <span className="rank">{myDailyIdx + 1}</span>
-                            <span className="name">
-                              {lbPinnedMe.name}
-                              <span className="youTag">(YOU)</span>
-                            </span>
-                            <span className="val">
-                              {lbPinnedMe.score.toLocaleString()}
-                              <span className="depth">d{lbPinnedMe.depth}</span>
-                            </span>
-                          </li>
-                        )}
-                      </ol>
-
-                      <div className="lbPager lbDateNav">
-                        <button
-                          type="button"
-                          className="lbPagerBtn"
-                          disabled={atFloor}
-                          aria-label="Previous day"
-                          onClick={() => setViewDate((d) => stepDateKey(d, -1))}
-                        >
-                          ‹
-                        </button>
-                        <span className="lbPagerLabel lbDateLabel">
-                          {formatDateLabel(viewDate, todayKey)}
-                        </span>
-                        <button
-                          type="button"
-                          className="lbPagerBtn"
-                          disabled={atToday}
-                          aria-label="Next day"
-                          onClick={() => setViewDate((d) => stepDateKey(d, 1))}
-                        >
-                          ›
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="menuActions">
-                    <button type="button" className="menuBtn primary" onClick={playAgain}>
-                      Play Again
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <GameOverScreen
+                score={hud.score}
+                depth={hud.depth}
+                pauseStats={pauseStats}
+                showReplayTip={showReplayTip}
+                showNamePrompt={showNamePrompt}
+                savedThisRun={savedThisRun}
+                nameDraft={nameDraft}
+                setNameDraft={setNameDraft}
+                submitHighScore={submitHighScore}
+                isGlobalBest={isGlobalBest}
+                runGlobalRank={runGlobalRank}
+                runLocalRank={runLocalRank}
+                showLeaderboard={showLeaderboard}
+                showGlobalTab={showGlobalTab}
+                activeTab={activeTab}
+                setLbTab={setLbTab}
+                lbTopRows={lbTopRows}
+                lbPinnedMe={lbPinnedMe}
+                myDailyIdx={myDailyIdx}
+                playerId={playerIdRef.current}
+                pendingScore={pendingScore}
+                pendingScoreDepth={pendingScoreDepth}
+                runDateKey={stateRef.current.dateKey}
+                viewDate={viewDate}
+                setViewDate={setViewDate}
+                todayKey={todayKey}
+                atToday={atToday}
+                atFloor={atFloor}
+                playAgain={playAgain}
+              />
             )}
+
 
             {/* Upgrade system disabled - automatic +1 DPS per level now */}
             {/*

@@ -366,11 +366,6 @@ export const renderPiecesGL = (
       })
     }
 
-    const qx = pc.qx
-    const qy = pc.qy
-    const qw = pc.qw
-    const qh = pc.qh
-
     // A profile-ring vertex at loop point i.
     const ringVert = (r: Ring, i: number) => {
       const lp = loop[i]!
