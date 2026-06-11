@@ -316,27 +316,41 @@ export const stepSim = (s: RunState, dt: number) => {
   // skill-answerable axes — descent speed and arrival density (plus routing
   // complexity from features) — never block HP. Music is pure juice and no
   // longer drives the descent, so the ramp is identical every run and mastery
-  // means internalizing it. `prog` ramps 0->1 over the first RAMP_SECONDS;
-  // `creep` keeps nudging upward forever after so even the best players meet a
-  // ceiling eventually (their reaction/routing speed, never an HP wall).
-  const RAMP_SECONDS = 210
+  // means internalizing it.
+  //
+  // The pressure levers are deliberately STAGGERED. When the on-screen cap, the
+  // descent speed, and the content mix all finished ramping at the same moment
+  // (the old single 210s ramp), the required kill throughput DOUBLED between
+  // ~2:30 and ~3:30 and crossed every skill band within about a minute — every
+  // run walled out at nearly the same time regardless of skill. Now the cap
+  // finishes first (210s), descent keeps tightening until 300s, the content mix
+  // (see the spawn bag in spawn.ts) stretches to ~360s, and the requirement
+  // curve then *asymptotes* near a strong player's sustainable throughput
+  // instead of sprinting past it. `creep` still nudges upward forever (over
+  // 900s) so even perfect play meets a ceiling eventually — but mistakes, waves
+  // and routing are what end runs, not arithmetic.
+  const CAP_RAMP_SECONDS = 210
+  const DROP_RAMP_SECONDS = 300
   // Global pace multiplier on the two time-based speed levers (descent metronome
-  // + spawn interval). >1 slows the game uniformly at every point in the ramp:
-  // 1.15 = ~15% slower overall. Tune this single knob to dial overall difficulty
-  // pace without reshaping the curve.
-  const GAME_PACE_SCALE = 1.15
-  // Front-load the curve: `prog` rises fast in the first ~20s (pow < 1) so the
+  // + spawn interval). >1 slows the game uniformly at every point in the ramp.
+  // The previous 1.15 is folded into the base constants below; keep this at 1.0
+  // and use it only for quick whole-game pacing experiments.
+  const GAME_PACE_SCALE = 1.0
+  // Front-load the curves: `prog*` rises fast in the first ~20s (pow < 1) so the
   // board is already busy and demands routing right away, then eases toward the
   // steady-state. A flat-early curve (smoothstep) was exactly what made the
   // opening trivial.
-  const prog = Math.pow(clamp(s.timeSec / RAMP_SECONDS, 0, 1), 0.7)
-  const creep = clamp((s.timeSec - RAMP_SECONDS) / 600, 0, 1)
+  const progCap = Math.pow(clamp(s.timeSec / CAP_RAMP_SECONDS, 0, 1), 0.7)
+  const progDrop = Math.pow(clamp(s.timeSec / DROP_RAMP_SECONDS, 0, 1), 0.7)
+  const creep = clamp((s.timeSec - DROP_RAMP_SECONDS) / 900, 0, 1)
 
   // Movement is tetris-like: blocks step down together on a global timer. The
   // descent interval is the "gravity": brisk from the very start so pieces
-  // actually travel down the board (and you must route immediately), tightening
-  // to a fast floor.
-  s.dropIntervalSec = Math.max(0.2, 0.7 + (0.3 - 0.7) * prog - 0.1 * creep) * GAME_PACE_SCALE
+  // actually travel down the board (and you must route immediately), easing to a
+  // floor of ~0.34s/row. (The old floor of ~0.23s left a late-game piece on
+  // screen for under 8 seconds — past any routing answer.)
+  s.dropIntervalSec =
+    Math.max(0.34, 0.8 + (0.36 - 0.8) * progDrop - 0.05 * creep) * GAME_PACE_SCALE
   // Warmup: a calm, slow descent so a first-timer is never rushed.
   if (warmup) s.dropIntervalSec = 1.6
 
@@ -364,8 +378,8 @@ export const stepSim = (s: RunState, dt: number) => {
   // to route between as you go deeper.
   s.spawnTimer -= dt
   const spawnEveryBase =
-    Math.max(0.34, 0.62 + (0.42 - 0.62) * prog - 0.08 * creep) * GAME_PACE_SCALE // ~0.71s -> 0.48s -> ~0.39s after 15% slowdown
-  const maxBlocksBase = Math.floor(7 + 8 * prog + 4 * creep) // 7 -> 15 -> ~19
+    Math.max(0.42, 0.72 + (0.46 - 0.72) * progDrop - 0.06 * creep) * GAME_PACE_SCALE // ~0.72s -> ~0.46s -> 0.42s floor
+  const maxBlocksBase = Math.floor(7 + 6 * progCap + 3 * creep) // 7 -> 13 -> ~16
 
   // Surge/breather cadence: a deterministic wave layered on the base interval so
   // arrivals come in rhythmic crunches with calm between, instead of a flat drip
@@ -374,7 +388,7 @@ export const stepSim = (s: RunState, dt: number) => {
   // with `prog`, so early waves are gentle and late ones bite.
   const CADENCE_PERIOD = 20 // seconds per breather -> surge -> breather cycle
   const cadenceWave = 0.5 - 0.5 * Math.cos((s.timeSec / CADENCE_PERIOD) * Math.PI * 2) // 0..1
-  const surge01 = Math.pow(cadenceWave, 2.2) * (0.4 + 0.6 * prog) // sharpen into peaks + ramp in
+  const surge01 = Math.pow(cadenceWave, 2.2) * (0.4 + 0.6 * progCap) // sharpen into peaks + ramp in
   // Surge: arrivals up to ~50% faster with a few extra on-screen slots; breather
   // eases off ~10% so you actually get to breathe.
   const cadenceInterval = 1.1 - 0.55 * surge01
