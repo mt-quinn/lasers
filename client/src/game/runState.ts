@@ -96,6 +96,11 @@ export type GaugeFx = {
   // When true, (x,y) are WORLD coords the renderer must project (the well lives
   // in world space); otherwise they're raw screen-space px.
   world?: boolean
+  // Numeric payload for AGGREGATING anchored popups: rapid pickups at the well
+  // merge into one counter that ticks upward (legible) instead of stacking
+  // copies (mush). `bumps` counts merges so the renderer can grow/re-pop it.
+  value?: number
+  bumps?: number
 }
 
 // Routing-focused block variety. None of these are HP sponges — they change HOW

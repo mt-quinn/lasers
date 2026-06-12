@@ -300,9 +300,13 @@ export const drawHudPass = (c: FrameCtx) => {
               : hsl(48, 96, 78, a)
         ctx.fillStyle = col
         if (fx.x != null && fx.y != null) {
-          // Anchored (overflow score absorbed by the well): projected + lifted
-          // above the hole so it clears the player's finger.
-          ctx.font = "900 13px 'Oxanium', system-ui, sans-serif"
+          // Anchored at the well: rapid pickups MERGE into this one counter
+          // (see pushGaugeFx), so it grows a touch with every absorbed popup
+          // and re-pops on each merge instead of stacking copies.
+          const bumps = fx.bumps ?? 0
+          const grow = 1 + Math.min(0.45, bumps * 0.05)
+          const pop = bumps > 0 && fx.t < 0.1 ? 1 + 0.22 * (1 - fx.t / 0.1) : 1
+          ctx.font = `900 ${(13 * grow * pop).toFixed(1)}px 'Oxanium', system-ui, sans-serif`
           ctx.textAlign = 'center'
           const jitter = ((fx.id % 5) - 2) * 7
           let ax = fx.x

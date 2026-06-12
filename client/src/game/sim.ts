@@ -222,7 +222,7 @@ const onMoteCaptured = (s: RunState) => {
     const per = Math.round((SWEEP_BONUS_BASE + 0.18 * s.depth) * tier)
     s.score += per
     sw.bonus += per
-    pushGaugeFx(s, `+${per}`, 'score', s.well.pos.x, s.well.pos.y, true)
+    pushGaugeFx(s, `+${per}`, 'score', s.well.pos.x, s.well.pos.y, true, per)
   }
   // Milestones (5, 10, 15, 20, ...) thump a little harder as the chain grows.
   if (sw.count >= 5 && sw.count % 5 === 0) {
@@ -231,8 +231,37 @@ const onMoteCaptured = (s: RunState) => {
   }
 }
 
-const pushGaugeFx = (s: RunState, text: string, kind: GaugeFx['kind'], x?: number, y?: number, world?: boolean) => {
-  s.gaugeFx.push({ id: s.nextGaugeFxId++, t: 0, dur: GAUGE_FX_DUR, text, kind, x, y, world })
+// Anchored numeric popups younger than this merge instead of stacking.
+const GAUGE_MERGE_WINDOW = 0.55
+
+const pushGaugeFx = (
+  s: RunState,
+  text: string,
+  kind: GaugeFx['kind'],
+  x?: number,
+  y?: number,
+  world?: boolean,
+  value?: number,
+) => {
+  // Aggregate anchored numeric popups (the score counters at the well): a
+  // rapid sweep ticks ONE counter upward — re-popped and refreshed on every
+  // merge — instead of layering illegible copies on the same spot.
+  if (value != null && x != null && y != null) {
+    for (let i = s.gaugeFx.length - 1; i >= 0; i--) {
+      const fx = s.gaugeFx[i]!
+      if (fx.kind !== kind || fx.x == null || fx.value == null) continue
+      if (fx.t > GAUGE_MERGE_WINDOW) continue
+      fx.value += value
+      fx.text = `+${fx.value}`
+      fx.t = 0
+      fx.bumps = (fx.bumps ?? 0) + 1
+      fx.x = x
+      fx.y = y
+      fx.world = world
+      return
+    }
+  }
+  s.gaugeFx.push({ id: s.nextGaugeFxId++, t: 0, dur: GAUGE_FX_DUR, text, kind, x, y, world, value, bumps: 0 })
   // Cap so a dense surge can't grow the list unbounded.
   if (s.gaugeFx.length > 24) s.gaugeFx.splice(0, s.gaugeFx.length - 24)
 }
@@ -682,7 +711,7 @@ export const stepSim = (s: RunState, dt: number) => {
           if (s.heat >= 1 && s.overdriveSec <= 0) {
             const bonus = overflowScore(s, m)
             s.score += bonus
-            pushGaugeFx(s, `+${bonus}`, 'score', well.pos.x, well.pos.y, true)
+            pushGaugeFx(s, `+${bonus}`, 'score', well.pos.x, well.pos.y, true, bonus)
             onMoteCaptured(s)
             dead.push(m.id)
             continue
