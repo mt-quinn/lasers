@@ -273,15 +273,21 @@ const deliverMote = (s: RunState, m: HeatMote) => {
 // with the well is what actually fills the gauge.
 const spawnHeatMotes = (s: RunState, b: BlockEntity, heatBudget: number, hue: number, surge: boolean) => {
   const cells = b.cells.length
-  // Half as many motes as before -> each carries double the heat (perHeat scales
-  // automatically since the budget is fixed and just divided across the count).
+  // Special pieces (fast / armored / chrome / shatter) burst noticeably richer
+  // than normals — more debris to sweep (feeding the BITS chain) and a bit more
+  // total charge — as the payoff for handling the routing problem they posed.
+  // Gold stays the jackpot above them: its big xpValue already drives both the
+  // count and the budget past what the special multipliers reach.
+  const special = !b.isGold && b.kind !== 'normal'
+  const countMult = special ? 1.6 : 1
+  const budgetMult = special ? 1.35 : 1
   const count = Math.max(
     MOTE_MIN_COUNT,
-    Math.min(MOTE_MAX_COUNT, Math.round(1 + b.xpValue * 0.55 + cells * 0.35)),
+    Math.min(MOTE_MAX_COUNT, Math.round((1 + b.xpValue * 0.55 + cells * 0.35) * countMult)),
   )
   // Surge-spawned debris is worth a fraction (and rendered dim) so a surge can't
   // fund its own sequel.
-  const budget = surge ? heatBudget * OVERDRIVE_MOTE_CHARGE_MULT : heatBudget
+  const budget = (surge ? heatBudget * OVERDRIVE_MOTE_CHARGE_MULT : heatBudget) * budgetMult
   const perHeat = budget / count
   const cx = b.pos.x + (b.localAabb.minX + b.localAabb.maxX) * 0.5
   const cy = b.pos.y + (b.localAabb.minY + b.localAabb.maxY) * 0.5
